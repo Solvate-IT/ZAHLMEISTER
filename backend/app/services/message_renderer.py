@@ -69,7 +69,7 @@ def _message_options(collection: Collection, organization: Organization) -> tupl
 
 
 async def render_collection_message(
-    session: AsyncSession,
+    session: AsyncSession | None,
     *,
     collection: Collection,
     collection_participant: CollectionParticipant,
@@ -80,13 +80,17 @@ async def render_collection_message(
     """Render one canonical message independent of channel and provider."""
 
     if participant_locale is _LOCALE_UNSET:
-        participant_locale = await get_participant_locale(session, participant.id)
+        participant_locale = (
+            await get_participant_locale(session, participant.id) if session is not None else None
+        )
     requested_locale = (
         participant_locale if isinstance(participant_locale, str) else None
     ) or organization.locale
 
     template_body = collection.message_body_override
     if template_body is None and collection.message_template_id is not None:
+        if session is None:
+            raise ValueError("A database session is required to load the selected template")
         template = await session.get(MessageTemplate, collection.message_template_id)
         if template is not None:
             template_body = template_body_for_locale(
