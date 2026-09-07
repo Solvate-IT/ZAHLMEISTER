@@ -198,7 +198,7 @@ def _permanent_whatsapp_failure(item: dict[str, Any]) -> bool:
 
 
 def _advanced_delivery_status(current: str, new_status: str) -> str:
-    """Advance provider status without allowing a late failure to undo delivery evidence."""
+    """Advance provider status without allowing late events to undo stronger evidence."""
     if new_status == "read":
         return "read"
     if new_status == "delivered":
@@ -206,7 +206,7 @@ def _advanced_delivery_status(current: str, new_status: str) -> str:
     if new_status == "failed":
         return current if current in {"delivered", "read"} else "failed"
     if new_status == "sent":
-        return "sent" if current in {"queued", "sent", "failed"} else current
+        return "sent" if current in {"queued", "sent"} else current
     return current
 
 
