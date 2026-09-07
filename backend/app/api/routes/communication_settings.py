@@ -78,12 +78,7 @@ def _read(
     connections: dict[UUID, CommunicationConnection],
 ) -> ChannelSettingRead:
     if stored is None:
-        return ChannelSettingRead(
-            channel=channel,
-            mode="external",
-            configured=True,
-            fields={},
-        )
+        return ChannelSettingRead(channel=channel, mode="external", configured=True, fields={})
 
     config = decrypt_config(stored.encrypted_config)
     connection = connections.get(stored.connection_id) if stored.connection_id else None
@@ -393,37 +388,78 @@ async def disconnect_connection(
         await session.delete(connection)
 
 
+async def _set_connection_test_result(
+    connection_id: UUID,
+    organization_id: UUID,
+    *,
+    tested_at: datetime,
+    error: str | None,
+) -> None:
+    async with SessionLocal.begin() as session:
+        connection = await session.get(CommunicationConnection, connection_id, with_for_update=True)
+        if connection is None or connection.organization_id != organization_id:
+            return
+        connection.status = "error" if error else "connected"
+        connection.last_error = error[:2000] if error else None
+        connection.last_tested_at = tested_at
+
+
 @router.post("/connections/{connection_id}/test", response_model=ConnectionTestRead)
 async def test_connection_endpoint(
     connection_id: UUID,
     organization: Organization = Depends(get_organization),
 ) -> ConnectionTestRead:
     tested_at = datetime.now(UTC)
-    async with SessionLocal.begin() as session:
-        connection = await session.get(CommunicationConnection, connection_id, with_for_update=True)
+    async with SessionLocal() as session:
+        connection = await session.get(CommunicationConnection, connection_id)
         if connection is None or connection.organization_id != organization.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
-        try:
-            details: dict[str, str] = {}
-            if connection.provider == "infobip":
+        provider = connection.provider
+
+    details: dict[str, str] = {}
+    try:
+        if provider == "infobip":
+            async with SessionLocal.begin() as session:
+                connection = await session.get(CommunicationConnection, connection_id, with_for_update=True)
+                if connection is None or connection.organization_id != organization.id:
+                    raise ValueError("Connection not found")
                 await test_infobip_connection(session, connection)
-            elif connection.provider == "microsoft365":
-                details = await microsoft365.test_connection(connection.id)
-            else:
-                raise ValueError("Unsupported provider")
-        except Exception as exc:
-            connection.status = "error"
-            connection.last_error = str(exc)[:2000]
-            connection.last_tested_at = tested_at
-            return ConnectionTestRead(
-                ok=False, status="error", tested_at=tested_at, error=connection.last_error
-            )
-        connection.status = "connected"
-        connection.last_error = None
-        connection.last_tested_at = tested_at
-        return ConnectionTestRead(
-            ok=True, status="connected", tested_at=tested_at, details=details
+        elif provider == "microsoft365":
+            details = await microsoft365.test_connection(connection_id)
+        else:
+            raise ValueError("Unsupported provider")
+    except Exception as exc:
+        error = str(exc)[:2000]
+        await _set_connection_test_result(
+            connection_id,
+            organization.id,
+            tested_at=tested_at,
+            error=error,
         )
+        return ConnectionTestRead(ok=False, status="error", tested_at=tested_at, error=error)
+
+    await _set_connection_test_result(
+        connection_id,
+        organization.id,
+        tested_at=tested_at,
+        error=None,
+    )
+    return ConnectionTestRead(ok=True, status="connected", tested_at=tested_at, details=details)
+
+
+async def _set_channel_test_result(
+    setting_id: UUID,
+    *,
+    tested_at: datetime,
+    error: str | None,
+) -> None:
+    async with SessionLocal.begin() as session:
+        stored = await session.get(CommunicationChannelSetting, setting_id, with_for_update=True)
+        if stored is None:
+            return
+        stored.status = "error" if error else "ok"
+        stored.last_error = error[:2000] if error else None
+        stored.last_tested_at = tested_at
 
 
 @router.post("/{channel}/test", response_model=ConnectionTestRead)
@@ -434,7 +470,7 @@ async def test_channel_endpoint(
     if channel not in SUPPORTED_CHANNELS:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown channel")
     tested_at = datetime.now(UTC)
-    async with SessionLocal.begin() as session:
+    async with SessionLocal() as session:
         stored = await session.scalar(
             select(CommunicationChannelSetting).where(
                 CommunicationChannelSetting.organization_id == organization.id,
@@ -443,43 +479,39 @@ async def test_channel_endpoint(
         )
         if stored is None or stored.mode != "internal":
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Internal channel is not enabled")
-        try:
-            details: dict[str, str] = {}
-            if stored.provider == "smtp_imap":
-                details = await test_smtp_imap(decrypt_config(stored.encrypted_config))
-            elif stored.provider == "infobip":
-                if stored.connection_id is None:
-                    raise ValueError("Infobip connection missing")
-                connection = await session.get(CommunicationConnection, stored.connection_id, with_for_update=True)
-                if connection is None:
+        setting_id = stored.id
+        provider = stored.provider
+        connection_id = stored.connection_id
+        config = decrypt_config(stored.encrypted_config)
+
+    details: dict[str, str] = {}
+    try:
+        if provider == "smtp_imap":
+            details = await test_smtp_imap(config)
+        elif provider == "infobip":
+            if connection_id is None:
+                raise ValueError("Infobip connection missing")
+            async with SessionLocal.begin() as session:
+                connection = await session.get(CommunicationConnection, connection_id, with_for_update=True)
+                if connection is None or connection.organization_id != organization.id:
                     raise ValueError("Infobip connection missing")
                 await test_infobip_connection(session, connection)
                 connection.status = "connected"
                 connection.last_error = None
                 connection.last_tested_at = tested_at
-            elif stored.provider == "microsoft365":
-                if stored.connection_id is None:
-                    raise ValueError("Microsoft 365 connection missing")
-                connection = await session.get(CommunicationConnection, stored.connection_id, with_for_update=True)
-                if connection is None or connection.provider != "microsoft365":
-                    raise ValueError("Microsoft 365 connection missing")
-                details = await microsoft365.test_connection(connection.id)
-                connection.status = "connected"
-                connection.last_error = None
-                connection.last_tested_at = tested_at
-            else:
-                raise ValueError("Unsupported internal provider")
-        except Exception as exc:
-            stored.status = "error"
-            stored.last_error = str(exc)[:2000]
-            stored.last_tested_at = tested_at
-            return ConnectionTestRead(
-                ok=False, status="error", tested_at=tested_at, error=stored.last_error
-            )
-        stored.status = "ok"
-        stored.last_error = None
-        stored.last_tested_at = tested_at
-        return ConnectionTestRead(ok=True, status="ok", tested_at=tested_at, details=details)
+        elif provider == "microsoft365":
+            if connection_id is None:
+                raise ValueError("Microsoft 365 connection missing")
+            details = await microsoft365.test_connection(connection_id)
+        else:
+            raise ValueError("Unsupported internal provider")
+    except Exception as exc:
+        error = str(exc)[:2000]
+        await _set_channel_test_result(setting_id, tested_at=tested_at, error=error)
+        return ConnectionTestRead(ok=False, status="error", tested_at=tested_at, error=error)
+
+    await _set_channel_test_result(setting_id, tested_at=tested_at, error=None)
+    return ConnectionTestRead(ok=True, status="ok", tested_at=tested_at, details=details)
 
 
 @router.get("", response_model=list[ChannelSettingRead])
@@ -579,13 +611,18 @@ async def update_setting(
                 if secret_field not in incoming and secret_field in existing:
                     incoming[secret_field] = existing[secret_field]
 
+        old_provider = stored.provider
+        old_connection_id = stored.connection_id
         stored.mode = payload.mode
         stored.provider = provider
         stored.connection_id = connection.id if connection else None
         stored.sender = payload.sender if provider == "infobip" else None
         stored.encrypted_config = encrypt_config(incoming) if incoming else None
         stored.webhook_key = None
-        stored.sync_cursor = None if provider != "smtp_imap" else stored.sync_cursor
+        if provider not in {"smtp_imap", "microsoft365"} or (
+            provider != old_provider or stored.connection_id != old_connection_id
+        ):
+            stored.sync_cursor = None
         stored.status = "not_tested"
         stored.last_tested_at = None
         stored.last_error = None
