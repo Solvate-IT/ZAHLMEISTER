@@ -80,6 +80,7 @@ export const api = {
   templates:()=>request<T.MessageTemplate[]>("/message-templates"),
   createTemplate:(name:string)=>request<T.MessageTemplate>("/message-templates",{method:"POST",body:JSON.stringify({name})}),
   updateTemplate:(id:string,payload:Record<string,unknown>)=>request<T.MessageTemplate>(`/message-templates/${id}`,{method:"PUT",body:JSON.stringify(payload)}),
+  deleteTemplate:(id:string)=>request<void>(`/message-templates/${id}`,{method:"DELETE"}),
   paymentSettings:()=>request<T.PaymentSettings>("/payment-settings"),
   savePaymentSettings:(payload:T.PaymentSettingsUpdate)=>request<T.PaymentSettings>("/payment-settings",{method:"PUT",body:JSON.stringify(payload)}),
   publicPayment:(token:string)=>request<T.PublicPayment>(`/public/payments/${encodeURIComponent(token)}`,{},false),
