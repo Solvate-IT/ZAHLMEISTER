@@ -110,12 +110,31 @@ def _ensure_public_mail_host(host: str) -> None:
             raise ValueError("Private or local mail server addresses are not allowed")
 
 
+def _effective_smtp_config(config: dict[str, Any]) -> dict[str, Any]:
+    if str(config.get("smtp_host") or "").strip() and str(config.get("from_address") or "").strip():
+        return config
+    if not settings.smtp_host.strip() or not settings.mail_from_address.strip():
+        return config
+    return {
+        **config,
+        "smtp_host": settings.smtp_host,
+        "smtp_port": settings.smtp_port,
+        "smtp_username": settings.smtp_username,
+        "smtp_password": settings.smtp_password,
+        "smtp_starttls": settings.smtp_starttls,
+        "smtp_ssl": False,
+        "from_address": settings.mail_from_address,
+        "from_name": settings.mail_from_name,
+    }
+
+
 def _smtp_send(
     recipient: str,
     content: CanonicalMessage,
     config: dict[str, Any],
     message_id: str,
 ) -> None:
+    config = _effective_smtp_config(config)
     host = str(config.get("smtp_host") or "").strip()
     port = int(config.get("smtp_port") or (465 if config.get("smtp_ssl") else 587))
     username = str(config.get("smtp_username") or "").strip()
@@ -230,6 +249,7 @@ async def fetch_imap(config: dict[str, Any], last_uid: int) -> list[IncomingMail
 
 
 def _test_smtp_imap(config: dict[str, Any]) -> dict[str, str]:
+    config = _effective_smtp_config(config)
     result: dict[str, str] = {}
     smtp_host = str(config.get("smtp_host") or "").strip()
     from_address = str(config.get("from_address") or "").strip()
