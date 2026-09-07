@@ -1,3 +1,5 @@
+from app.core.config import settings
+
 SUPPORTED_CHANNELS = (
     "email",
     "sms",
@@ -32,9 +34,13 @@ def internal_channel_configured(
     sender: str | None = None,
 ) -> bool:
     if provider == "smtp_imap":
-        if channel != "email" or not config:
+        if channel != "email":
             return False
-        return all(str(config.get(key) or "").strip() for key in REQUIRED_SMTP_IMAP_FIELDS)
+        if config and all(
+            str(config.get(key) or "").strip() for key in REQUIRED_SMTP_IMAP_FIELDS
+        ):
+            return True
+        return bool(settings.smtp_host.strip() and settings.mail_from_address.strip())
     if provider == "infobip":
         # Every outbound Infobip channel needs a configured sender/resource.
         # Telegram is reply-only in Infobip Conversations; a configured resource still
