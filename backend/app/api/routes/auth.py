@@ -24,6 +24,7 @@ from app.services.auth import (
     create_auth_session,
     hash_password,
     normalize_email,
+    user_read,
     verify_password,
 )
 from app.services.platform_mail import send_platform_mail
@@ -49,6 +50,8 @@ async def _send_password_reset(email: str, token: str, locale: str) -> None:
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
 async def register(payload: RegisterRequest, background_tasks: BackgroundTasks) -> AuthResponse:
     email = normalize_email(str(payload.email))
+    if email in settings.platform_admin_emails:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Reserved account")
     verification_token: str | None = None
     try:
         async with SessionLocal.begin() as session:
@@ -122,16 +125,7 @@ async def me(
     organization = await session.get(Organization, user.organization_id)
     if organization is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
-    return UserRead(
-        id=str(user.id),
-        email=user.email,
-        display_name=user.display_name,
-        organization_id=str(user.organization_id),
-        organization_name=organization.name,
-        locale=organization.locale,
-        currency=organization.currency,
-        email_verified=user.email_verified_at is not None,
-    )
+    return user_read(user, organization)
 
 
 @router.post("/resend-verification", status_code=status.HTTP_204_NO_CONTENT)
