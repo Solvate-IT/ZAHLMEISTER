@@ -26,7 +26,7 @@ export function FileDropZone({accept,disabled=false,file,label,hint,selectLabel,
       onDragLeave={event=>{event.preventDefault();setDragging(false)}}
       onDrop={event=>{event.preventDefault();setDragging(false);picked(event.dataTransfer.files?.[0])}}
     >
-      <input ref={inputRef} className="hidden" type="file" accept={accept} capture={capture} disabled={disabled} onChange={event=>{picked(event.target.files?.[0]);event.currentTarget.value=""}}/>
+      <input ref={inputRef} className="hidden" type="file" accept={accept} capture={capture} disabled={disabled} onClick={event=>event.stopPropagation()} onChange={event=>{picked(event.target.files?.[0]);event.currentTarget.value=""}}/>
       <strong>{file?.name??dropLabel}</strong>
       <span className="muted">{file?selectLabel:hint}</span>
     </div>
