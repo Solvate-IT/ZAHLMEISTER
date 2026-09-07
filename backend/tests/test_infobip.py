@@ -1,5 +1,7 @@
 import pytest
+from pydantic import ValidationError
 
+from app.schemas.communications import CommunicationConnectionUpdate
 from app.services.infobip import sign_oauth_state, verify_oauth_state
 from app.services.message_renderer import CanonicalMessage
 
@@ -18,11 +20,6 @@ def test_infobip_oauth_state_rejects_tampering() -> None:
         verify_oauth_state(tampered)
 
 
-from pydantic import ValidationError
-
-from app.schemas.communications import CommunicationConnectionUpdate
-
-
 def test_infobip_connection_update_requires_https_base_url() -> None:
     value = CommunicationConnectionUpdate(base_url="https://abc.api.infobip.com/")
     assert value.base_url == "https://abc.api.infobip.com"
@@ -30,10 +27,11 @@ def test_infobip_connection_update_requires_https_base_url() -> None:
         CommunicationConnectionUpdate(base_url="http://abc.api.infobip.com")
 
 
-def test_delivery_status_never_regresses_after_delivery() -> None:
+def test_delivery_status_never_regresses_after_stronger_evidence() -> None:
     from app.api.routes.webhooks import _advanced_delivery_status
 
     assert _advanced_delivery_status("sent", "failed") == "failed"
+    assert _advanced_delivery_status("failed", "sent") == "failed"
     assert _advanced_delivery_status("failed", "delivered") == "delivered"
     assert _advanced_delivery_status("delivered", "failed") == "delivered"
     assert _advanced_delivery_status("read", "failed") == "read"
