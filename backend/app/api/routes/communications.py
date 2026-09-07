@@ -10,41 +10,40 @@ from app.db.session import SessionLocal
 from app.models.entities import (
     Collection,
     CollectionParticipant,
-    CommunicationChannelSetting,
-    CommunicationConnection,
     CommunicationMessage,
     Organization,
     Participant,
     ScheduledJob,
 )
 from app.schemas.communications import (
+    ChannelFeedbackRequest,
     CommunicationRead,
     ExternalDraftRead,
     ExternalDraftRequest,
     ExternalOpenedRequest,
+    ExternalResultRequest,
     InternalMessageRequest,
     QueueMessageResult,
 )
-from app.services.channel_config import internal_channel_configured
+from app.services.channel_strategy import (
+    channel_addresses,
+    load_channel_runtimes,
+    set_channel_knowledge,
+)
 from app.services.communications import external_launch_uri, recipient_for_channel
-from app.services.infobip import connection_is_active
 from app.services.message_renderer import render_collection_message
-from app.services.secrets import decrypt_config
 
 router = APIRouter(tags=["communications"])
 
 
-def _channel_addresses(participant: Participant) -> dict[str, str]:
-    try:
-        data = json.loads(participant.channel_addresses_json or "{}")
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return {str(key): str(value) for key, value in data.items() if value}
-
-
-async def _owned_context(session, organization: Organization, collection_id: UUID, cp_id: UUID, *, for_update: bool = False):
+async def _owned_context(
+    session,
+    organization: Organization,
+    collection_id: UUID,
+    cp_id: UUID,
+    *,
+    for_update: bool = False,
+):
     stmt = (
         select(CollectionParticipant, Collection, Participant)
         .join(Collection, Collection.id == CollectionParticipant.collection_id)
@@ -83,8 +82,16 @@ def _to_read(message: CommunicationMessage) -> CommunicationRead:
     )
 
 
-@router.get("/collections/{collection_id}/participants/{cp_id}/communications", response_model=list[CommunicationRead])
-async def list_communications(collection_id: UUID, cp_id: UUID, organization: Organization = Depends(get_organization), session=Depends(get_session)) -> list[CommunicationRead]:
+@router.get(
+    "/collections/{collection_id}/participants/{cp_id}/communications",
+    response_model=list[CommunicationRead],
+)
+async def list_communications(
+    collection_id: UUID,
+    cp_id: UUID,
+    organization: Organization = Depends(get_organization),
+    session=Depends(get_session),
+) -> list[CommunicationRead]:
     await _owned_context(session, organization, collection_id, cp_id)
     messages = (
         await session.execute(
@@ -110,77 +117,69 @@ async def create_external_draft(
     payload: ExternalDraftRequest,
     organization: Organization = Depends(get_organization),
 ) -> ExternalDraftRead:
-    failure_detail: str | None = None
-    result: ExternalDraftRead | None = None
     async with SessionLocal.begin() as session:
         stored_org = await session.get(Organization, organization.id)
         assert stored_org is not None
-        cp, collection, participant = await _owned_context(session, stored_org, collection_id, cp_id)
+        cp, collection, participant = await _owned_context(
+            session, stored_org, collection_id, cp_id, for_update=True
+        )
+        runtimes = await load_channel_runtimes(session, stored_org.id)
+        runtime = runtimes.get(payload.channel)
+        if runtime is None or runtime.mode != "external":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"External {payload.channel} is not enabled",
+            )
         recipient = recipient_for_channel(
             payload.channel,
             email=participant.email,
             phone=participant.phone,
-            channel_addresses=_channel_addresses(participant),
+            channel_addresses=channel_addresses(participant),
         )
-        if not recipient and payload.channel not in {"telegram", "instagram", "messenger"}:
-            failure_detail = f"No recipient available for {payload.channel}"
-            session.add(
-                CommunicationMessage(
-                    organization_id=stored_org.id,
-                    collection_id=collection.id,
-                    collection_participant_id=cp.id,
-                    kind=payload.kind,
-                    channel=payload.channel,
-                    delivery_mode="external",
-                    direction="outgoing",
-                    status="failed",
-                    error=failure_detail,
-                )
+        if not recipient:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"No recipient available for {payload.channel}",
             )
-        else:
-            content = await render_collection_message(
-                session,
-                collection=collection,
-                collection_participant=cp,
-                participant=participant,
-                organization=stored_org,
-            )
-            message = CommunicationMessage(
-                organization_id=stored_org.id,
-                collection_id=collection.id,
-                collection_participant_id=cp.id,
-                kind=payload.kind,
-                channel=payload.channel,
-                delivery_mode="external",
-                direction="outgoing",
-                recipient=recipient,
-                subject=content.subject,
-                body=content.text,
-                status="draft",
-                metadata_json=content.metadata_json(),
-            )
-            session.add(message)
-            await session.flush()
-            launch_uri, recipient_selection_required = external_launch_uri(
-                payload.channel, recipient, content.subject, content.text
-            )
-            result = ExternalDraftRead(
-                message_id=message.id,
-                channel=payload.channel,
-                recipient=recipient,
-                subject=content.subject,
-                body=content.text,
-                launch_uri=launch_uri,
-                recipient_selection_required=recipient_selection_required,
-                payment_qr_url=content.payment_qr_url,
-                payment_qr_filename=(
-                    f"zahlmeister-{cp.payment_reference}-qr.png" if content.payment_qr_url else None
-                ),
-            )
-    if failure_detail:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=failure_detail)
-    assert result is not None
-    return result
+        content = await render_collection_message(
+            session,
+            collection=collection,
+            collection_participant=cp,
+            participant=participant,
+            organization=stored_org,
+        )
+        message = CommunicationMessage(
+            organization_id=stored_org.id,
+            collection_id=collection.id,
+            collection_participant_id=cp.id,
+            kind=payload.kind,
+            channel=payload.channel,
+            delivery_mode="external",
+            direction="outgoing",
+            recipient=recipient,
+            subject=content.subject,
+            body=content.text,
+            status="draft",
+            metadata_json=content.metadata_json(),
+        )
+        session.add(message)
+        await session.flush()
+        launch_uri, recipient_selection_required = external_launch_uri(
+            payload.channel, recipient, content.subject, content.text
+        )
+        return ExternalDraftRead(
+            message_id=message.id,
+            channel=payload.channel,
+            recipient=recipient,
+            subject=content.subject,
+            body=content.text,
+            launch_uri=launch_uri,
+            recipient_selection_required=recipient_selection_required,
+            payment_qr_url=content.payment_qr_url,
+            payment_qr_filename=(
+                f"zahlmeister-{cp.payment_reference}-qr.png" if content.payment_qr_url else None
+            ),
+        )
 
 
 @router.post(
@@ -203,20 +202,99 @@ async def mark_external_opened(
             or message.delivery_mode != "external"
         ):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Draft not found")
-        already_opened = message.status == "external_opened"
         message.status = "external_opened"
         message.error = None
-        now = datetime.now(UTC)
-        cp = await session.get(CollectionParticipant, cp_id, with_for_update=True)
-        if cp is not None and not already_opened:
+        await session.flush()
+        await session.refresh(message)
+        return _to_read(message)
+
+
+@router.post(
+    "/collections/{collection_id}/participants/{cp_id}/communications/external-result",
+    response_model=CommunicationRead,
+)
+async def confirm_external_result(
+    collection_id: UUID,
+    cp_id: UUID,
+    payload: ExternalResultRequest,
+    organization: Organization = Depends(get_organization),
+) -> CommunicationRead:
+    now = datetime.now(UTC)
+    async with SessionLocal.begin() as session:
+        cp, _collection, participant = await _owned_context(
+            session, organization, collection_id, cp_id, for_update=True
+        )
+        message = await session.get(CommunicationMessage, payload.message_id, with_for_update=True)
+        if (
+            message is None
+            or message.organization_id != organization.id
+            or message.collection_participant_id != cp.id
+            or message.delivery_mode != "external"
+        ):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Draft not found")
+
+        if payload.result == "sent":
+            message.status = "sent"
+            message.sent_at = now
+            message.error = None
             if message.kind == "initial" and cp.initial_sent_at is None:
                 cp.initial_sent_at = now
             elif message.kind == "reminder":
                 cp.last_reminder_at = now
                 cp.reminder_count += 1
+            if message.channel == "whatsapp":
+                await set_channel_knowledge(
+                    session,
+                    participant.id,
+                    "whatsapp",
+                    availability="available",
+                )
+        elif payload.result == "unavailable":
+            message.status = "failed"
+            message.error = "Recipient reported unavailable for this channel"
+            await set_channel_knowledge(
+                session,
+                participant.id,
+                message.channel,
+                availability="unavailable",
+                failure_reason="Recipient reported unavailable for this channel",
+            )
+        else:
+            message.status = "skipped"
+            message.error = None
         await session.flush()
         await session.refresh(message)
         return _to_read(message)
+
+
+@router.post(
+    "/collections/{collection_id}/participants/{cp_id}/channels/{channel}/feedback",
+    response_model=CommunicationRead | None,
+)
+async def set_channel_feedback(
+    collection_id: UUID,
+    cp_id: UUID,
+    channel: str,
+    payload: ChannelFeedbackRequest,
+    organization: Organization = Depends(get_organization),
+):
+    async with SessionLocal.begin() as session:
+        _cp, _collection, participant = await _owned_context(
+            session, organization, collection_id, cp_id, for_update=True
+        )
+        try:
+            await set_channel_knowledge(
+                session,
+                participant.id,
+                channel,
+                availability=payload.availability,
+                failure_reason=payload.failure_reason,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+    return None
 
 
 @router.post(
@@ -251,11 +329,19 @@ async def queue_internal_message(
         )
         if existing is not None:
             return QueueMessageResult(message_id=existing.id, status="queued")
+
+        runtimes = await load_channel_runtimes(session, stored_org.id)
+        runtime = runtimes.get(payload.channel)
+        if runtime is None or runtime.mode != "internal" or not runtime.configured:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Internal {payload.channel} is not configured",
+            )
         recipient = recipient_for_channel(
             payload.channel,
             email=participant.email,
             phone=participant.phone,
-            channel_addresses=_channel_addresses(participant),
+            channel_addresses=channel_addresses(participant),
         )
         if not recipient:
             message = CommunicationMessage(
@@ -272,34 +358,7 @@ async def queue_internal_message(
             session.add(message)
             await session.flush()
             return QueueMessageResult(message_id=message.id, status="failed")
-        channel_setting = await session.scalar(
-            select(CommunicationChannelSetting).where(
-                CommunicationChannelSetting.organization_id == stored_org.id,
-                CommunicationChannelSetting.channel == payload.channel,
-            )
-        )
-        if channel_setting is None or channel_setting.mode != "internal":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Internal {payload.channel} is not configured",
-            )
-        config = decrypt_config(channel_setting.encrypted_config)
-        connection = (
-            await session.get(CommunicationConnection, channel_setting.connection_id)
-            if channel_setting.connection_id
-            else None
-        )
-        if not internal_channel_configured(
-            payload.channel,
-            provider=channel_setting.provider,
-            config=config,
-            connection_active=connection_is_active(connection),
-            sender=channel_setting.sender,
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Internal {payload.channel} is not configured",
-            )
+
         content = await render_collection_message(
             session,
             collection=collection,
@@ -319,7 +378,7 @@ async def queue_internal_message(
             subject=content.subject,
             body=content.text,
             status="queued",
-            provider=channel_setting.provider,
+            provider=runtime.provider,
             metadata_json=content.metadata_json(),
         )
         session.add(message)
@@ -328,7 +387,7 @@ async def queue_internal_message(
             ScheduledJob(
                 organization_id=stored_org.id,
                 job_type="send_message",
-                payload=f'{{"message_id":"{message.id}"}}',
+                payload=json.dumps({"message_id": str(message.id)}),
                 scheduled_at=datetime.now(UTC),
             )
         )
