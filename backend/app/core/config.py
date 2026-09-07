@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 
 from pydantic import Field, model_validator
@@ -77,11 +78,12 @@ class Settings(BaseSettings):
     infobip_oauth_token_url: str = "https://oneapi.infobip.com/exchange/1/oauth/token"
     infobip_default_base_url: str = "https://api.infobip.com"
 
+    ponto_connect_environment: Literal["sandbox", "live"] = "sandbox"
     ponto_connect_client_id: str = ""
     ponto_connect_client_secret: str = ""
     ponto_connect_client_secret_file: str = ""
     ponto_connect_api_url: str = "https://api.ibanity.com/ponto-connect"
-    ponto_connect_authorize_url: str = "https://authorization.myponto.com/oauth2/auth"
+    ponto_connect_authorize_url: str = ""
     ponto_connect_token_url: str = "https://api.ibanity.com/ponto-connect/oauth2/token"
     ponto_connect_scope: str = "offline_access ai name"
     ponto_connect_cert_path: str = ""
@@ -120,6 +122,14 @@ class Settings(BaseSettings):
     @property
     def oauth_callback_base(self) -> str:
         return (self.oauth_callback_base_url.strip() or self.public_app_url.strip()).rstrip("/")
+
+    @property
+    def ponto_authorization_url(self) -> str:
+        if self.ponto_connect_authorize_url.strip():
+            return self.ponto_connect_authorize_url.strip()
+        if self.ponto_connect_environment == "sandbox":
+            return "https://sandbox-authorization.myponto.com/oauth2/auth"
+        return "https://authorization.myponto.com/oauth2/auth"
 
     @property
     def platform_admin_emails(self) -> set[str]:
@@ -174,6 +184,19 @@ class Settings(BaseSettings):
                 continue
             if parsed.scheme != "https" or not parsed.netloc or parsed.path not in {"", "/"}:
                 errors.append(f"CORS origin is not a valid HTTPS origin: {origin}")
+
+        ponto_configured = any(
+            (
+                self.ponto_connect_client_id.strip(),
+                self.ponto_connect_client_secret.strip(),
+                self.ponto_connect_cert_path.strip(),
+                self.ponto_connect_key_path.strip(),
+            )
+        )
+        if ponto_configured and self.ponto_connect_environment != "live":
+            errors.append("PONTO_CONNECT_ENVIRONMENT must be live in production")
+        if ponto_configured and "sandbox-authorization.myponto.com" in self.ponto_authorization_url:
+            errors.append("Ponto sandbox authorization URL must not be used in production")
 
         if self.mail_delivery_mode != "smtp":
             errors.append("MAIL_DELIVERY_MODE must be smtp in production")
