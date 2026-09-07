@@ -60,7 +60,7 @@ generate_secrets() { ZM_ENV_FILE="$ENV_FILE" "$SCRIPT_DIR/scripts/generate-secre
 
 while true; do
   frontend_port="$(env_value FRONTEND_PORT 3003)"
-  mailpit_port="$(env_value MAILPIT_PORT 8027)"
+  mailpit_port="$(env_value MAILPIT_PORT 8028)"
   cat <<EOF
 ------------------------------------------------------------
  Zahlmeister - Docker ${MODE}
