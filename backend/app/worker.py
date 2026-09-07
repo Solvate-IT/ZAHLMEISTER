@@ -18,21 +18,21 @@ from app.models.entities import (
     CommunicationConnection,
     CommunicationMessage,
     Organization,
-    Participant,
     RuntimeHeartbeat,
     ScheduledJob,
 )
 from app.services import microsoft365
 from app.services.bank_sync import sync_connection as sync_bank_connection
-from app.services.channel_config import internal_channel_configured
-from app.services.communications import fetch_imap, recipient_for_channel, send_smtp_email
+from app.services.channel_strategy import load_channel_runtimes, set_channel_knowledge
+from app.services.communications import fetch_imap, send_smtp_email
 from app.services.infobip import (
     authorization_for_connection,
     connection_is_active,
     connection_webhook_url,
     send_infobip_message,
 )
-from app.services.message_renderer import canonical_from_stored_message, render_collection_message
+from app.services.message_dispatch import queue_collection_messages
+from app.services.message_renderer import canonical_from_stored_message
 from app.services.reminders import deserialize_reminder_rules, reminder_schedule
 from app.services.retry import is_retryable_exception, retry_delay_seconds
 from app.services.secrets import decrypt_config
@@ -158,150 +158,22 @@ async def recover_stale_jobs() -> int:
     return recovered
 
 
-async def _channel_setting(session, organization_id, channel: str):
-    return await session.scalar(
-        select(CommunicationChannelSetting).where(
-            CommunicationChannelSetting.organization_id == organization_id,
-            CommunicationChannelSetting.channel == channel,
-            CommunicationChannelSetting.mode == "internal",
-        )
-    )
-
-
-def _channel_addresses(participant: Participant) -> dict[str, str]:
-    try:
-        data = json.loads(participant.channel_addresses_json or "{}")
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return {str(key): str(value) for key, value in data.items() if value}
-
-
-async def _validate_internal_setting(session, setting: CommunicationChannelSetting) -> None:
-    config = decrypt_config(setting.encrypted_config)
-    connection = None
-    if setting.provider in {"infobip", "microsoft365"} and setting.connection_id:
-        connection = await session.get(CommunicationConnection, setting.connection_id)
-    active = (
-        bool(connection and connection.status == "connected")
-        if setting.provider == "microsoft365"
-        else connection_is_active(connection)
-    )
-    if not internal_channel_configured(
-        setting.channel,
-        provider=setting.provider,
-        config=config,
-        connection_active=active,
-        sender=setting.sender,
-    ):
-        raise ValueError(f"Internal {setting.channel} is not configured")
-
-
 async def _queue_message_jobs(collection_id: UUID, *, kind: str) -> int:
-    now = datetime.now(UTC)
-    queued = 0
     async with SessionLocal.begin() as session:
-        collection = await session.get(Collection, collection_id)
+        collection = await session.get(Collection, collection_id, with_for_update=True)
         if collection is None:
             raise ValueError(f"Collection {collection_id} not found")
-        if collection.communication_mode != "internal":
-            return 0
         organization = await session.get(Organization, collection.organization_id)
         if organization is None or not organization.bank_account_name or not organization.bank_iban:
             raise ValueError("Receiving bank account is not configured")
-        setting = await _channel_setting(session, organization.id, collection.communication_channel)
-        if setting is None:
-            raise ValueError(f"Internal {collection.communication_channel} is not configured")
-        await _validate_internal_setting(session, setting)
-
-        rows = (
-            await session.execute(
-                select(CollectionParticipant, Participant)
-                .join(Participant, Participant.id == CollectionParticipant.participant_id)
-                .where(CollectionParticipant.collection_id == collection.id)
-                .order_by(CollectionParticipant.created_at)
-            )
-        ).all()
-        for cp, participant in rows:
-            locked_cp = await session.get(
-                CollectionParticipant, cp.id, with_for_update=True
-            )
-            if locked_cp is None:
-                continue
-            cp = locked_cp
-            if kind == "initial" and cp.initial_sent_at is not None:
-                continue
-            if kind == "reminder" and (cp.status != "open" or cp.initial_sent_at is None):
-                continue
-            queued_message = await session.scalar(
-                select(CommunicationMessage.id)
-                .where(
-                    CommunicationMessage.collection_participant_id == cp.id,
-                    CommunicationMessage.kind == kind,
-                    CommunicationMessage.direction == "outgoing",
-                    CommunicationMessage.status == "queued",
-                )
-                .limit(1)
-            )
-            if queued_message is not None:
-                continue
-            recipient = recipient_for_channel(
-                collection.communication_channel,
-                email=participant.email,
-                phone=participant.phone,
-                channel_addresses=_channel_addresses(participant),
-            )
-            if not recipient:
-                session.add(
-                    CommunicationMessage(
-                        organization_id=organization.id,
-                        collection_id=collection.id,
-                        collection_participant_id=cp.id,
-                        kind=kind,
-                        channel=collection.communication_channel,
-                        delivery_mode="internal",
-                        direction="outgoing",
-                        status="skipped",
-                        provider=setting.provider,
-                        error=f"No {collection.communication_channel} recipient",
-                    )
-                )
-                continue
-            content = await render_collection_message(
-                session,
-                collection=collection,
-                collection_participant=cp,
-                participant=participant,
-                organization=organization,
-            )
-            message = CommunicationMessage(
-                organization_id=organization.id,
-                collection_id=collection.id,
-                collection_participant_id=cp.id,
-                kind=kind,
-                channel=collection.communication_channel,
-                delivery_mode="internal",
-                direction="outgoing",
-                recipient=recipient,
-                subject=content.subject,
-                body=content.text,
-                status="queued",
-                provider=setting.provider,
-                metadata_json=content.metadata_json(),
-            )
-            session.add(message)
-            await session.flush()
-            session.add(
-                ScheduledJob(
-                    organization_id=organization.id,
-                    job_type="send_message",
-                    payload=json.dumps({"message_id": str(message.id)}),
-                    scheduled_at=now,
-                )
-            )
-            queued += 1
-    return queued
+        outcome = await queue_collection_messages(
+            session,
+            collection=collection,
+            organization=organization,
+            kind=kind,
+            include_external=False,
+        )
+        return outcome.queued_internal
 
 
 async def send_collection(job: ScheduledJob) -> None:
@@ -334,20 +206,31 @@ async def send_collection(job: ScheduledJob) -> None:
         if schedules:
             async with SessionLocal.begin() as session:
                 for rule_key, scheduled_at in schedules:
-                    session.add(
-                        ScheduledJob(
-                            organization_id=organization_id,
-                            job_type="send_reminders",
-                            payload=json.dumps(
-                                {
-                                    "collection_id": str(collection_id),
-                                    "automatic": True,
-                                    "rule": rule_key,
-                                }
-                            ),
-                            scheduled_at=scheduled_at,
-                        )
+                    payload = json.dumps(
+                        {
+                            "collection_id": str(collection_id),
+                            "automatic": True,
+                            "rule": rule_key,
+                        }
                     )
+                    existing = await session.scalar(
+                        select(ScheduledJob.id)
+                        .where(
+                            ScheduledJob.job_type == "send_reminders",
+                            ScheduledJob.payload == payload,
+                            ScheduledJob.status.in_(["pending", "running", "done"]),
+                        )
+                        .limit(1)
+                    )
+                    if existing is None:
+                        session.add(
+                            ScheduledJob(
+                                organization_id=organization_id,
+                                job_type="send_reminders",
+                                payload=payload,
+                                scheduled_at=scheduled_at,
+                            )
+                        )
 
 
 async def send_reminders(job: ScheduledJob) -> None:
@@ -364,6 +247,7 @@ async def send_message(job: ScheduledJob) -> None:
     connection_id: UUID | None = None
     recipient = ""
     channel = ""
+    participant_id: UUID | None = None
 
     async with SessionLocal.begin() as session:
         message = await session.get(CommunicationMessage, message_id, with_for_update=True)
@@ -386,16 +270,17 @@ async def send_message(job: ScheduledJob) -> None:
             return
 
         content = canonical_from_stored_message(message)
-        setting = await _channel_setting(session, message.organization_id, message.channel)
-        if setting is None:
+        runtimes = await load_channel_runtimes(session, message.organization_id)
+        runtime = runtimes.get(message.channel)
+        if runtime is None or runtime.mode != "internal" or not runtime.configured:
             raise ValueError(f"Internal {message.channel} is not configured")
-        await _validate_internal_setting(session, setting)
-        provider = setting.provider or ""
-        sender = setting.sender or ""
-        config = decrypt_config(setting.encrypted_config)
-        connection_id = setting.connection_id
+        provider = runtime.provider or ""
+        sender = runtime.sender or ""
+        config = runtime.config
+        connection_id = runtime.connection_id
         recipient = message.recipient
         channel = message.channel
+        participant_id = cp.participant_id
 
     message_header_id = f"<zm-{message_id}@zahlmeister>"
     if provider == "smtp_imap":
@@ -460,6 +345,13 @@ async def send_message(job: ScheduledJob) -> None:
         elif stored.kind == "reminder":
             cp.last_reminder_at = now
             cp.reminder_count += 1
+        if channel == "whatsapp" and participant_id is not None:
+            await set_channel_knowledge(
+                session,
+                participant_id,
+                "whatsapp",
+                availability="available",
+            )
 
 
 async def _store_incoming_email(
