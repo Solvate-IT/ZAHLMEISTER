@@ -1,7 +1,11 @@
 from uuid import uuid4
 
+import pytest
+from pydantic import ValidationError
+
 from app.models.channel_strategy import ParticipantChannelSetting
 from app.models.entities import Participant
+from app.schemas.workflow import CollectionCreate
 from app.services import central_mail
 from app.services.channel_strategy import (
     ChannelRuntime,
@@ -124,6 +128,19 @@ def test_disabled_organization_channel_is_skipped() -> None:
     )
     assert route is not None
     assert route.channel == "email"
+
+
+def test_collection_channel_override_defaults_to_auto_and_is_validated() -> None:
+    default = CollectionCreate(participant_list_id=uuid4(), amount="10.00")
+    forced = CollectionCreate(
+        participant_list_id=uuid4(), amount="10.00", communication_channel="sms"
+    )
+    assert default.communication_channel == "auto"
+    assert forced.communication_channel == "sms"
+    with pytest.raises(ValidationError):
+        CollectionCreate(
+            participant_list_id=uuid4(), amount="10.00", communication_channel="fax"
+        )
 
 
 def test_reply_address_roundtrip_and_tamper_rejection(monkeypatch) -> None:
