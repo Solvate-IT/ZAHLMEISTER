@@ -12,6 +12,7 @@ from email.utils import parseaddr
 from typing import Any
 from urllib.parse import quote, urlencode
 
+from app.core.config import settings
 from app.services.message_renderer import CanonicalMessage
 from app.services.payments import render_qr_png
 
@@ -93,6 +94,8 @@ def _ensure_public_mail_host(host: str) -> None:
     value = host.strip().rstrip(".")
     if not value:
         raise ValueError("Mail server host is required")
+    if settings.environment != "production" and value.casefold() == "mailpit":
+        return
     if value.lower() == "localhost":
         raise ValueError("Private mail server addresses are not allowed")
     try:
