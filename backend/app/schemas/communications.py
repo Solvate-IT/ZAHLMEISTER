@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Channel = Literal["email", "sms", "whatsapp", "telegram", "instagram", "messenger"]
 DeliveryMode = Literal["internal", "external"]
-InternalProvider = Literal["infobip", "smtp_imap"]
+InternalProvider = Literal["infobip", "smtp_imap", "microsoft365"]
 
 
 class CommunicationConnectionRead(BaseModel):
@@ -59,6 +59,10 @@ class InfobipConnectRequest(BaseModel):
 
 
 class InfobipOAuthStartRead(BaseModel):
+    authorization_url: str
+
+
+class Microsoft365OAuthStartRead(BaseModel):
     authorization_url: str
 
 
