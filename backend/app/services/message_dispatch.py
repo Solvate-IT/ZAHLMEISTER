@@ -24,6 +24,7 @@ from app.services.channel_strategy import (
     resolve_channel,
 )
 from app.services.message_renderer import render_collection_message
+from app.services.participant_preferences import load_participant_locales
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,7 @@ async def queue_collection_messages(
     participant_ids = [participant.id for _cp, participant in eligible_rows]
     cp_ids = [cp.id for cp, _participant in eligible_rows]
     overrides = await load_participant_channel_settings(session, participant_ids)
+    participant_locales = await load_participant_locales(session, participant_ids)
     runtimes = await load_channel_runtimes(session, organization.id)
     order = await _collection_channel_order(
         session, collection=collection, organization_id=organization.id
@@ -146,6 +148,7 @@ async def queue_collection_messages(
             collection_participant=cp,
             participant=participant,
             organization=organization,
+            participant_locale=participant_locales.get(participant.id),
         )
         provider = route.provider
         if (
