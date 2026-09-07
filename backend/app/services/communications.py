@@ -59,17 +59,12 @@ def external_launch_uri(
         digits = "".join(char for char in recipient if char.isdigit())
         return f"https://wa.me/{digits}?text={quote(body)}", False
     if channel == "telegram":
-        if recipient:
-            username = recipient.lstrip("@").strip()
-            if username:
-                return f"https://t.me/{quote(username)}", False
-        return f"https://t.me/share/url?url=&text={quote(body)}", True
-    if channel == "instagram":
-        return "https://www.instagram.com/direct/inbox/", True
-    if channel == "messenger":
-        if recipient:
-            return f"https://m.me/{quote(recipient.strip())}", False
-        return "https://www.messenger.com/", True
+        if not recipient:
+            raise ValueError("Telegram recipient missing")
+        username = recipient.lstrip("@").strip()
+        if not username:
+            raise ValueError("Telegram username missing")
+        return f"https://t.me/{quote(username)}", False
     raise ValueError(f"Unsupported channel: {channel}")
 
 
@@ -86,8 +81,10 @@ def recipient_for_channel(
     if channel in {"sms", "whatsapp"}:
         normalized = normalize_phone(phone)
         return normalized or None
-    value = str(addresses.get(channel) or "").strip()
-    return value or None
+    if channel == "telegram":
+        value = str(addresses.get("telegram") or "").strip()
+        return value or None
+    return None
 
 
 def _ensure_public_mail_host(host: str) -> None:
@@ -99,7 +96,10 @@ def _ensure_public_mail_host(host: str) -> None:
     if value.lower() == "localhost":
         raise ValueError("Private mail server addresses are not allowed")
     try:
-        addresses = {item[4][0] for item in socket.getaddrinfo(value, None, type=socket.SOCK_STREAM)}
+        addresses = {
+            item[4][0]
+            for item in socket.getaddrinfo(value, None, type=socket.SOCK_STREAM)
+        }
     except socket.gaierror as exc:
         raise ValueError(f"Mail server cannot be resolved: {value}") from exc
     if not addresses:
@@ -111,7 +111,9 @@ def _ensure_public_mail_host(host: str) -> None:
 
 
 def _effective_smtp_config(config: dict[str, Any]) -> dict[str, Any]:
-    if str(config.get("smtp_host") or "").strip() and str(config.get("from_address") or "").strip():
+    if str(config.get("smtp_host") or "").strip() and str(
+        config.get("from_address") or ""
+    ).strip():
         return config
     if not settings.smtp_host.strip() or not settings.mail_from_address.strip():
         return config
@@ -124,7 +126,7 @@ def _effective_smtp_config(config: dict[str, Any]) -> dict[str, Any]:
         "smtp_starttls": settings.smtp_starttls,
         "smtp_ssl": False,
         "from_address": settings.mail_from_address,
-        "from_name": settings.mail_from_name,
+        "from_name": config.get("from_name") or settings.mail_from_name,
     }
 
 
@@ -141,6 +143,7 @@ def _smtp_send(
     password = str(config.get("smtp_password") or "")
     from_address = str(config.get("from_address") or username).strip()
     from_name = str(config.get("from_name") or "Zahlmeister").strip()
+    reply_to = str(config.get("reply_to") or "").strip()
     if not host or not from_address:
         raise ValueError("SMTP host and sender address are required")
     _ensure_public_mail_host(host)
@@ -150,6 +153,8 @@ def _smtp_send(
     message["From"] = f"{from_name} <{from_address}>" if from_name else from_address
     message["To"] = recipient
     message["Message-ID"] = message_id
+    if reply_to:
+        message["Reply-To"] = reply_to
     message.set_content(content.text)
     if content.payment_qr_payload:
         message.add_attachment(
@@ -201,7 +206,9 @@ def _extract_text(message) -> str:
 def _imap_fetch(config: dict[str, Any], last_uid: int) -> list[IncomingMail]:
     host = str(config.get("imap_host") or "").strip()
     port = int(config.get("imap_port") or (993 if config.get("imap_ssl", True) else 143))
-    username = str(config.get("imap_username") or config.get("smtp_username") or "").strip()
+    username = str(
+        config.get("imap_username") or config.get("smtp_username") or ""
+    ).strip()
     password = str(config.get("imap_password") or config.get("smtp_password") or "")
     if not host or not username:
         return []
@@ -216,7 +223,11 @@ def _imap_fetch(config: dict[str, Any], last_uid: int) -> list[IncomingMail]:
         typ, data = client.uid("search", None, "ALL")
         if typ != "OK" or not data:
             return []
-        uids = [int(item) for item in data[0].split() if item.isdigit() and int(item) > last_uid]
+        uids = [
+            int(item)
+            for item in data[0].split()
+            if item.isdigit() and int(item) > last_uid
+        ]
         result: list[IncomingMail] = []
         for uid in uids[-250:]:
             typ, raw = client.uid("fetch", str(uid), "(RFC822)")
@@ -273,15 +284,26 @@ def _test_smtp_imap(config: dict[str, Any]) -> dict[str, str]:
         _ensure_public_mail_host(imap_host)
         imap_ssl = bool(config.get("imap_ssl", True))
         imap_port = int(config.get("imap_port") or (993 if imap_ssl else 143))
-        imap = imaplib.IMAP4_SSL(imap_host, imap_port) if imap_ssl else imaplib.IMAP4(imap_host, imap_port)
+        imap = (
+            imaplib.IMAP4_SSL(imap_host, imap_port)
+            if imap_ssl
+            else imaplib.IMAP4(imap_host, imap_port)
+        )
         try:
             if not imap_ssl and bool(config.get("imap_starttls", True)):
                 imap.starttls()
-            username = str(config.get("imap_username") or config.get("smtp_username") or "").strip()
+            username = str(
+                config.get("imap_username") or config.get("smtp_username") or ""
+            ).strip()
             if not username:
                 raise ValueError("IMAP username is required")
-            imap.login(username, str(config.get("imap_password") or config.get("smtp_password") or ""))
-            status, _ = imap.select(str(config.get("imap_folder") or "INBOX"), readonly=True)
+            imap.login(
+                username,
+                str(config.get("imap_password") or config.get("smtp_password") or ""),
+            )
+            status, _ = imap.select(
+                str(config.get("imap_folder") or "INBOX"), readonly=True
+            )
             if status != "OK":
                 raise ValueError("IMAP inbox cannot be opened")
             result["imap"] = "ok"
