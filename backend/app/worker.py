@@ -11,19 +11,20 @@ from app.core.config import settings
 from app.core.observability import configure_logging
 from app.db.session import SessionLocal
 from app.models.entities import (
+    BankSyncConnection,
     Collection,
     CollectionParticipant,
     CommunicationChannelSetting,
     CommunicationConnection,
     CommunicationMessage,
-    BankSyncConnection,
     Organization,
     Participant,
     RuntimeHeartbeat,
     ScheduledJob,
 )
-from app.services.channel_config import internal_channel_configured
+from app.services import microsoft365
 from app.services.bank_sync import sync_connection as sync_bank_connection
+from app.services.channel_config import internal_channel_configured
 from app.services.communications import fetch_imap, recipient_for_channel, send_smtp_email
 from app.services.infobip import (
     authorization_for_connection,
@@ -180,13 +181,18 @@ def _channel_addresses(participant: Participant) -> dict[str, str]:
 async def _validate_internal_setting(session, setting: CommunicationChannelSetting) -> None:
     config = decrypt_config(setting.encrypted_config)
     connection = None
-    if setting.provider == "infobip" and setting.connection_id:
+    if setting.provider in {"infobip", "microsoft365"} and setting.connection_id:
         connection = await session.get(CommunicationConnection, setting.connection_id)
+    active = (
+        bool(connection and connection.status == "connected")
+        if setting.provider == "microsoft365"
+        else connection_is_active(connection)
+    )
     if not internal_channel_configured(
         setting.channel,
         provider=setting.provider,
         config=config,
-        connection_active=connection_is_active(connection),
+        connection_active=active,
         sender=setting.sender,
     ):
         raise ValueError(f"Internal {setting.channel} is not configured")
@@ -344,7 +350,6 @@ async def send_collection(job: ScheduledJob) -> None:
                     )
 
 
-
 async def send_reminders(job: ScheduledJob) -> None:
     collection_id = UUID(json.loads(job.payload)["collection_id"])
     queued = await _queue_message_jobs(collection_id, kind="reminder")
@@ -380,8 +385,6 @@ async def send_message(job: ScheduledJob) -> None:
             message.error = "No recipient"
             return
 
-        # The canonical content was rendered once when the message was queued.
-        # Transport adapters must never render templates or mutate the message text.
         content = canonical_from_stored_message(message)
         setting = await _channel_setting(session, message.organization_id, message.channel)
         if setting is None:
@@ -401,6 +404,14 @@ async def send_message(job: ScheduledJob) -> None:
             content=content,
             config=config,
             message_id=message_header_id,
+        )
+    elif provider == "microsoft365":
+        if connection_id is None:
+            raise ValueError("Microsoft 365 connection missing")
+        external_id = await microsoft365.send_email(
+            connection_id=connection_id,
+            recipient=recipient,
+            content=content,
         )
     elif provider == "infobip":
         if connection_id is None:
@@ -451,6 +462,139 @@ async def send_message(job: ScheduledJob) -> None:
             cp.reminder_count += 1
 
 
+async def _store_incoming_email(
+    channel_setting: CommunicationChannelSetting,
+    *,
+    provider: str,
+    candidates: list[str],
+    external_id: str | None,
+    in_reply_to: str | None,
+    sender: str | None,
+    recipient: str | None,
+    subject: str | None,
+    body: str,
+    received_at: datetime,
+) -> None:
+    candidates = [item for item in candidates if item]
+    if not candidates:
+        return
+    async with SessionLocal.begin() as session:
+        parent = await session.scalar(
+            select(CommunicationMessage)
+            .where(
+                CommunicationMessage.organization_id == channel_setting.organization_id,
+                CommunicationMessage.direction == "outgoing",
+                CommunicationMessage.channel == "email",
+                CommunicationMessage.provider == provider,
+                CommunicationMessage.external_id.in_(candidates),
+            )
+            .order_by(CommunicationMessage.created_at.desc())
+            .limit(1)
+            .with_for_update()
+        )
+        if parent is None:
+            return
+        if external_id:
+            duplicate = await session.scalar(
+                select(CommunicationMessage.id).where(
+                    CommunicationMessage.organization_id == channel_setting.organization_id,
+                    CommunicationMessage.external_id == external_id,
+                    CommunicationMessage.direction == "incoming",
+                )
+            )
+            if duplicate is not None:
+                return
+        session.add(
+            CommunicationMessage(
+                organization_id=parent.organization_id,
+                collection_id=parent.collection_id,
+                collection_participant_id=parent.collection_participant_id,
+                kind="reply",
+                channel="email",
+                delivery_mode="internal",
+                direction="incoming",
+                sender=sender,
+                recipient=recipient,
+                subject=subject,
+                body=body,
+                status="received",
+                provider=provider,
+                external_id=external_id,
+                in_reply_to=in_reply_to,
+                received_at=received_at,
+            )
+        )
+
+
+async def _sync_smtp_inbox(channel_setting: CommunicationChannelSetting) -> None:
+    config = decrypt_config(channel_setting.encrypted_config)
+    if not config.get("imap_host"):
+        return
+    try:
+        last_uid = int(channel_setting.sync_cursor or 0)
+    except ValueError:
+        last_uid = 0
+    mails = await fetch_imap(config, last_uid)
+    max_uid = last_uid
+    for mail in mails:
+        max_uid = max(max_uid, mail.uid)
+        await _store_incoming_email(
+            channel_setting,
+            provider="smtp_imap",
+            candidates=[mail.in_reply_to or "", *reversed(mail.references)],
+            external_id=mail.message_id,
+            in_reply_to=mail.in_reply_to,
+            sender=mail.sender,
+            recipient=mail.recipient,
+            subject=mail.subject,
+            body=mail.text,
+            received_at=datetime.now(UTC),
+        )
+    async with SessionLocal.begin() as session:
+        stored = await session.get(
+            CommunicationChannelSetting, channel_setting.id, with_for_update=True
+        )
+        if stored:
+            if max_uid > last_uid:
+                stored.sync_cursor = str(max_uid)
+            stored.status = "connected"
+            stored.last_error = None
+
+
+async def _sync_microsoft365_inbox(channel_setting: CommunicationChannelSetting) -> None:
+    if channel_setting.connection_id is None:
+        raise ValueError("Microsoft 365 connection missing")
+    mails, cursor = await microsoft365.fetch_inbox(
+        channel_setting.connection_id,
+        channel_setting.sync_cursor,
+    )
+    for mail in mails:
+        await _store_incoming_email(
+            channel_setting,
+            provider="microsoft365",
+            candidates=[
+                mail.conversation_id or "",
+                mail.in_reply_to or "",
+                *reversed(mail.references),
+            ],
+            external_id=mail.external_id,
+            in_reply_to=mail.in_reply_to,
+            sender=mail.sender,
+            recipient=mail.recipient,
+            subject=mail.subject,
+            body=mail.text,
+            received_at=mail.received_at,
+        )
+    async with SessionLocal.begin() as session:
+        stored = await session.get(
+            CommunicationChannelSetting, channel_setting.id, with_for_update=True
+        )
+        if stored:
+            stored.sync_cursor = cursor
+            stored.status = "connected"
+            stored.last_error = None
+
+
 async def sync_internal_email_inboxes() -> None:
     async with SessionLocal() as session:
         settings_rows = (
@@ -458,7 +602,7 @@ async def sync_internal_email_inboxes() -> None:
                 select(CommunicationChannelSetting).where(
                     CommunicationChannelSetting.channel == "email",
                     CommunicationChannelSetting.mode == "internal",
-                    CommunicationChannelSetting.provider == "smtp_imap",
+                    CommunicationChannelSetting.provider.in_(["smtp_imap", "microsoft365"]),
                 )
             )
         ).scalars().all()
@@ -468,20 +612,17 @@ async def sync_internal_email_inboxes() -> None:
             detached.append(item)
 
     for channel_setting in detached:
-        config = decrypt_config(channel_setting.encrypted_config)
-        if not config.get("imap_host"):
-            continue
         try:
-            last_uid = int(channel_setting.sync_cursor or 0)
-        except ValueError:
-            last_uid = 0
-        try:
-            mails = await fetch_imap(config, last_uid)
+            if channel_setting.provider == "smtp_imap":
+                await _sync_smtp_inbox(channel_setting)
+            elif channel_setting.provider == "microsoft365":
+                await _sync_microsoft365_inbox(channel_setting)
         except Exception as exc:
             logger.exception(
-                "IMAP sync failed",
+                "Internal email inbox sync failed",
                 extra={
-                    "event": "imap_sync_failed",
+                    "event": "email_inbox_sync_failed",
+                    "provider": channel_setting.provider,
                     "organization_id": str(channel_setting.organization_id),
                 },
             )
@@ -492,68 +633,6 @@ async def sync_internal_email_inboxes() -> None:
                 if stored:
                     stored.status = "error"
                     stored.last_error = str(exc)[:2000]
-            continue
-        max_uid = last_uid
-        for mail in mails:
-            max_uid = max(max_uid, mail.uid)
-            candidates = [mail.in_reply_to, *reversed(mail.references)]
-            candidates = [item for item in candidates if item]
-            if not candidates:
-                continue
-            async with SessionLocal.begin() as session:
-                parent = await session.scalar(
-                    select(CommunicationMessage)
-                    .where(
-                        CommunicationMessage.organization_id == channel_setting.organization_id,
-                        CommunicationMessage.direction == "outgoing",
-                        CommunicationMessage.channel == "email",
-                        CommunicationMessage.external_id.in_(candidates),
-                    )
-                    .order_by(CommunicationMessage.created_at.desc())
-                    .limit(1)
-                    .with_for_update()
-                )
-                if parent is None:
-                    continue
-                if mail.message_id:
-                    duplicate = await session.scalar(
-                        select(CommunicationMessage.id).where(
-                            CommunicationMessage.organization_id == channel_setting.organization_id,
-                            CommunicationMessage.external_id == mail.message_id,
-                            CommunicationMessage.direction == "incoming",
-                        )
-                    )
-                    if duplicate is not None:
-                        continue
-                session.add(
-                    CommunicationMessage(
-                        organization_id=parent.organization_id,
-                        collection_id=parent.collection_id,
-                        collection_participant_id=parent.collection_participant_id,
-                        kind="reply",
-                        channel="email",
-                        delivery_mode="internal",
-                        direction="incoming",
-                        sender=mail.sender,
-                        recipient=mail.recipient,
-                        subject=mail.subject,
-                        body=mail.text,
-                        status="received",
-                        provider="smtp_imap",
-                        external_id=mail.message_id,
-                        in_reply_to=mail.in_reply_to,
-                        received_at=datetime.now(UTC),
-                    )
-                )
-        async with SessionLocal.begin() as session:
-            stored = await session.get(
-                CommunicationChannelSetting, channel_setting.id, with_for_update=True
-            )
-            if stored:
-                if max_uid > last_uid:
-                    stored.sync_cursor = str(max_uid)
-                stored.status = "connected"
-                stored.last_error = None
 
 
 async def sync_bank_connections() -> None:
@@ -590,7 +669,6 @@ async def sync_bank_connections() -> None:
                 if connection:
                     connection.status = "error"
                     connection.last_error = str(exc)[:2000]
-
 
 
 async def run_job(job: ScheduledJob) -> None:
