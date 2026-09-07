@@ -176,6 +176,7 @@ async def _access_token(connection_id) -> str:
         if not refresh_token:
             raise ValueError("Microsoft 365 authorization expired; reconnect the mailbox")
         tenant = settings.microsoft365_tenant.strip()
+        refresh_scope = str(config.get("scope") or settings.microsoft365_scopes).strip()
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(
                 f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
@@ -184,7 +185,7 @@ async def _access_token(connection_id) -> str:
                     "client_secret": settings.microsoft365_client_secret,
                     "grant_type": "refresh_token",
                     "refresh_token": refresh_token,
-                    "scope": settings.microsoft365_scopes,
+                    "scope": refresh_scope,
                 },
             )
         if response.status_code >= 400:
@@ -195,6 +196,8 @@ async def _access_token(connection_id) -> str:
         config.update(_token_config(payload))
         if not payload.get("refresh_token"):
             config["refresh_token"] = refresh_token
+        if not payload.get("scope"):
+            config["scope"] = refresh_scope
         connection.encrypted_config = encrypt_config(config)
         connection.status = "connected"
         connection.last_error = None
