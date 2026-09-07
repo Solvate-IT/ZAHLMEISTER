@@ -86,8 +86,8 @@ def _to_read(message: CommunicationMessage) -> CommunicationRead:
         sent_at=message.sent_at,
         received_at=message.received_at,
         created_at=message.created_at,
+        error=message.error,
     )
-
 
 
 @router.get(
@@ -138,6 +138,19 @@ async def create_external_draft(
             channel_addresses=_channel_addresses(participant),
         )
         if not recipient and payload.channel not in {"telegram", "instagram", "messenger"}:
+            session.add(
+                CommunicationMessage(
+                    organization_id=stored_org.id,
+                    collection_id=collection.id,
+                    collection_participant_id=cp.id,
+                    kind=payload.kind,
+                    channel=payload.channel,
+                    delivery_mode="external",
+                    direction="outgoing",
+                    status="failed",
+                    error=f"No recipient available for {payload.channel}",
+                )
+            )
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"No recipient available for {payload.channel}",
@@ -208,6 +221,7 @@ async def mark_external_opened(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Draft not found")
         already_opened = message.status == "external_opened"
         message.status = "external_opened"
+        message.error = None
         now = datetime.now(UTC)
         cp = await session.get(CollectionParticipant, cp_id, with_for_update=True)
         if cp is not None and not already_opened:
@@ -260,10 +274,20 @@ async def queue_internal_message(
             channel_addresses=_channel_addresses(participant),
         )
         if not recipient:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"No recipient available for {payload.channel}",
+            message = CommunicationMessage(
+                organization_id=stored_org.id,
+                collection_id=collection.id,
+                collection_participant_id=cp.id,
+                kind=payload.kind,
+                channel=payload.channel,
+                delivery_mode="internal",
+                direction="outgoing",
+                status="failed",
+                error=f"No recipient available for {payload.channel}",
             )
+            session.add(message)
+            await session.flush()
+            return QueueMessageResult(message_id=message.id, status="failed")
         channel_setting = await session.scalar(
             select(CommunicationChannelSetting).where(
                 CommunicationChannelSetting.organization_id == stored_org.id,
