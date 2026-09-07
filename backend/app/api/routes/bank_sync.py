@@ -16,6 +16,7 @@ from app.schemas.bank_sync import (
     BankSyncRunRead,
     BankSyncStartRead,
     BankSyncTestRead,
+    PontoConfigurationRead,
 )
 from app.services import ponto
 from app.services.bank_sync import refresh_accounts, sync_connection
@@ -49,6 +50,13 @@ def _account_read(item: BankSyncAccount) -> BankSyncAccountRead:
     )
 
 
+def _ponto_redirect(result: str) -> RedirectResponse:
+    return RedirectResponse(
+        f"{settings.public_app_url.rstrip('/')}?ponto={result}",
+        status_code=status.HTTP_302_FOUND,
+    )
+
+
 @router.get("/connection", response_model=BankSyncConnectionRead | None)
 async def get_connection(organization: Organization = Depends(get_organization)):
     async with SessionLocal() as session:
@@ -59,6 +67,14 @@ async def get_connection(organization: Organization = Depends(get_organization))
             )
         )
         return _connection_read(item) if item else None
+
+
+@router.get("/ponto/configuration", response_model=PontoConfigurationRead)
+async def get_ponto_configuration(
+    organization: Organization = Depends(get_organization),
+) -> PontoConfigurationRead:
+    del organization
+    return PontoConfigurationRead(**ponto.configuration_status())
 
 
 @router.post("/ponto/start", response_model=BankSyncStartRead)
@@ -85,42 +101,61 @@ async def start_ponto(organization: Organization = Depends(get_organization)) ->
             language = (organization.locale or "en").split("-", 1)[0]
             url = ponto.start_authorization(item, str(organization.id), language)
         except ValueError as exc:
+            item.status = "error"
+            item.last_error = str(exc)[:2000]
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         return BankSyncStartRead(authorization_url=url)
 
 
 @router.get("/ponto/callback", include_in_schema=False)
-async def finish_ponto(code: str, state: str):
+async def finish_ponto(
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+):
+    if not state:
+        return _ponto_redirect("error")
+
     try:
         connection_id_raw, organization_id_raw = ponto.verify_state(state)
         connection_id = UUID(connection_id_raw)
         organization_id = UUID(organization_id_raw)
-        connection_ok = True
-        async with SessionLocal.begin() as session:
-            item = await session.get(BankSyncConnection, connection_id, with_for_update=True)
-            if item is None or item.organization_id != organization_id:
-                raise ValueError("Ponto connection not found")
-            await ponto.exchange_code(item, code)
+    except (ValueError, TypeError):
+        return _ponto_redirect("error")
+
+    result = "error"
+    async with SessionLocal.begin() as session:
+        item = await session.get(BankSyncConnection, connection_id, with_for_update=True)
+        if item is None or item.organization_id != organization_id:
+            return _ponto_redirect("error")
+
+        now = datetime.now(UTC)
+        if error:
+            cancelled = error == "access_denied"
+            item.status = "disconnected" if cancelled else "error"
+            description = (error_description or error).strip()
+            item.last_error = description[:2000] if description else "Ponto authorization failed"
+            item.last_tested_at = now
+            result = "cancelled" if cancelled else "error"
+        elif not code:
+            item.status = "error"
+            item.last_error = "Ponto authorization code is missing"
+            item.last_tested_at = now
+        else:
             try:
+                await ponto.exchange_code(item, code)
                 await refresh_accounts(session, item)
                 item.status = "connected"
                 item.last_error = None
-                item.last_tested_at = datetime.now(UTC)
+                item.last_tested_at = now
+                result = "connected"
             except Exception as exc:
-                connection_ok = False
                 item.status = "error"
                 item.last_error = str(exc)[:2000]
-                item.last_tested_at = datetime.now(UTC)
-        result = "connected" if connection_ok else "error"
-        return RedirectResponse(
-            f"{settings.public_app_url.rstrip('/')}?ponto={result}",
-            status_code=status.HTTP_302_FOUND,
-        )
-    except Exception:
-        return RedirectResponse(
-            f"{settings.public_app_url.rstrip('/')}?ponto=error",
-            status_code=status.HTTP_302_FOUND,
-        )
+                item.last_tested_at = now
+
+    return _ponto_redirect(result)
 
 
 @router.post("/connection/test", response_model=BankSyncTestRead)
