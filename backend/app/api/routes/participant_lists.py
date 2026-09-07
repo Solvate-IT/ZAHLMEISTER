@@ -18,6 +18,7 @@ from app.schemas.workflow import (
     ParticipantUpdate,
 )
 from app.services.naming import unique_participant_list_name
+from app.services.plans import FREE_PARTICIPANTS_PER_LIST, participant_capacity_available
 
 router = APIRouter(prefix="/participant-lists", tags=["participant-lists"])
 
@@ -174,6 +175,11 @@ async def add_participant(
         stored_org = await session.get(Organization, organization.id)
         assert stored_org is not None
         item = await _owned_list(session, stored_org, list_id, for_update=True)
+        if not await participant_capacity_available(session, stored_org.id, item.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Free plan supports up to {FREE_PARTICIPANTS_PER_LIST} participants per list",
+            )
         email, phone, _ = _participant_values(payload)
         duplicate = await _duplicate_participant(session, item.id, payload)
         if duplicate is not None:
