@@ -5,8 +5,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PATH="/home/app/.local/bin:${PATH}"
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i 's|http://deb.debian.org|https://deb.debian.org|g; s|http://security.debian.org|https://security.debian.org|g' /etc/apt/sources.list.d/debian.sources; \
+    fi; \
+    if [ -f /etc/apt/sources.list ]; then \
+        sed -i 's|http://deb.debian.org|https://deb.debian.org|g; s|http://security.debian.org|https://security.debian.org|g' /etc/apt/sources.list; \
+    fi; \
+    apt-get -o Acquire::Retries=3 update; \
+    apt-get install -y --no-install-recommends \
         fonts-dejavu-core \
         poppler-utils \
         qrencode \
@@ -15,9 +22,9 @@ RUN apt-get update \
         tesseract-ocr-deu \
         tesseract-ocr-ell \
         tesseract-ocr-eng \
-        tesseract-ocr-script-latn \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --uid 10001 app
+        tesseract-ocr-script-latn; \
+    rm -rf /var/lib/apt/lists/*; \
+    useradd --create-home --uid 10001 app
 
 WORKDIR /app
 COPY backend/pyproject.toml ./
