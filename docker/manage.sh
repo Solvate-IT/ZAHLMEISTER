@@ -81,6 +81,7 @@ while true; do
 ------------------------------------------------------------
  Frontend: http://localhost:8080 (development) / configured APP_HOST (production)
  Backend:  /api/v1/health and /api/v1/ready
+ Mailpit:  http://localhost:${MAILPIT_PORT:-8025} (development only)
 EOF
   read -r -p "Select: " choice
   case "$choice" in
