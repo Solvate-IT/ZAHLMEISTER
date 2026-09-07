@@ -17,3 +17,4 @@ from app.models.entities import (  # noqa: F401
     ScheduledJob,
     User,
 )
+from app.models.platform import PlatformAdminAudit, StoreSubscription  # noqa: F401
