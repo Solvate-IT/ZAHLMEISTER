@@ -1,0 +1,24 @@
+msgid ""
+msgstr ""
+"Language: ga\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Payment"
+msgstr "Íocaíocht"
+
+msgid "Pay here"
+msgstr "Íoc anseo"
+
+msgid "Payment reference"
+msgstr "Tagairt íocaíochta"
+
+msgid "Reminder"
+msgstr "Meabhrúchán"
+
+# Zahlmeister message templates
+
+msgid "Payment request"
+msgstr "Iarratas íocaíochta"
+
+msgid "Hello {{first_name}},\n\nPlease pay {{amount}} for {{collection_name}}.\n\nPay here: {{payment_link}}\nPayment reference: {{payment_reference}}"
+msgstr "Dia duit {{first_name}},\n\níoc {{amount}} le haghaidh {{collection_name}}, le do thoil.\n\nÍoc anseo: {{payment_link}}\nTagairt íocaíochta: {{payment_reference}}"

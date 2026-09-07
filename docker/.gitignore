@@ -1,0 +1,12 @@
+# Runtime secrets
+secrets/ponto/*
+!secrets/ponto/.gitkeep
+secrets/production/*
+!secrets/production/.gitkeep
+
+# Database backups
+backups/*
+!backups/.gitkeep
+
+# Local production environment
+.env.production

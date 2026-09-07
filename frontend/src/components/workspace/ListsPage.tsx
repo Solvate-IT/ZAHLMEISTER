@@ -1,0 +1,100 @@
+"use client";
+import {useEffect,useMemo,useState} from "react";
+import {api,ApiError} from "@/lib/api";
+import {selectDeviceContacts,type DeviceContact} from "@/lib/deviceContacts";
+import type {ImportDraft,Participant,ParticipantListDetail,ParticipantListSummary} from "@/lib/types";
+import {useI18n} from "@/lib/i18n";
+import {Modal} from "../Modal";
+import {Empty,ErrorState,Loading} from "../State";
+
+export function ListsPage(){const {t}=useI18n();const [lists,setLists]=useState<ParticipantListSummary[]>([]);const [selected,setSelected]=useState<ParticipantListDetail|null>(null);const [loading,setLoading]=useState(true);const [error,setError]=useState(false);const [search,setSearch]=useState("");const [edit,setEdit]=useState<Participant|null|"new">(null);const [newList,setNewList]=useState(false);const [importOpen,setImportOpen]=useState(false);const [renameOpen,setRenameOpen]=useState(false);const [notice,setNotice]=useState("");
+async function load(){setLoading(true);setError(false);try{const data=await api.lists();setLists(data);if(selected){const still=data.find(x=>x.id===selected.id);if(still)await openList(still.id);else setSelected(null)}}catch{setError(true)}finally{setLoading(false)}}
+async function openList(id:string){try{setSelected(await api.list(id))}catch{setNotice(t("loadError"))}}
+useEffect(()=>{load()},[]);const filtered=useMemo(()=>lists.filter(l=>l.name.toLowerCase().includes(search.toLowerCase())),[lists,search]);
+if(loading&&!lists.length)return <Loading/>;if(error&&!lists.length)return <ErrorState onRetry={load}/>;
+return <>{notice&&<div className="notice">{notice}</div>}<div className="page-title"><div><h1>{selected?selected.name:t("participantLists")}</h1>{selected&&<button className="button ghost small" onClick={()=>setSelected(null)}>← {t("back")}</button>}</div><div className="actions">{selected?<><button className="button secondary" onClick={()=>setRenameOpen(true)}>{t("rename")}</button><button className="button secondary" onClick={()=>setImportOpen(true)}>{t("importParticipants")}</button><button className="button" onClick={()=>setEdit("new")}>{t("addParticipant")}</button></>:<button className="button" onClick={()=>setNewList(true)}>{t("newList")}</button>}</div></div>
+{selected?<ListDetail list={selected} onEdit={setEdit} onReload={()=>openList(selected.id)} onNotice={setNotice}/>:<><div className="toolbar"><input className="input search" placeholder={t("searchPlaceholder")} value={search} onChange={e=>setSearch(e.target.value)}/><button className="button secondary" onClick={load}>{t("refresh")}</button></div>{filtered.length===0?<Empty text={t("noLists")}/>:<div className="table-wrap"><table className="table"><thead><tr><th>{t("name")}</th><th>{t("participants")}</th><th>{t("actions")}</th></tr></thead><tbody>{filtered.map(l=><tr key={l.id} className="clickable"><td><strong>{l.name}</strong></td><td>{l.participant_count}</td><td><button className="button secondary small" onClick={()=>openList(l.id)}>{t("view")}</button></td></tr>)}</tbody></table></div>}</>}
+{newList&&<NewListModal onClose={()=>setNewList(false)} onCreated={async id=>{setNewList(false);await load();await openList(id)}}/>}{selected&&renameOpen&&<RenameListModal list={selected} onClose={()=>setRenameOpen(false)} onSaved={async()=>{setRenameOpen(false);await openList(selected.id);await load();setNotice(t("saved"))}}/>}{selected&&edit&&<ParticipantModal listId={selected.id} participant={edit==="new"?null:edit} onClose={()=>setEdit(null)} onSaved={async()=>{setEdit(null);await openList(selected.id);await load()}}/>}{selected&&importOpen&&<ImportModal listId={selected.id} onClose={()=>setImportOpen(false)} onImported={async()=>{setImportOpen(false);await openList(selected.id);await load()}}/>}</>}
+
+function ListDetail({list,onEdit,onReload,onNotice}:{list:ParticipantListDetail;onEdit:(p:Participant)=>void;onReload:()=>void;onNotice:(v:string)=>void}){
+  const {t}=useI18n();
+  const [search,setSearch]=useState("");
+  const [deviceContacts,setDeviceContacts]=useState<DeviceContact[]|null>(null);
+  const [selectedContacts,setSelectedContacts]=useState<Set<string>>(new Set());
+  const [contactsBusy,setContactsBusy]=useState(false);
+  const filtered=list.participants.filter(p=>`${p.name} ${p.email??""} ${p.phone??""}`.toLowerCase().includes(search.toLowerCase()));
+
+  async function remove(id:string){
+    if(!confirm(t("deleteContactConfirm")))return;
+    try{await api.deleteParticipant(list.id,id);onReload()}catch{onNotice(t("requestFailed"))}
+  }
+
+  async function importContacts(rows:DeviceContact[]){
+    if(!rows.length)return;
+    setContactsBusy(true);
+    try{
+      for(const row of rows){
+        try{
+          await api.addParticipant(list.id,{name:row.name,email:row.email,phone:row.phone,channel_addresses:{}})
+        }catch(e){
+          if(!(e instanceof ApiError&&e.status===409))throw e
+        }
+      }
+      setDeviceContacts(null);
+      setSelectedContacts(new Set());
+      onReload();
+    }catch{
+      onNotice(t("requestFailed"));
+    }finally{
+      setContactsBusy(false);
+    }
+  }
+
+  async function contacts(){
+    setContactsBusy(true);
+    try{
+      const selection=await selectDeviceContacts();
+      if(!selection.available){onNotice(t("contactPickerUnavailable"));return}
+      if(selection.requiresSelection){
+        setDeviceContacts(selection.contacts);
+        setSelectedContacts(new Set());
+      }else{
+        await importContacts(selection.contacts);
+      }
+    }catch{
+      onNotice(t("contactsUnavailable"));
+    }finally{
+      setContactsBusy(false);
+    }
+  }
+
+  const selectedRows=deviceContacts?.filter(contact=>selectedContacts.has(contact.id))??[];
+  return <>
+    <div className="toolbar">
+      <input className="input search" placeholder={t("searchPlaceholder")} value={search} onChange={e=>setSearch(e.target.value)}/>
+      <button className="button secondary" onClick={contacts} disabled={contactsBusy}>{t("chooseContacts")}</button>
+    </div>
+    {filtered.length===0?<Empty text={t("noContactsInList")}/>:<div className="table-wrap"><table className="table"><thead><tr><th>{t("name")}</th><th>{t("email")}</th><th>{t("phone")}</th><th>{t("actions")}</th></tr></thead><tbody>{filtered.map(p=><tr key={p.id}><td><strong>{p.name}</strong></td><td>{p.email??"—"}</td><td>{p.phone??"—"}</td><td><div className="actions"><button className="button secondary small" onClick={()=>onEdit(p)}>{t("edit")}</button><button className="button ghost small danger-text" onClick={()=>remove(p.id)}>{t("delete")}</button></div></td></tr>)}</tbody></table></div>}
+    {deviceContacts&&<Modal title={t("chooseContacts")} onClose={()=>{setDeviceContacts(null);setSelectedContacts(new Set())}} wide>
+      <div className="stack">
+        <div className="row between">
+          <span className="muted">{t("recognizedParticipants",{count:deviceContacts.length})}</span>
+          <button className="button ghost small" onClick={()=>setSelectedContacts(new Set(deviceContacts.map(contact=>contact.id)))}>{t("selectAll")}</button>
+        </div>
+        {deviceContacts.length===0?<Empty text={t("contactsUnavailable")}/>:<div className="table-wrap"><table className="table"><thead><tr><th></th><th>{t("name")}</th><th>{t("email")}</th><th>{t("phone")}</th></tr></thead><tbody>{deviceContacts.map(contact=><tr key={contact.id}><td><input type="checkbox" checked={selectedContacts.has(contact.id)} onChange={e=>setSelectedContacts(current=>{const next=new Set(current);if(e.target.checked)next.add(contact.id);else next.delete(contact.id);return next})}/></td><td>{contact.name}</td><td>{contact.email??"—"}</td><td>{contact.phone??"—"}</td></tr>)}</tbody></table></div>}
+        <div className="actions">
+          <button className="button secondary" onClick={()=>{setDeviceContacts(null);setSelectedContacts(new Set())}}>{t("cancel")}</button>
+          <button className="button" disabled={contactsBusy||!selectedRows.length} onClick={()=>importContacts(selectedRows)}>{t("importSelected",{count:selectedRows.length})}</button>
+        </div>
+      </div>
+    </Modal>}
+  </>
+}
+
+function NewListModal({onClose,onCreated}:{onClose:()=>void;onCreated:(id:string)=>void}){const {t}=useI18n();const [name,setName]=useState("");const [busy,setBusy]=useState(false);async function submit(e:React.FormEvent){e.preventDefault();setBusy(true);try{const item=await api.createList(name);onCreated(item.id)}finally{setBusy(false)}}return <Modal title={t("newList")} onClose={onClose}><form className="form" onSubmit={submit}><div className="field"><label>{t("listName")}</label><input className="input" autoFocus value={name} onChange={e=>setName(e.target.value)}/></div><div className="actions"><button type="button" className="button secondary" onClick={onClose}>{t("cancel")}</button><button className="button" disabled={busy}>{t("create")}</button></div></form></Modal>}
+
+function RenameListModal({list,onClose,onSaved}:{list:ParticipantListDetail;onClose:()=>void;onSaved:()=>void}){const {t}=useI18n();const [name,setName]=useState(list.name);const [busy,setBusy]=useState(false);const [error,setError]=useState("");async function submit(e:React.FormEvent){e.preventDefault();setBusy(true);setError("");try{await api.renameList(list.id,name.trim());onSaved()}catch{setError(t("requestFailed"))}finally{setBusy(false)}}return <Modal title={t("rename")} onClose={onClose}><form className="form" onSubmit={submit}>{error&&<div className="notice error">{error}</div>}<div className="field"><label>{t("listName")}</label><input className="input" autoFocus required value={name} onChange={e=>setName(e.target.value)}/></div><div className="actions"><button type="button" className="button secondary" onClick={onClose}>{t("cancel")}</button><button className="button" disabled={busy||!name.trim()}>{t("save")}</button></div></form></Modal>}
+
+function ParticipantModal({listId,participant,onClose,onSaved}:{listId:string;participant:Participant|null;onClose:()=>void;onSaved:()=>void}){const {t}=useI18n();const [name,setName]=useState(participant?.name??"");const [email,setEmail]=useState(participant?.email??"");const [phone,setPhone]=useState(participant?.phone??"");const [telegram,setTelegram]=useState(participant?.channel_addresses?.telegram??"");const [instagram,setInstagram]=useState(participant?.channel_addresses?.instagram??"");const [messenger,setMessenger]=useState(participant?.channel_addresses?.messenger??"");const [busy,setBusy]=useState(false);const [error,setError]=useState("");async function submit(e:React.FormEvent){e.preventDefault();setBusy(true);setError("");const payload={name:name.trim(),email:email.trim()||null,phone:phone.trim()||null,channel_addresses:Object.fromEntries(Object.entries({telegram:telegram.trim(),instagram:instagram.trim(),messenger:messenger.trim()}).filter(([,v])=>v))};try{if(participant)await api.updateParticipant(listId,participant.id,payload);else await api.addParticipant(listId,payload);onSaved()}catch(e){setError(e instanceof ApiError&&e.status===409?t("contactAlreadyExists"):t("requestFailed"))}finally{setBusy(false)}}return <Modal title={participant?t("editContact"):t("addContact")} onClose={onClose}><form className="form" onSubmit={submit}>{error&&<div className="notice error">{error}</div>}<div className="field"><label>{t("name")}</label><input className="input" required autoFocus value={name} onChange={e=>setName(e.target.value)}/></div><div className="field"><label>{t("email")}</label><input type="email" className="input" value={email} onChange={e=>setEmail(e.target.value)}/></div><div className="field"><label>{t("phone")}</label><input className="input" value={phone} onChange={e=>setPhone(e.target.value)}/></div><details><summary>{t("socialAddresses")}</summary><div className="form"><div className="field"><label>{t("telegramUsername")}</label><input className="input" value={telegram} onChange={e=>setTelegram(e.target.value)}/></div><div className="field"><label>{t("instagramUsername")}</label><input className="input" value={instagram} onChange={e=>setInstagram(e.target.value)}/></div><div className="field"><label>{t("messengerId")}</label><input className="input" value={messenger} onChange={e=>setMessenger(e.target.value)}/></div></div></details><div className="actions"><button type="button" className="button secondary" onClick={onClose}>{t("cancel")}</button><button className="button" disabled={busy}>{t("save")}</button></div></form></Modal>}
+
+function ImportModal({listId,onClose,onImported}:{listId:string;onClose:()=>void;onImported:()=>void}){const {t}=useI18n();const [file,setFile]=useState<File|null>(null);const [rows,setRows]=useState<ImportDraft[]|null>(null);const [busy,setBusy]=useState(false);const [error,setError]=useState("");async function preview(){if(!file)return;setBusy(true);setError("");try{const result=await api.previewImport(file);setRows(result.participants.map(p=>({...p,selected:true})))}catch{setError(t("invalidImport"))}finally{setBusy(false)}}async function commit(){if(!rows)return;const selected=rows.filter(r=>r.selected).map(({selected,...rest})=>rest);if(!selected.length)return;setBusy(true);try{await api.commitImport(listId,selected);onImported()}catch{setError(t("requestFailed"))}finally{setBusy(false)}}return <Modal title={t("importParticipants")} onClose={onClose} wide><div className="form">{error&&<div className="notice error">{error}</div>}<div className="field"><label>{t("uploadFile")}</label><input className="input" type="file" accept=".pdf,.xlsx,.xls,.csv,image/*" capture="environment" onChange={e=>{setFile(e.target.files?.[0]??null);setRows(null)}}/><span className="muted">{t("fileFormats")}</span></div>{!rows&&<button className="button" onClick={preview} disabled={!file||busy}>{t("preview")}</button>}{rows&&<><div className="row between"><strong>{t("recognizedParticipants",{count:rows.length})}</strong><button className="button ghost small" onClick={()=>setRows(rows.map(r=>({...r,selected:true})))}>{t("selectAll")}</button></div><div className="table-wrap"><table className="table"><thead><tr><th></th><th>{t("name")}</th><th>{t("email")}</th><th>{t("phone")}</th></tr></thead><tbody>{rows.map((r,i)=><tr key={`${r.name}-${i}`}><td><input type="checkbox" checked={!!r.selected} onChange={e=>setRows(rows.map((x,j)=>j===i?{...x,selected:e.target.checked}:x))}/></td><td>{r.name}</td><td>{r.email??"—"}</td><td>{r.phone??"—"}</td></tr>)}</tbody></table></div><button className="button" onClick={commit} disabled={busy}>{t("importSelected",{count:rows.filter(r=>r.selected).length})}</button></>}</div></Modal>}

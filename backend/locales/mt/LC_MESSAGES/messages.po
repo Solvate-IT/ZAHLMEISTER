@@ -1,0 +1,24 @@
+msgid ""
+msgstr ""
+"Language: mt\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Payment"
+msgstr "Ħlas"
+
+msgid "Pay here"
+msgstr "Ħallas hawn"
+
+msgid "Payment reference"
+msgstr "Referenza tal-ħlas"
+
+msgid "Reminder"
+msgstr "Tfakkira"
+
+# Zahlmeister message templates
+
+msgid "Payment request"
+msgstr "Talba għall-ħlas"
+
+msgid "Hello {{first_name}},\n\nPlease pay {{amount}} for {{collection_name}}.\n\nPay here: {{payment_link}}\nPayment reference: {{payment_reference}}"
+msgstr "Hello {{first_name}},\n\njekk jogħġbok ħallas {{amount}} għal {{collection_name}}.\n\nĦallas hawn: {{payment_link}}\nReferenza tal-ħlas: {{payment_reference}}"

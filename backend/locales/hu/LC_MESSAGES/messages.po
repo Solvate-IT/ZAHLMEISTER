@@ -1,0 +1,24 @@
+msgid ""
+msgstr ""
+"Language: hu\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Payment"
+msgstr "Fizetés"
+
+msgid "Pay here"
+msgstr "Fizetés itt"
+
+msgid "Payment reference"
+msgstr "Fizetési hivatkozás"
+
+msgid "Reminder"
+msgstr "Emlékeztető"
+
+# Zahlmeister message templates
+
+msgid "Payment request"
+msgstr "Fizetési kérelem"
+
+msgid "Hello {{first_name}},\n\nPlease pay {{amount}} for {{collection_name}}.\n\nPay here: {{payment_link}}\nPayment reference: {{payment_reference}}"
+msgstr "Kedves {{first_name}},\n\nkérjük, fizesse be a(z) {{amount}} összeget erre: {{collection_name}}.\n\nFizetés itt: {{payment_link}}\nFizetési hivatkozás: {{payment_reference}}"

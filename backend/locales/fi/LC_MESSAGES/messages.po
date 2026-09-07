@@ -1,0 +1,24 @@
+msgid ""
+msgstr ""
+"Language: fi\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Payment"
+msgstr "Maksu"
+
+msgid "Pay here"
+msgstr "Maksa tästä"
+
+msgid "Payment reference"
+msgstr "Maksuviite"
+
+msgid "Reminder"
+msgstr "Muistutus"
+
+# Zahlmeister message templates
+
+msgid "Payment request"
+msgstr "Maksupyyntö"
+
+msgid "Hello {{first_name}},\n\nPlease pay {{amount}} for {{collection_name}}.\n\nPay here: {{payment_link}}\nPayment reference: {{payment_reference}}"
+msgstr "Hei {{first_name}},\n\nmaksathan {{amount}} kohteesta {{collection_name}}.\n\nMaksa tästä: {{payment_link}}\nMaksuviite: {{payment_reference}}"

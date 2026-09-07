@@ -1,0 +1,22 @@
+FROM python:3.13-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        fonts-dejavu-core \
+        poppler-utils \
+        qrencode \
+        tesseract-ocr \
+        tesseract-ocr-bul \
+        tesseract-ocr-deu \
+        tesseract-ocr-ell \
+        tesseract-ocr-eng \
+        tesseract-ocr-script-latn \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY backend/pyproject.toml ./
+RUN pip install --no-cache-dir -e ".[dev]"
+COPY backend/ .

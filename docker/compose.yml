@@ -1,0 +1,121 @@
+x-backend-environment: &backend-environment
+  DATABASE_URL: ${DATABASE_URL}
+  ENVIRONMENT: ${ENVIRONMENT}
+  APP_SECRET: ${APP_SECRET}
+  CORS_ORIGINS: ${CORS_ORIGINS}
+  PUBLIC_APP_URL: ${PUBLIC_APP_URL}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: ${LOG_FORMAT:-text}
+  TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
+  READINESS_REQUIRE_WORKER: ${READINESS_REQUIRE_WORKER:-false}
+  WORKER_HEARTBEAT_SECONDS: ${WORKER_HEARTBEAT_SECONDS:-15}
+  WORKER_STALE_SECONDS: ${WORKER_STALE_SECONDS:-60}
+  MONITORING_TOKEN: ${MONITORING_TOKEN:-}
+  JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-7}
+  JOB_RETRY_BASE_SECONDS: ${JOB_RETRY_BASE_SECONDS:-5}
+  JOB_RETRY_MAX_SECONDS: ${JOB_RETRY_MAX_SECONDS:-900}
+  JOB_RETRY_JITTER: ${JOB_RETRY_JITTER:-0.20}
+  JOB_STALE_AFTER_SECONDS: ${JOB_STALE_AFTER_SECONDS:-900}
+  MAIL_DELIVERY_MODE: ${MAIL_DELIVERY_MODE}
+  MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS}
+  MAIL_FROM_NAME: ${MAIL_FROM_NAME}
+  CONTACT_RECIPIENT: ${CONTACT_RECIPIENT:-Support@Solvate.at}
+  SMTP_HOST: ${SMTP_HOST}
+  SMTP_PORT: ${SMTP_PORT}
+  SMTP_USERNAME: ${SMTP_USERNAME}
+  SMTP_PASSWORD: ${SMTP_PASSWORD}
+  SMTP_STARTTLS: ${SMTP_STARTTLS}
+  INFOBIP_OAUTH_CLIENT_ID: ${INFOBIP_OAUTH_CLIENT_ID:-}
+  INFOBIP_OAUTH_CLIENT_SECRET: ${INFOBIP_OAUTH_CLIENT_SECRET:-}
+  INFOBIP_OAUTH_SCOPES: ${INFOBIP_OAUTH_SCOPES:-api_read message:send subscriptions:manage}
+  INFOBIP_OAUTH_AUTHORIZE_URL: ${INFOBIP_OAUTH_AUTHORIZE_URL:-https://oneapi.infobip.com/exchange/1/oauth/authorize}
+  INFOBIP_OAUTH_TOKEN_URL: ${INFOBIP_OAUTH_TOKEN_URL:-https://oneapi.infobip.com/exchange/1/oauth/token}
+  INFOBIP_DEFAULT_BASE_URL: ${INFOBIP_DEFAULT_BASE_URL:-https://api.infobip.com}
+  PONTO_CONNECT_CLIENT_ID: ${PONTO_CONNECT_CLIENT_ID:-}
+  PONTO_CONNECT_CLIENT_SECRET: ${PONTO_CONNECT_CLIENT_SECRET:-}
+  PONTO_CONNECT_API_URL: ${PONTO_CONNECT_API_URL:-https://api.ibanity.com/ponto-connect}
+  PONTO_CONNECT_AUTHORIZE_URL: ${PONTO_CONNECT_AUTHORIZE_URL:-https://authorization.myponto.com/oauth2/auth}
+  PONTO_CONNECT_TOKEN_URL: ${PONTO_CONNECT_TOKEN_URL:-https://api.ibanity.com/ponto-connect/oauth2/token}
+  PONTO_CONNECT_SCOPE: ${PONTO_CONNECT_SCOPE:-offline_access ai name}
+  PONTO_CONNECT_CERT_PATH: ${PONTO_CONNECT_CERT_PATH:-/run/secrets/ponto/client.crt}
+  PONTO_CONNECT_KEY_PATH: ${PONTO_CONNECT_KEY_PATH:-/run/secrets/ponto/client.key}
+  PONTO_CONNECT_KEY_PASSWORD: ${PONTO_CONNECT_KEY_PASSWORD:-}
+  MOLLIE_OAUTH_CLIENT_ID: ${MOLLIE_OAUTH_CLIENT_ID:-}
+  MOLLIE_OAUTH_CLIENT_SECRET: ${MOLLIE_OAUTH_CLIENT_SECRET:-}
+  MOLLIE_OAUTH_AUTHORIZE_URL: ${MOLLIE_OAUTH_AUTHORIZE_URL:-https://my.mollie.com/oauth2/authorize}
+  MOLLIE_OAUTH_TOKEN_URL: ${MOLLIE_OAUTH_TOKEN_URL:-https://api.mollie.com/oauth2/tokens}
+  MOLLIE_API_URL: ${MOLLIE_API_URL:-https://api.mollie.com/v2}
+  MOLLIE_OAUTH_SCOPES: ${MOLLIE_OAUTH_SCOPES:-organizations.read profiles.read payments.read payments.write}
+  MOLLIE_TEST_MODE: ${MOLLIE_TEST_MODE:-false}
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile.dev
+    environment: *backend-environment
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+    volumes:
+      - ../backend:/app
+      - ./secrets/ponto:/run/secrets/ponto:ro
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile.dev
+    environment: *backend-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--no-access-log"]
+    ports:
+      - "${BACKEND_PORT}:8000"
+    volumes:
+      - ../backend:/app
+      - ./secrets/ponto:/run/secrets/ponto:ro
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile.dev
+    environment: *backend-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["python", "-m", "app.worker"]
+    volumes:
+      - ../backend:/app
+      - ./secrets/ponto:/run/secrets/ponto:ro
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/frontend.Dockerfile.dev
+    command: ["sh", "-c", "if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi && npm run dev"]
+    ports:
+      - "${FRONTEND_PORT}:3000"
+    volumes:
+      - ../frontend:/app
+      - frontend_node_modules:/app/node_modules
+
+
+volumes:
+  postgres_data:
+  frontend_node_modules:

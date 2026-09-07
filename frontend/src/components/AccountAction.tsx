@@ -1,0 +1,47 @@
+"use client";
+
+import {useCallback, useEffect, useState} from "react";
+import {useRouter, useSearchParams} from "next/navigation";
+import {api} from "@/lib/api";
+import {useI18n} from "@/lib/i18n";
+import {Brand} from "./Brand";
+
+export function AccountActionPage() {
+  const {t} = useI18n();
+  const params = useSearchParams();
+  const router = useRouter();
+  const action = params.get("action") ?? "";
+  const token = params.get("token") ?? "";
+  const verifying = action === "verify-email";
+  const resetting = action === "reset-password";
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [error, setError] = useState("");
+
+  const verify = useCallback(async () => {
+    if (!token || !verifying) return;
+    setBusy(true); setError("");
+    try { await api.verifyEmail(token); setSuccess(true); }
+    catch { setError(t("invalidLink")); }
+    finally { setBusy(false); }
+  }, [token, verifying, t]);
+
+  useEffect(() => { if (verifying) void verify(); }, [verifying, verify]);
+
+  async function reset(event: React.FormEvent) {
+    event.preventDefault();
+    if (password.length < 8) { setError(t("passwordMinLength")); return; }
+    if (password !== confirm) { setError(t("passwordsDoNotMatch")); return; }
+    setBusy(true); setError("");
+    try { await api.resetPassword(token, password); setSuccess(true); }
+    catch { setError(t("invalidLink")); }
+    finally { setBusy(false); }
+  }
+
+  const validAction = verifying || resetting;
+  return <div className="page-bg"><div className="auth-wrap"><div className="auth-card"><Brand/>
+    {!validAction || !token ? <div className="notice error">{t("invalidLink")}</div> : success ? <div className="stack"><div className="notice success">{verifying ? t("verificationSuccess") : t("passwordResetSuccess")}</div><button className="button" onClick={() => router.replace("/")}>{t("done")}</button></div> : verifying ? <div className="stack"><h1 className="auth-title">{t("verifyEmail")}</h1>{busy && <div className="state"><span className="spinner"/>{t("loading")}</div>}{error && <><div className="notice error">{error}</div><button className="button secondary" onClick={() => void verify()} disabled={busy}>{t("retry")}</button></>}</div> : <form className="form" onSubmit={reset}><h1 className="auth-title">{t("resetPassword")}</h1><div className="field"><label htmlFor="new-password">{t("newPassword")}</label><input id="new-password" className="input" type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} required minLength={8}/></div><div className="field"><label htmlFor="confirm-password">{t("confirmPassword")}</label><input id="confirm-password" className="input" type="password" autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} required minLength={8}/></div>{error && <div className="notice error">{error}</div>}<button className="button" disabled={busy}>{busy ? t("loading") : t("resetPassword")}</button></form>}
+  </div></div></div>;
+}

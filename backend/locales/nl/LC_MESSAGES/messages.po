@@ -1,0 +1,24 @@
+msgid ""
+msgstr ""
+"Language: nl\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Payment"
+msgstr "Betaling"
+
+msgid "Pay here"
+msgstr "Betaal hier"
+
+msgid "Payment reference"
+msgstr "Betalingskenmerk"
+
+msgid "Reminder"
+msgstr "Herinnering"
+
+# Zahlmeister message templates
+
+msgid "Payment request"
+msgstr "Betaalverzoek"
+
+msgid "Hello {{first_name}},\n\nPlease pay {{amount}} for {{collection_name}}.\n\nPay here: {{payment_link}}\nPayment reference: {{payment_reference}}"
+msgstr "Hallo {{first_name}},\n\nbetaal alstublieft {{amount}} voor {{collection_name}}.\n\nBetaal hier: {{payment_link}}\nBetalingskenmerk: {{payment_reference}}"

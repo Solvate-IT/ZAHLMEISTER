@@ -1,0 +1,4 @@
+"use client";
+import {useEffect} from "react";
+import {useI18n} from "@/lib/i18n";
+export function Modal({title,onClose,children,wide=false}:{title:string;onClose:()=>void;children:React.ReactNode;wide?:boolean}){const {t}=useI18n();useEffect(()=>{const h=(e:KeyboardEvent)=>{if(e.key==="Escape")onClose()};window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h)},[onClose]);return <div className="modal-backdrop" role="presentation" onMouseDown={e=>{if(e.currentTarget===e.target)onClose()}}><section className={`modal ${wide?"wide":""}`} role="dialog" aria-modal="true" aria-label={title}><header><h2>{title}</h2><button className="icon-button" onClick={onClose} aria-label={t("closeDialog")}>×</button></header><div className="modal-body">{children}</div></section></div>}

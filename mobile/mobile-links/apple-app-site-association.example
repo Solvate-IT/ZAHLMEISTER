@@ -1,0 +1,10 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["REPLACE_WITH_APPLE_TEAM_ID.at.solvate.zahlmeister"],
+        "components": [{ "/": "*", "comment": "Zahlmeister payment and account links" }]
+      }
+    ]
+  }
+}

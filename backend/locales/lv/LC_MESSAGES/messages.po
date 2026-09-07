@@ -1,0 +1,24 @@
+msgid ""
+msgstr ""
+"Language: lv\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Payment"
+msgstr "Maksājums"
+
+msgid "Pay here"
+msgstr "Maksāt šeit"
+
+msgid "Payment reference"
+msgstr "Maksājuma atsauce"
+
+msgid "Reminder"
+msgstr "Atgādinājums"
+
+# Zahlmeister message templates
+
+msgid "Payment request"
+msgstr "Maksājuma pieprasījums"
+
+msgid "Hello {{first_name}},\n\nPlease pay {{amount}} for {{collection_name}}.\n\nPay here: {{payment_link}}\nPayment reference: {{payment_reference}}"
+msgstr "Labdien, {{first_name}},\n\nlūdzu, samaksājiet {{amount}} par {{collection_name}}.\n\nMaksāt šeit: {{payment_link}}\nMaksājuma atsauce: {{payment_reference}}"

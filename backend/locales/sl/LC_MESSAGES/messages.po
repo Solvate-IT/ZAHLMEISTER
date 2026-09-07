@@ -1,0 +1,24 @@
+msgid ""
+msgstr ""
+"Language: sl\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Payment"
+msgstr "Plačilo"
+
+msgid "Pay here"
+msgstr "Plačaj tukaj"
+
+msgid "Payment reference"
+msgstr "Sklic plačila"
+
+msgid "Reminder"
+msgstr "Opomnik"
+
+# Zahlmeister message templates
+
+msgid "Payment request"
+msgstr "Zahteva za plačilo"
+
+msgid "Hello {{first_name}},\n\nPlease pay {{amount}} for {{collection_name}}.\n\nPay here: {{payment_link}}\nPayment reference: {{payment_reference}}"
+msgstr "Pozdravljeni {{first_name}},\n\nprosimo, plačajte {{amount}} za {{collection_name}}.\n\nPlačaj tukaj: {{payment_link}}\nSklic plačila: {{payment_reference}}"

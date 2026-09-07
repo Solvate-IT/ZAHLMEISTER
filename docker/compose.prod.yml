@@ -1,0 +1,185 @@
+x-backend-environment: &backend-environment
+  ENVIRONMENT: production
+  DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://zahlmeister:invalid@db:5432/zahlmeister}
+  DATABASE_URL_FILE: ${DATABASE_URL_FILE:-}
+  APP_SECRET: ${APP_SECRET:-production-secret-must-be-provided-by-file}
+  APP_SECRET_FILE: ${APP_SECRET_FILE:-}
+  CORS_ORIGINS: ${CORS_ORIGINS}
+  PUBLIC_APP_URL: ${PUBLIC_APP_URL}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+  TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
+  READINESS_REQUIRE_WORKER: ${READINESS_REQUIRE_WORKER:-true}
+  WORKER_HEARTBEAT_SECONDS: ${WORKER_HEARTBEAT_SECONDS:-15}
+  WORKER_STALE_SECONDS: ${WORKER_STALE_SECONDS:-60}
+  MONITORING_TOKEN: ${MONITORING_TOKEN:-}
+  MONITORING_TOKEN_FILE: ${MONITORING_TOKEN_FILE:-}
+  JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-7}
+  JOB_RETRY_BASE_SECONDS: ${JOB_RETRY_BASE_SECONDS:-5}
+  JOB_RETRY_MAX_SECONDS: ${JOB_RETRY_MAX_SECONDS:-900}
+  JOB_RETRY_JITTER: ${JOB_RETRY_JITTER:-0.20}
+  JOB_STALE_AFTER_SECONDS: ${JOB_STALE_AFTER_SECONDS:-900}
+  MAIL_DELIVERY_MODE: ${MAIL_DELIVERY_MODE}
+  MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS}
+  MAIL_FROM_NAME: ${MAIL_FROM_NAME}
+  CONTACT_RECIPIENT: ${CONTACT_RECIPIENT:-Support@Solvate.at}
+  SMTP_HOST: ${SMTP_HOST}
+  SMTP_PORT: ${SMTP_PORT}
+  SMTP_USERNAME: ${SMTP_USERNAME}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_PASSWORD_FILE: ${SMTP_PASSWORD_FILE:-}
+  SMTP_STARTTLS: ${SMTP_STARTTLS}
+  INFOBIP_OAUTH_CLIENT_ID: ${INFOBIP_OAUTH_CLIENT_ID:-}
+  INFOBIP_OAUTH_CLIENT_SECRET: ${INFOBIP_OAUTH_CLIENT_SECRET:-}
+  INFOBIP_OAUTH_CLIENT_SECRET_FILE: ${INFOBIP_OAUTH_CLIENT_SECRET_FILE:-}
+  INFOBIP_OAUTH_SCOPES: ${INFOBIP_OAUTH_SCOPES:-api_read message:send subscriptions:manage}
+  INFOBIP_OAUTH_AUTHORIZE_URL: ${INFOBIP_OAUTH_AUTHORIZE_URL:-https://oneapi.infobip.com/exchange/1/oauth/authorize}
+  INFOBIP_OAUTH_TOKEN_URL: ${INFOBIP_OAUTH_TOKEN_URL:-https://oneapi.infobip.com/exchange/1/oauth/token}
+  INFOBIP_DEFAULT_BASE_URL: ${INFOBIP_DEFAULT_BASE_URL:-https://api.infobip.com}
+  PONTO_CONNECT_CLIENT_ID: ${PONTO_CONNECT_CLIENT_ID:-}
+  PONTO_CONNECT_CLIENT_SECRET: ${PONTO_CONNECT_CLIENT_SECRET:-}
+  PONTO_CONNECT_CLIENT_SECRET_FILE: ${PONTO_CONNECT_CLIENT_SECRET_FILE:-}
+  PONTO_CONNECT_API_URL: ${PONTO_CONNECT_API_URL:-https://api.ibanity.com/ponto-connect}
+  PONTO_CONNECT_AUTHORIZE_URL: ${PONTO_CONNECT_AUTHORIZE_URL:-https://authorization.myponto.com/oauth2/auth}
+  PONTO_CONNECT_TOKEN_URL: ${PONTO_CONNECT_TOKEN_URL:-https://api.ibanity.com/ponto-connect/oauth2/token}
+  PONTO_CONNECT_SCOPE: ${PONTO_CONNECT_SCOPE:-offline_access ai name}
+  PONTO_CONNECT_CERT_PATH: ${PONTO_CONNECT_CERT_PATH:-/run/secrets/ponto/client.crt}
+  PONTO_CONNECT_KEY_PATH: ${PONTO_CONNECT_KEY_PATH:-/run/secrets/ponto/client.key}
+  PONTO_CONNECT_KEY_PASSWORD: ${PONTO_CONNECT_KEY_PASSWORD:-}
+  PONTO_CONNECT_KEY_PASSWORD_FILE: ${PONTO_CONNECT_KEY_PASSWORD_FILE:-}
+  MOLLIE_OAUTH_CLIENT_ID: ${MOLLIE_OAUTH_CLIENT_ID:-}
+  MOLLIE_OAUTH_CLIENT_SECRET: ${MOLLIE_OAUTH_CLIENT_SECRET:-}
+  MOLLIE_OAUTH_CLIENT_SECRET_FILE: ${MOLLIE_OAUTH_CLIENT_SECRET_FILE:-}
+  MOLLIE_OAUTH_AUTHORIZE_URL: ${MOLLIE_OAUTH_AUTHORIZE_URL:-https://my.mollie.com/oauth2/authorize}
+  MOLLIE_OAUTH_TOKEN_URL: ${MOLLIE_OAUTH_TOKEN_URL:-https://api.mollie.com/oauth2/tokens}
+  MOLLIE_API_URL: ${MOLLIE_API_URL:-https://api.mollie.com/v2}
+  MOLLIE_OAUTH_SCOPES: ${MOLLIE_OAUTH_SCOPES:-organizations.read profiles.read payments.read payments.write}
+  MOLLIE_TEST_MODE: ${MOLLIE_TEST_MODE:-false}
+
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD_FILE: ${POSTGRES_PASSWORD_FILE:-/run/secrets/postgres_password}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    group_add:
+      - "${APP_RUNTIME_GID:-10001}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./secrets/production/postgres_password:/run/secrets/postgres_password:ro
+    logging: *default-logging
+
+  migrate:
+    user: "${APP_RUNTIME_UID:-10001}:${APP_RUNTIME_GID:-10001}"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: zahlmeister-backend:${IMAGE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    environment: *backend-environment
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+    volumes:
+      - ./secrets:/run/secrets:ro
+    logging: *default-logging
+
+  backend:
+    user: "${APP_RUNTIME_UID:-10001}:${APP_RUNTIME_GID:-10001}"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: zahlmeister-backend:${IMAGE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    restart: unless-stopped
+    environment: *backend-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--no-access-log"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/ready', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    volumes:
+      - ./secrets:/run/secrets:ro
+    logging: *default-logging
+
+  worker:
+    user: "${APP_RUNTIME_UID:-10001}:${APP_RUNTIME_GID:-10001}"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    image: zahlmeister-backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment: *backend-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["python", "-m", "app.worker"]
+    volumes:
+      - ./secrets:/run/secrets:ro
+    logging: *default-logging
+
+  frontend:
+    image: zahlmeister-frontend:${IMAGE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: docker/frontend.Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ""
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - default
+      - traefik
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK}
+      - traefik.http.routers.zahlmeister.rule=Host(`${APP_HOST}`)
+      - traefik.http.routers.zahlmeister.entrypoints=websecure
+      - traefik.http.routers.zahlmeister.tls=true
+      - traefik.http.services.zahlmeister.loadbalancer.server.port=80
+    logging: *default-logging
+
+volumes:
+  postgres_data:
+
+networks:
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK}
