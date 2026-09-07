@@ -11,6 +11,7 @@ _SECRET_FIELDS = {
     "app_secret": "app_secret_file",
     "database_url": "database_url_file",
     "smtp_password": "smtp_password_file",
+    "platform_imap_password": "platform_imap_password_file",
     "infobip_oauth_client_secret": "infobip_oauth_client_secret_file",
     "microsoft365_client_secret": "microsoft365_client_secret_file",
     "ponto_connect_client_secret": "ponto_connect_client_secret_file",
@@ -29,17 +30,11 @@ class Settings(BaseSettings):
     app_secret_file: str = ""
     database_url: str = "postgresql+asyncpg://zahlmeister:zahlmeister@db:5432/zahlmeister"
     database_url_file: str = ""
-    cors_origins_raw: str = Field(
-        default="http://localhost:3003",
-        validation_alias="CORS_ORIGINS",
-    )
+    cors_origins_raw: str = Field(default="http://localhost:3003", validation_alias="CORS_ORIGINS")
     public_app_url: str = "http://localhost:3003"
     oauth_callback_base_url: str = ""
 
-    platform_admin_emails_raw: str = Field(
-        default="",
-        validation_alias="PLATFORM_ADMIN_EMAILS",
-    )
+    platform_admin_emails_raw: str = Field(default="", validation_alias="PLATFORM_ADMIN_EMAILS")
     platform_admin_bootstrap_email: str = ""
     platform_admin_bootstrap_password: str = ""
     platform_admin_bootstrap_password_file: str = ""
@@ -63,6 +58,7 @@ class Settings(BaseSettings):
     mail_delivery_mode: str = "console"
     mail_from_address: str = "noreply@zahlmeister.local"
     mail_from_name: str = "Zahlmeister"
+    mail_reply_domain: str = ""
     contact_recipient: str = "Support@Solvate.at"
     smtp_host: str = ""
     smtp_port: int = 587
@@ -70,6 +66,14 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_password_file: str = ""
     smtp_starttls: bool = True
+    platform_imap_host: str = ""
+    platform_imap_port: int = 993
+    platform_imap_username: str = ""
+    platform_imap_password: str = ""
+    platform_imap_password_file: str = ""
+    platform_imap_ssl: bool = True
+    platform_imap_starttls: bool = False
+    platform_imap_folder: str = "INBOX"
 
     infobip_oauth_client_id: str = ""
     infobip_oauth_client_secret: str = ""
@@ -141,11 +145,7 @@ class Settings(BaseSettings):
 
     @property
     def platform_admin_emails(self) -> set[str]:
-        return {
-            item.strip().casefold()
-            for item in self.platform_admin_emails_raw.split(",")
-            if item.strip()
-        }
+        return {item.strip().casefold() for item in self.platform_admin_emails_raw.split(",") if item.strip()}
 
     def production_security_errors(self) -> list[str]:
         if self.environment != "production":
@@ -177,12 +177,7 @@ class Settings(BaseSettings):
         origins = self.cors_origins
         if not origins:
             errors.append("CORS_ORIGINS must not be empty")
-        native_origins = {
-            "capacitor://localhost",
-            "ionic://localhost",
-            "http://localhost",
-            "https://localhost",
-        }
+        native_origins = {"capacitor://localhost", "ionic://localhost", "http://localhost", "https://localhost"}
         for origin in origins:
             parsed = urlparse(origin)
             if origin == "*":
@@ -193,17 +188,13 @@ class Settings(BaseSettings):
             if parsed.scheme != "https" or not parsed.netloc or parsed.path not in {"", "/"}:
                 errors.append(f"CORS origin is not a valid HTTPS origin: {origin}")
 
-        microsoft_configured = any(
-            (self.microsoft365_client_id.strip(), self.microsoft365_client_secret.strip())
-        )
+        microsoft_configured = any((self.microsoft365_client_id.strip(), self.microsoft365_client_secret.strip()))
         if microsoft_configured and not (
             self.microsoft365_client_id.strip() and self.microsoft365_client_secret.strip()
         ):
             errors.append("Microsoft 365 OAuth configuration is incomplete")
         graph = urlparse(self.microsoft365_graph_url.strip())
-        if microsoft_configured and (
-            graph.scheme != "https" or graph.hostname != "graph.microsoft.com"
-        ):
+        if microsoft_configured and (graph.scheme != "https" or graph.hostname != "graph.microsoft.com"):
             errors.append("MICROSOFT365_GRAPH_URL must use https://graph.microsoft.com")
 
         ponto_configured = any(
@@ -225,6 +216,20 @@ class Settings(BaseSettings):
             errors.append("Platform SMTP is not fully configured")
         if not self.smtp_starttls:
             errors.append("SMTP_STARTTLS must be enabled in production")
+        if not (
+            self.platform_imap_host.strip()
+            and self.platform_imap_username.strip()
+            and self.platform_imap_password
+        ):
+            errors.append("Platform reply IMAP is not fully configured")
+        if not self.platform_imap_ssl and not self.platform_imap_starttls:
+            errors.append("Platform reply IMAP must use SSL/TLS or STARTTLS")
+        if self.mail_reply_domain and (
+            "." not in self.mail_reply_domain.strip()
+            or "@" in self.mail_reply_domain
+            or "/" in self.mail_reply_domain
+        ):
+            errors.append("MAIL_REPLY_DOMAIN is invalid")
         if "@" not in self.contact_recipient or "\n" in self.contact_recipient or "\r" in self.contact_recipient:
             errors.append("CONTACT_RECIPIENT is invalid")
         return errors
