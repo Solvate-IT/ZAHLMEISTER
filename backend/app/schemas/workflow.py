@@ -77,6 +77,9 @@ class ReminderRule(BaseModel):
     days: int = Field(default=0, ge=0, le=365)
 
 
+CollectionChannel = Literal["auto", "email", "whatsapp", "sms", "telegram"]
+
+
 class CollectionCreate(BaseModel):
     participant_list_id: UUID
     name: str | None = Field(default=None, max_length=200)
@@ -84,6 +87,7 @@ class CollectionCreate(BaseModel):
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     send_at: datetime | None = None
     due_at: datetime | None = None
+    communication_channel: CollectionChannel = "auto"
     message_template_id: UUID | None = None
     message_body_override: str | None = Field(default=None, max_length=10000)
     reminder_rules: list[ReminderRule] | None = None
@@ -135,7 +139,7 @@ class CollectionRead(BaseModel):
     participant_count: int
     paid_count: int
     paid_amount: Decimal
-    communication_channel: str = "auto"
+    communication_channel: CollectionChannel = "auto"
     communication_mode: str = "auto"
     channel_order: list[str] = Field(default_factory=list)
     message_template_id: UUID | None = None
