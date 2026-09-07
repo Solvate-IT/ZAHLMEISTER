@@ -140,8 +140,9 @@ class Settings(BaseSettings):
             errors.append("DATABASE_URL uses development credentials")
         if self.monitoring_token and len(self.monitoring_token) < 24:
             errors.append("MONITORING_TOKEN is too short")
-        if self.platform_admin_bootstrap_password and len(self.platform_admin_bootstrap_password) < 16:
-            errors.append("PLATFORM_ADMIN_BOOTSTRAP_PASSWORD is too short")
+        admin_password = self.platform_admin_bootstrap_password.strip().lower()
+        if admin_password and (len(admin_password) < 16 or "change-me" in admin_password):
+            errors.append("PLATFORM_ADMIN_BOOTSTRAP_PASSWORD is not production-safe")
 
         public_url = urlparse(self.public_app_url.strip())
         if public_url.scheme != "https" or not public_url.netloc:
