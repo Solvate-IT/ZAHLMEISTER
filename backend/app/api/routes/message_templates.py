@@ -180,3 +180,21 @@ async def update_message_template(
             item.is_default = True
         await session.flush()
         return _read(item)
+
+
+@router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_message_template(
+    template_id: UUID,
+    organization: Organization = Depends(get_organization),
+) -> None:
+    async with SessionLocal.begin() as session:
+        stored_org = await session.get(Organization, organization.id)
+        assert stored_org is not None
+        await transaction_lock(session, "message-template", stored_org.id)
+        item = await _owned_template(session, stored_org, template_id)
+        if item.is_default:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The default message template cannot be deleted",
+            )
+        await session.delete(item)
