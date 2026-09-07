@@ -11,7 +11,7 @@ export function AuthPanel({registerMode,onAuthenticated,onBack}:{registerMode:bo
   function switchMode(nextRegister:boolean){setRegister(nextRegister);setForgotMode(false);setError("");setInfo("");setPassword("")}
   return <div className="auth-card">
     <div className="brand"><img src="/brand/logo.png" width="52" height="52" alt=""/><strong>{t("appName")}</strong></div>
-    <h1>{forgotMode?t("forgotPassword"):register?t("register"):t("login")}</h1><p className="muted">{forgotMode?t("resetLinkSent").replace(/^Falls das Konto existiert, /,""):t("accountSubtitle")}</p>
+    <h1>{forgotMode?t("forgotPassword"):register?t("register"):t("login")}</h1>{!forgotMode&&<p className="muted">{t("accountSubtitle")}</p>}
     {error&&<div className="notice error">{error}</div>}{info&&<div className="notice success">{info}</div>}
     <form className="form" onSubmit={submit}>
       {register&&!forgotMode&&<div className="field"><label>{t("displayName")}</label><input className="input" value={name} onChange={e=>setName(e.target.value)} autoComplete="name"/></div>}
