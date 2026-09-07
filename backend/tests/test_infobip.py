@@ -17,6 +17,7 @@ def test_infobip_oauth_state_rejects_tampering() -> None:
     with pytest.raises(ValueError, match="Invalid OAuth state"):
         verify_oauth_state(tampered)
 
+
 from pydantic import ValidationError
 
 from app.schemas.communications import CommunicationConnectionUpdate
@@ -29,24 +30,39 @@ def test_infobip_connection_update_requires_https_base_url() -> None:
         CommunicationConnectionUpdate(base_url="http://abc.api.infobip.com")
 
 
+def test_delivery_status_never_regresses_after_delivery() -> None:
+    from app.api.routes.webhooks import _advanced_delivery_status
+
+    assert _advanced_delivery_status("sent", "failed") == "failed"
+    assert _advanced_delivery_status("failed", "delivered") == "delivered"
+    assert _advanced_delivery_status("delivered", "failed") == "delivered"
+    assert _advanced_delivery_status("read", "failed") == "read"
+    assert _advanced_delivery_status("delivered", "read") == "read"
+
+
 @pytest.mark.asyncio
 async def test_infobip_messages_api_sends_qr_as_image(monkeypatch) -> None:
     calls = []
 
     class Response:
         status_code = 200
+
         def raise_for_status(self):
             return None
+
         def json(self):
             return {"messages": [{"messageId": "msg-1"}]}
 
     class Client:
         def __init__(self, *args, **kwargs):
             pass
+
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, *args):
             return False
+
         async def post(self, url, **kwargs):
             calls.append((url, kwargs))
             return Response()
@@ -86,18 +102,23 @@ async def test_infobip_email_sends_qr_as_attachment(monkeypatch) -> None:
 
     class Response:
         status_code = 200
+
         def raise_for_status(self):
             return None
+
         def json(self):
             return {"messages": [{"messageId": "mail-1"}]}
 
     class Client:
         def __init__(self, *args, **kwargs):
             pass
+
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, *args):
             return False
+
         async def post(self, url, **kwargs):
             calls.append((url, kwargs))
             return Response()
