@@ -59,6 +59,25 @@ def verify_state(value: str) -> tuple[str, str]:
         raise ValueError("Invalid Ponto OAuth state") from exc
 
 
+def _endpoint_configuration_errors() -> list[str]:
+    errors: list[str] = []
+    api = urlparse(settings.ponto_connect_api_url.strip())
+    token = urlparse(settings.ponto_connect_token_url.strip())
+    authorization = urlparse(settings.ponto_authorization_url)
+    expected_authorization_host = (
+        "sandbox-authorization.myponto.com"
+        if settings.ponto_connect_environment == "sandbox"
+        else "authorization.myponto.com"
+    )
+    if api.scheme != "https" or api.hostname != "api.ibanity.com" or not api.path.startswith("/ponto-connect"):
+        errors.append("api_url")
+    if token.scheme != "https" or token.hostname != "api.ibanity.com" or not token.path.startswith("/ponto-connect/"):
+        errors.append("token_url")
+    if authorization.scheme != "https" or authorization.hostname != expected_authorization_host:
+        errors.append("authorization_url_environment")
+    return errors
+
+
 def configuration_status() -> dict[str, Any]:
     cert = settings.ponto_connect_cert_path.strip()
     key = settings.ponto_connect_key_path.strip()
@@ -75,6 +94,7 @@ def configuration_status() -> dict[str, Any]:
         missing.append("private_key")
     elif not Path(key).is_file():
         missing.append("private_key_file")
+    missing.extend(_endpoint_configuration_errors())
     return {
         "environment": settings.ponto_connect_environment,
         "configured": not missing,
