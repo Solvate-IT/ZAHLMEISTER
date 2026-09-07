@@ -15,6 +15,7 @@ _SECRET_FIELDS = {
     "ponto_connect_key_password": "ponto_connect_key_password_file",
     "mollie_oauth_client_secret": "mollie_oauth_client_secret_file",
     "monitoring_token": "monitoring_token_file",
+    "platform_admin_bootstrap_password": "platform_admin_bootstrap_password_file",
 }
 
 
@@ -27,10 +28,19 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://zahlmeister:zahlmeister@db:5432/zahlmeister"
     database_url_file: str = ""
     cors_origins_raw: str = Field(
-        default="http://localhost:8080",
+        default="http://localhost:3003",
         validation_alias="CORS_ORIGINS",
     )
-    public_app_url: str = "http://localhost:8080"
+    public_app_url: str = "http://localhost:3003"
+
+    platform_admin_emails_raw: str = Field(
+        default="",
+        validation_alias="PLATFORM_ADMIN_EMAILS",
+    )
+    platform_admin_bootstrap_email: str = ""
+    platform_admin_bootstrap_password: str = ""
+    platform_admin_bootstrap_password_file: str = ""
+    platform_admin_bootstrap_name: str = "Zahlmeister Administration"
 
     log_level: str = "INFO"
     log_format: str = "json"
@@ -106,6 +116,14 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         return [item.strip() for item in self.cors_origins_raw.split(",") if item.strip()]
 
+    @property
+    def platform_admin_emails(self) -> set[str]:
+        return {
+            item.strip().casefold()
+            for item in self.platform_admin_emails_raw.split(",")
+            if item.strip()
+        }
+
     def production_security_errors(self) -> list[str]:
         if self.environment != "production":
             return []
@@ -122,6 +140,8 @@ class Settings(BaseSettings):
             errors.append("DATABASE_URL uses development credentials")
         if self.monitoring_token and len(self.monitoring_token) < 24:
             errors.append("MONITORING_TOKEN is too short")
+        if self.platform_admin_bootstrap_password and len(self.platform_admin_bootstrap_password) < 16:
+            errors.append("PLATFORM_ADMIN_BOOTSTRAP_PASSWORD is too short")
 
         public_url = urlparse(self.public_app_url.strip())
         if public_url.scheme != "https" or not public_url.netloc:
