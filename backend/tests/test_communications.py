@@ -1,4 +1,11 @@
-from app.services.communications import external_launch_uri, normalize_phone
+import pytest
+
+from app.core.config import settings
+from app.services.communications import (
+    _effective_smtp_config,
+    external_launch_uri,
+    normalize_phone,
+)
 
 
 def test_external_mail_sms_whatsapp_uris_are_prefilled() -> None:
@@ -16,17 +23,14 @@ def test_external_mail_sms_whatsapp_uris_are_prefilled() -> None:
     assert not mail_select and not sms_select and not whatsapp_select
 
 
-def test_social_external_fallback_can_require_recipient_selection() -> None:
-    telegram, select_telegram = external_launch_uri(
-        "telegram", None, None, "Bitte zahlen"
+def test_telegram_requires_saved_recipient() -> None:
+    telegram, recipient_selection = external_launch_uri(
+        "telegram", "@anna", None, "Bitte zahlen"
     )
-    instagram, select_instagram = external_launch_uri(
-        "instagram", None, None, "Bitte zahlen"
-    )
-    assert telegram.startswith("https://t.me/share/url")
-    assert select_telegram
-    assert instagram == "https://www.instagram.com/direct/inbox/"
-    assert select_instagram
+    assert telegram == "https://t.me/anna"
+    assert not recipient_selection
+    with pytest.raises(ValueError, match="Telegram username missing"):
+        external_launch_uri("telegram", "@", None, "Bitte zahlen")
 
 
 def test_phone_normalization() -> None:
@@ -46,3 +50,23 @@ def test_transport_requests_cannot_override_canonical_message() -> None:
             pass
         else:
             raise AssertionError("Transport request accepted a message body override")
+
+
+def test_partial_tenant_smtp_config_never_falls_back_to_platform(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "smtp_host", "platform.example.test")
+    monkeypatch.setattr(settings, "smtp_port", 587)
+    monkeypatch.setattr(settings, "smtp_username", "platform@example.test")
+    monkeypatch.setattr(settings, "smtp_password", "platform-secret")
+    monkeypatch.setattr(settings, "smtp_starttls", True)
+    monkeypatch.setattr(settings, "mail_from_address", "platform@example.test")
+    monkeypatch.setattr(settings, "mail_from_name", "Zahlmeister")
+
+    tenant = _effective_smtp_config({"smtp_host": "tenant.example.test"})
+    assert tenant == {"smtp_host": "tenant.example.test"}
+
+    platform = _effective_smtp_config(
+        {"from_name": "Example Organization", "reply_to": "reply@example.test"}
+    )
+    assert platform["smtp_host"] == "platform.example.test"
+    assert platform["from_address"] == "platform@example.test"
+    assert platform["from_name"] == "Example Organization"
