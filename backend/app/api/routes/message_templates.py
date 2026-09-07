@@ -128,10 +128,9 @@ async def create_message_template(
     payload: MessageTemplateCreate,
     organization: Organization = Depends(get_organization),
 ) -> MessageTemplateRead:
-    source_language = payload.source_language or normalize_language(organization.locale)
     translations: dict[str, str] = {}
     if payload.body:
-        translations[source_language] = payload.body
+        source_language = payload.source_language
         if payload.auto_translate:
             if not translation.configured():
                 raise HTTPException(
@@ -139,6 +138,8 @@ async def create_message_template(
                     detail="Automatic translation is not configured",
                 )
             try:
+                source_language = source_language or await translation.detect_language(payload.body)
+                translations[source_language] = payload.body
                 translations = await translation.translate_missing(
                     payload.body,
                     source_language=source_language,
@@ -149,6 +150,9 @@ async def create_message_template(
                     status_code=status.HTTP_502_BAD_GATEWAY,
                     detail="Automatic translation failed",
                 ) from exc
+        else:
+            source_language = source_language or normalize_language(organization.locale)
+            translations[source_language] = payload.body
 
     async with SessionLocal.begin() as session:
         stored_org = await session.get(Organization, organization.id)
