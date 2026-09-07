@@ -184,24 +184,25 @@ async def start_infobip_oauth(
     return InfobipOAuthStartRead(authorization_url=url)
 
 
+def _integration_redirect(provider: str, result: str) -> RedirectResponse:
+    return RedirectResponse(
+        f"{settings.public_app_url.rstrip('/')}?view=settings&{provider}={result}",
+        status_code=status.HTTP_302_FOUND,
+    )
+
+
 @router.get("/infobip/oauth/callback", include_in_schema=False)
 async def finish_infobip_oauth(code: str, state: str):
     try:
         organization_id = UUID(verify_oauth_state(state))
         payload = await exchange_oauth_code(code)
     except Exception:
-        return RedirectResponse(
-            f"{settings.public_app_url.rstrip('/')}?infobip=error",
-            status_code=status.HTTP_302_FOUND,
-        )
+        return _integration_redirect("infobip", "error")
 
     async with SessionLocal.begin() as session:
         organization = await session.get(Organization, organization_id)
         if organization is None:
-            return RedirectResponse(
-                f"{settings.public_app_url.rstrip('/')}?infobip=error",
-                status_code=status.HTTP_302_FOUND,
-            )
+            return _integration_redirect("infobip", "error")
         existing = await session.scalar(
             select(CommunicationConnection).where(
                 CommunicationConnection.organization_id == organization.id,
@@ -223,10 +224,7 @@ async def finish_infobip_oauth(code: str, state: str):
         connection.connected_at = datetime.now(UTC)
         connection.last_error = None
 
-    return RedirectResponse(
-        f"{settings.public_app_url.rstrip('/')}?infobip=connected",
-        status_code=status.HTTP_302_FOUND,
-    )
+    return _integration_redirect("infobip", "connected")
 
 
 @router.get("/microsoft365/oauth/start", response_model=Microsoft365OAuthStartRead)
@@ -262,13 +260,6 @@ async def start_microsoft365_oauth(
         return Microsoft365OAuthStartRead(authorization_url=url)
 
 
-def _microsoft_redirect(result: str) -> RedirectResponse:
-    return RedirectResponse(
-        f"{settings.public_app_url.rstrip('/')}?microsoft365={result}",
-        status_code=status.HTTP_302_FOUND,
-    )
-
-
 @router.get("/microsoft365/oauth/callback", include_in_schema=False)
 async def finish_microsoft365_oauth(
     code: str | None = None,
@@ -277,13 +268,13 @@ async def finish_microsoft365_oauth(
     error_description: str | None = None,
 ):
     if not state:
-        return _microsoft_redirect("error")
+        return _integration_redirect("microsoft365", "error")
     try:
         connection_id_raw, organization_id_raw = microsoft365.verify_state(state)
         connection_id = UUID(connection_id_raw)
         organization_id = UUID(organization_id_raw)
     except (ValueError, TypeError):
-        return _microsoft_redirect("error")
+        return _integration_redirect("microsoft365", "error")
 
     if error:
         async with SessionLocal.begin() as session:
@@ -292,9 +283,11 @@ async def finish_microsoft365_oauth(
                 connection.status = "disconnected" if error == "access_denied" else "error"
                 connection.last_error = (error_description or error)[:2000]
                 connection.last_tested_at = datetime.now(UTC)
-        return _microsoft_redirect("cancelled" if error == "access_denied" else "error")
+        return _integration_redirect(
+            "microsoft365", "cancelled" if error == "access_denied" else "error"
+        )
     if not code:
-        return _microsoft_redirect("error")
+        return _integration_redirect("microsoft365", "error")
 
     try:
         async with SessionLocal.begin() as session:
@@ -322,7 +315,31 @@ async def finish_microsoft365_oauth(
             connection.connected_at = connection.connected_at or datetime.now(UTC)
             connection.last_error = None
             connection.last_tested_at = datetime.now(UTC)
-        return _microsoft_redirect("connected")
+
+            email_setting = await session.scalar(
+                select(CommunicationChannelSetting).where(
+                    CommunicationChannelSetting.organization_id == organization_id,
+                    CommunicationChannelSetting.channel == "email",
+                )
+            )
+            if email_setting is None:
+                email_setting = CommunicationChannelSetting(
+                    organization_id=organization_id,
+                    channel="email",
+                    mode="internal",
+                )
+                session.add(email_setting)
+            email_setting.mode = "internal"
+            email_setting.provider = "microsoft365"
+            email_setting.connection_id = connection.id
+            email_setting.sender = None
+            email_setting.encrypted_config = None
+            email_setting.webhook_key = None
+            email_setting.sync_cursor = None
+            email_setting.status = "not_tested"
+            email_setting.last_tested_at = None
+            email_setting.last_error = None
+        return _integration_redirect("microsoft365", "connected")
     except Exception as exc:
         async with SessionLocal.begin() as session:
             connection = await session.get(CommunicationConnection, connection_id, with_for_update=True)
@@ -330,7 +347,7 @@ async def finish_microsoft365_oauth(
                 connection.status = "error"
                 connection.last_error = str(exc)[:2000]
                 connection.last_tested_at = datetime.now(UTC)
-        return _microsoft_redirect("error")
+        return _integration_redirect("microsoft365", "error")
 
 
 @router.patch("/connections/{connection_id}", response_model=CommunicationConnectionRead)
