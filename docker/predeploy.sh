@@ -9,18 +9,22 @@ IMAGE_TAG="${IMAGE_TAG:-predeploy}"
 BACKEND_TEST_IMAGE="zahlmeister-backend-test:${IMAGE_TAG}"
 FRONTEND_TEST_IMAGE="zahlmeister-frontend-test:${IMAGE_TAG}"
 BACKEND_RUNTIME_IMAGE="zahlmeister-backend:${IMAGE_TAG}"
+FRONTEND_RUNTIME_IMAGE="zahlmeister-frontend:${IMAGE_TAG}"
 SAFE_TAG="$(printf '%s' "$IMAGE_TAG" | tr -c 'A-Za-z0-9_.-' '-')"
 RUN_ID="${SAFE_TAG}-$$"
+NETWORK="zahlmeister-predeploy-${RUN_ID}"
 DB_CONTAINER="zahlmeister-predeploy-db-${RUN_ID}"
 WORKER_CONTAINER="zahlmeister-predeploy-worker-${RUN_ID}"
 BACKEND_CONTAINER="zahlmeister-predeploy-backend-${RUN_ID}"
+FRONTEND_CONTAINER="zahlmeister-predeploy-frontend-${RUN_ID}"
 TEST_DB_NAME="zahlmeister_predeploy"
 TEST_DB_USER="predeploy"
 TEST_DB_PASSWORD="predeploy-only-password"
-TEST_DATABASE_URL="postgresql+asyncpg://${TEST_DB_USER}:${TEST_DB_PASSWORD}@127.0.0.1:5432/${TEST_DB_NAME}"
+TEST_DATABASE_URL="postgresql+asyncpg://${TEST_DB_USER}:${TEST_DB_PASSWORD}@db:5432/${TEST_DB_NAME}"
 
 cleanup() {
-  docker rm -f "$BACKEND_CONTAINER" "$WORKER_CONTAINER" "$DB_CONTAINER" >/dev/null 2>&1 || true
+  docker rm -f "$FRONTEND_CONTAINER" "$BACKEND_CONTAINER" "$WORKER_CONTAINER" "$DB_CONTAINER" >/dev/null 2>&1 || true
+  docker network rm "$NETWORK" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
@@ -127,11 +131,12 @@ docker run --rm \
   -e ENVIRONMENT=test \
   -e READINESS_REQUIRE_WORKER=false \
   "$BACKEND_TEST_IMAGE" \
-  sh -c 'ruff check --select E4,E7,E9,F app tests && pytest -q'
+  sh -c 'ruff check app tests && pytest -q'
 
 echo
 echo "[5/11] Testing Alembic migrations against PostgreSQL 17..."
-docker run -d --name "$DB_CONTAINER" \
+docker network create "$NETWORK" >/dev/null
+docker run -d --name "$DB_CONTAINER" --network "$NETWORK" --network-alias db \
   -e POSTGRES_DB="$TEST_DB_NAME" \
   -e POSTGRES_USER="$TEST_DB_USER" \
   -e POSTGRES_PASSWORD="$TEST_DB_PASSWORD" \
@@ -146,7 +151,7 @@ for _ in $(seq 1 30); do
 done
 [[ "$DB_READY" == "1" ]] || { docker logs "$DB_CONTAINER"; echo "PostgreSQL predeploy database did not become ready." >&2; exit 1; }
 
-docker run --rm --network "container:$DB_CONTAINER" \
+docker run --rm --network "$NETWORK" \
   -e ENVIRONMENT=test \
   -e DATABASE_URL="$TEST_DATABASE_URL" \
   "$BACKEND_TEST_IMAGE" \
@@ -201,7 +206,7 @@ IMAGE_TAG="$IMAGE_TAG" docker compose --env-file "$ENV_FILE" -f "$PROD_FILE" run
   '
 
 echo
-echo "[9/11] Starting production backend and worker smoke test..."
+echo "[9/11] Starting production runtime smoke test..."
 runtime_env=(
   -e ENVIRONMENT=production
   -e DATABASE_URL="$TEST_DATABASE_URL"
@@ -233,12 +238,12 @@ runtime_security=(
   --security-opt no-new-privileges:true
   --cap-drop ALL
   --user "$APP_RUNTIME_UID_VALUE:$APP_RUNTIME_GID_VALUE"
-  --network "container:$DB_CONTAINER"
+  --network "$NETWORK"
 )
 
 docker run -d --name "$WORKER_CONTAINER" "${runtime_security[@]}" "${runtime_env[@]}" \
   "$BACKEND_RUNTIME_IMAGE" python -m app.worker >/dev/null
-docker run -d --name "$BACKEND_CONTAINER" "${runtime_security[@]}" "${runtime_env[@]}" \
+docker run -d --name "$BACKEND_CONTAINER" --network-alias backend "${runtime_security[@]}" "${runtime_env[@]}" \
   "$BACKEND_RUNTIME_IMAGE" uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --no-access-log >/dev/null
 
 RUNTIME_READY=0
@@ -269,6 +274,27 @@ fi
 docker exec "$BACKEND_CONTAINER" python -c "import urllib.error,urllib.request; u='http://127.0.0.1:8000/api/docs';
 try: urllib.request.urlopen(u,timeout=2); raise SystemExit('production docs must be disabled')
 except urllib.error.HTTPError as exc: assert exc.code == 404"
+
+docker run -d --name "$FRONTEND_CONTAINER" --network "$NETWORK" "$FRONTEND_RUNTIME_IMAGE" >/dev/null
+FRONTEND_READY=0
+for _ in $(seq 1 20); do
+  if ! docker inspect -f '{{.State.Running}}' "$FRONTEND_CONTAINER" 2>/dev/null | grep -qx true; then
+    docker logs "$FRONTEND_CONTAINER" || true
+    echo "Production frontend exited during smoke test." >&2
+    exit 1
+  fi
+  if docker exec "$FRONTEND_CONTAINER" wget -qO- http://127.0.0.1/ >/dev/null 2>&1 && \
+     docker exec "$FRONTEND_CONTAINER" wget -qO- http://127.0.0.1/api/v1/ready | grep -q 'ready'; then
+    FRONTEND_READY=1
+    break
+  fi
+  sleep 1
+done
+if [[ "$FRONTEND_READY" != "1" ]]; then
+  docker logs "$FRONTEND_CONTAINER" || true
+  echo "Production frontend/API proxy did not become healthy." >&2
+  exit 1
+fi
 
 echo
 echo "[10/11] Checking Capacitor source and legacy runtime references..."
