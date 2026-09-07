@@ -56,11 +56,58 @@ def test_ponto_transaction_parser_ignores_outgoing_payments() -> None:
 
 
 def test_ponto_oauth_state_roundtrip() -> None:
-    state = ponto.sign_state("11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222")
+    state = ponto.sign_state(
+        "11111111-1111-1111-1111-111111111111",
+        "22222222-2222-2222-2222-222222222222",
+    )
     assert ponto.verify_state(state) == (
         "11111111-1111-1111-1111-111111111111",
         "22222222-2222-2222-2222-222222222222",
     )
+
+
+def test_ponto_sandbox_authorization_url_is_selected(monkeypatch) -> None:
+    monkeypatch.setattr(ponto.settings, "ponto_connect_environment", "sandbox")
+    monkeypatch.setattr(ponto.settings, "ponto_connect_authorize_url", "")
+    assert (
+        ponto.settings.ponto_authorization_url
+        == "https://sandbox-authorization.myponto.com/oauth2/auth"
+    )
+
+
+def test_ponto_live_authorization_url_is_selected(monkeypatch) -> None:
+    monkeypatch.setattr(ponto.settings, "ponto_connect_environment", "live")
+    monkeypatch.setattr(ponto.settings, "ponto_connect_authorize_url", "")
+    assert ponto.settings.ponto_authorization_url == "https://authorization.myponto.com/oauth2/auth"
+
+
+def test_ponto_configuration_status_reports_missing_and_ready(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(ponto.settings, "ponto_connect_client_id", "client-id")
+    monkeypatch.setattr(ponto.settings, "ponto_connect_client_secret", "client-secret")
+    monkeypatch.setattr(ponto.settings, "ponto_connect_cert_path", "")
+    monkeypatch.setattr(ponto.settings, "ponto_connect_key_path", "")
+    missing = ponto.configuration_status()
+    assert missing["configured"] is False
+    assert "client_certificate" in missing["missing"]
+    assert "private_key" in missing["missing"]
+
+    cert = tmp_path / "client.crt"
+    key = tmp_path / "client.key"
+    cert.write_text("test certificate")
+    key.write_text("test private key")
+    monkeypatch.setattr(ponto.settings, "ponto_connect_cert_path", str(cert))
+    monkeypatch.setattr(ponto.settings, "ponto_connect_key_path", str(key))
+    ready = ponto.configuration_status()
+    assert ready["configured"] is True
+    assert ready["missing"] == []
+
+
+def test_production_rejects_ponto_sandbox_configuration(monkeypatch) -> None:
+    monkeypatch.setattr(ponto.settings, "environment", "production")
+    monkeypatch.setattr(ponto.settings, "ponto_connect_environment", "sandbox")
+    monkeypatch.setattr(ponto.settings, "ponto_connect_client_id", "sandbox-client")
+    errors = ponto.settings.production_security_errors()
+    assert "PONTO_CONNECT_ENVIRONMENT must be live in production" in errors
 
 
 def test_bank_sync_provider_registry_is_replaceable() -> None:
@@ -148,7 +195,9 @@ def test_mail_host_rejects_private_addresses(monkeypatch) -> None:
     monkeypatch.setattr(
         socket,
         "getaddrinfo",
-        lambda *args, **kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0))],
+        lambda *args, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0))
+        ],
     )
     try:
         _ensure_public_mail_host("mail.example.test")
