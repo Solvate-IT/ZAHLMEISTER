@@ -1,0 +1,107 @@
+import asyncio
+import html
+import re
+
+import httpx
+
+from app.core.config import settings
+from app.services.templates import (
+    SUPPORTED_LANGUAGES,
+    normalize_language,
+    validate_same_template_variables,
+    validate_template_body,
+)
+
+_TOKEN_RE = re.compile(r"{{\s*[a-z_]+\s*}}")
+
+
+def configured() -> bool:
+    return bool(settings.google_translate_api_key.strip())
+
+
+def _protect_variables(body: str) -> tuple[str, dict[str, str]]:
+    replacements: dict[str, str] = {}
+
+    def replace(match: re.Match[str]) -> str:
+        marker = f"__ZMVAR_{len(replacements)}__"
+        replacements[marker] = match.group(0)
+        return marker
+
+    return _TOKEN_RE.sub(replace, body), replacements
+
+
+def _restore_variables(body: str, replacements: dict[str, str]) -> str:
+    result = html.unescape(body)
+    for marker, original in replacements.items():
+        if marker not in result:
+            raise ValueError("Translation provider changed a protected template variable")
+        result = result.replace(marker, original)
+    return result
+
+
+async def translate_text(
+    body: str,
+    *,
+    target_language: str,
+    source_language: str | None = None,
+) -> str:
+    validate_template_body(body)
+    if not configured():
+        raise ValueError("Automatic translation is not configured")
+    target = normalize_language(target_language)
+    source = normalize_language(source_language) if source_language else None
+    protected, replacements = _protect_variables(body)
+    payload: dict[str, str] = {
+        "q": protected,
+        "target": target,
+        "format": "text",
+    }
+    if source:
+        payload["source"] = source
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            settings.google_translate_api_url,
+            params={"key": settings.google_translate_api_key},
+            json=payload,
+        )
+    response.raise_for_status()
+    data = response.json()
+    rows = data.get("data", {}).get("translations", [])
+    if not rows or not isinstance(rows[0], dict):
+        raise ValueError("Translation provider returned no translation")
+    translated = _restore_variables(str(rows[0].get("translatedText") or ""), replacements).strip()
+    if not translated:
+        raise ValueError("Translation provider returned an empty translation")
+    validate_same_template_variables(body, translated)
+    return translated
+
+
+async def translate_missing(
+    source_text: str,
+    *,
+    source_language: str | None,
+    existing: dict[str, str],
+) -> dict[str, str]:
+    validate_template_body(source_text)
+    result = dict(existing)
+    source = normalize_language(source_language) if source_language else None
+    missing = [language for language in SUPPORTED_LANGUAGES if language not in result]
+    if not missing:
+        return result
+
+    semaphore = asyncio.Semaphore(4)
+
+    async def translate_one(language: str) -> tuple[str, str]:
+        async with semaphore:
+            translated = await translate_text(
+                source_text,
+                target_language=language,
+                source_language=source,
+            )
+            return language, translated
+
+    for language, translated in await asyncio.gather(
+        *(translate_one(language) for language in missing)
+    ):
+        result[language] = translated
+    return result
