@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -27,9 +28,27 @@ class ParticipantCreate(BaseModel):
             raise ValueError("Participant name must not be empty")
         return value
 
+    @field_validator("channel_addresses")
+    @classmethod
+    def clean_channel_addresses(cls, value: dict[str, str]) -> dict[str, str]:
+        telegram = str(value.get("telegram") or "").strip()
+        return {"telegram": telegram} if telegram else {}
+
 
 class ParticipantUpdate(ParticipantCreate):
     pass
+
+
+class ParticipantChannelRead(BaseModel):
+    channel: Literal["email", "whatsapp", "sms", "telegram"]
+    enabled: bool
+    availability: Literal["unknown", "available", "unavailable"]
+    learned: bool = False
+
+
+class ParticipantChannelUpdate(BaseModel):
+    enabled: bool | None = None
+    availability: Literal["unknown", "available", "unavailable"] | None = None
 
 
 class ParticipantRead(BaseModel):
@@ -40,6 +59,7 @@ class ParticipantRead(BaseModel):
     email: str | None
     phone: str | None
     channel_addresses: dict[str, str] = Field(default_factory=dict)
+    channels: list[ParticipantChannelRead] = Field(default_factory=list)
 
 
 class ParticipantListRead(BaseModel):
@@ -64,10 +84,6 @@ class CollectionCreate(BaseModel):
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     send_at: datetime | None = None
     due_at: datetime | None = None
-    communication_channel: str = Field(
-        default="email", pattern="^(email|sms|whatsapp|telegram|instagram|messenger)$"
-    )
-    communication_mode: str = Field(default="external", pattern="^(internal|external)$")
     message_template_id: UUID | None = None
     message_body_override: str | None = Field(default=None, max_length=10000)
     reminder_rules: list[ReminderRule] | None = None
@@ -103,6 +119,7 @@ class CollectionParticipantRead(BaseModel):
     last_reminder_at: datetime | None = None
     reminder_count: int = 0
     delivery_status: str | None = None
+    delivery_channel: str | None = None
     communication_count: int = 0
 
 
@@ -118,8 +135,9 @@ class CollectionRead(BaseModel):
     participant_count: int
     paid_count: int
     paid_amount: Decimal
-    communication_channel: str
-    communication_mode: str
+    communication_channel: str = "auto"
+    communication_mode: str = "auto"
+    channel_order: list[str] = Field(default_factory=list)
     message_template_id: UUID | None = None
     message_body_override: str | None = None
     reminder_rules: list[ReminderRule] = Field(default_factory=list)
