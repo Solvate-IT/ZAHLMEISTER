@@ -58,12 +58,7 @@ async def queue_collection_messages(
     collection_participant_ids: set[UUID] | None = None,
     include_external: bool = True,
 ) -> DispatchOutcome:
-    """Resolve the configured channel strategy once per participant and queue internal sends.
-
-    Participant channel overrides and provider settings are loaded in batches so large lists do not
-    produce N+1 queries. When ``external_channels`` is supplied, unsupported external transports on
-    the current client are skipped and the next configured channel can be selected.
-    """
+    """Resolve the configured channel strategy once per participant and queue internal sends."""
     if kind not in {"initial", "reminder"}:
         raise ValueError("Unsupported dispatch kind")
 
@@ -91,18 +86,15 @@ async def queue_collection_messages(
 
     existing_rows = (
         await session.execute(
-            select(
-                CommunicationMessage.collection_participant_id,
-                CommunicationMessage.status,
-            ).where(
+            select(CommunicationMessage.collection_participant_id).where(
                 CommunicationMessage.collection_participant_id.in_(cp_ids),
                 CommunicationMessage.kind == kind,
                 CommunicationMessage.direction == "outgoing",
                 CommunicationMessage.status.in_(["queued", "sent", "delivered", "read"]),
             )
         )
-    ).all()
-    already_active = {cp_id for cp_id, _status in existing_rows}
+    ).scalars().all()
+    already_active = set(existing_rows)
 
     outcome = DispatchOutcome()
     now = datetime.now(UTC)
@@ -118,19 +110,6 @@ async def queue_collection_messages(
         )
         if route is None:
             outcome.unreachable.append(cp.id)
-            session.add(
-                CommunicationMessage(
-                    organization_id=organization.id,
-                    collection_id=collection.id,
-                    collection_participant_id=cp.id,
-                    kind=kind,
-                    channel="email",
-                    delivery_mode="external",
-                    direction="outgoing",
-                    status="skipped",
-                    error="No usable communication channel",
-                )
-            )
             continue
         if route.mode == "external":
             if include_external:
@@ -151,6 +130,14 @@ async def queue_collection_messages(
             participant=participant,
             organization=organization,
         )
+        provider = route.provider
+        if (
+            route.channel == "email"
+            and route.provider == "smtp_imap"
+            and not str(route.config.get("smtp_host") or "").strip()
+            and not str(route.config.get("from_address") or "").strip()
+        ):
+            provider = "zahlmeister_email"
         message = CommunicationMessage(
             organization_id=organization.id,
             collection_id=collection.id,
@@ -163,7 +150,7 @@ async def queue_collection_messages(
             subject=content.subject,
             body=content.text,
             status="queued",
-            provider=route.provider,
+            provider=provider,
             metadata_json=content.metadata_json(),
         )
         session.add(message)
