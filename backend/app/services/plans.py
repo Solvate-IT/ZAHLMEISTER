@@ -1,8 +1,9 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.entities import Participant
 from app.models.platform import StoreSubscription
 
 FREE_PARTICIPANTS_PER_LIST = 10
@@ -30,3 +31,18 @@ async def is_pro(session: AsyncSession, organization_id) -> bool:
 
 async def plan_name(session: AsyncSession, organization_id) -> str:
     return "pro" if await is_pro(session, organization_id) else "free"
+
+
+async def participant_capacity_available(
+    session: AsyncSession,
+    organization_id,
+    list_id,
+    *,
+    adding: int = 1,
+) -> bool:
+    if adding <= 0 or await is_pro(session, organization_id):
+        return True
+    current = int(
+        await session.scalar(select(func.count()).where(Participant.list_id == list_id)) or 0
+    )
+    return current + adding <= FREE_PARTICIPANTS_PER_LIST
