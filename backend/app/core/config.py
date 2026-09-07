@@ -12,6 +12,7 @@ _SECRET_FIELDS = {
     "database_url": "database_url_file",
     "smtp_password": "smtp_password_file",
     "infobip_oauth_client_secret": "infobip_oauth_client_secret_file",
+    "microsoft365_client_secret": "microsoft365_client_secret_file",
     "ponto_connect_client_secret": "ponto_connect_client_secret_file",
     "ponto_connect_key_password": "ponto_connect_key_password_file",
     "mollie_oauth_client_secret": "mollie_oauth_client_secret_file",
@@ -77,6 +78,13 @@ class Settings(BaseSettings):
     infobip_oauth_authorize_url: str = "https://oneapi.infobip.com/exchange/1/oauth/authorize"
     infobip_oauth_token_url: str = "https://oneapi.infobip.com/exchange/1/oauth/token"
     infobip_default_base_url: str = "https://api.infobip.com"
+
+    microsoft365_client_id: str = ""
+    microsoft365_client_secret: str = ""
+    microsoft365_client_secret_file: str = ""
+    microsoft365_tenant: str = "organizations"
+    microsoft365_scopes: str = "openid profile offline_access User.Read Mail.ReadWrite Mail.Send"
+    microsoft365_graph_url: str = "https://graph.microsoft.com/v1.0"
 
     ponto_connect_environment: Literal["sandbox", "live"] = "sandbox"
     ponto_connect_client_id: str = ""
@@ -184,6 +192,19 @@ class Settings(BaseSettings):
                 continue
             if parsed.scheme != "https" or not parsed.netloc or parsed.path not in {"", "/"}:
                 errors.append(f"CORS origin is not a valid HTTPS origin: {origin}")
+
+        microsoft_configured = any(
+            (self.microsoft365_client_id.strip(), self.microsoft365_client_secret.strip())
+        )
+        if microsoft_configured and not (
+            self.microsoft365_client_id.strip() and self.microsoft365_client_secret.strip()
+        ):
+            errors.append("Microsoft 365 OAuth configuration is incomplete")
+        graph = urlparse(self.microsoft365_graph_url.strip())
+        if microsoft_configured and (
+            graph.scheme != "https" or graph.hostname != "graph.microsoft.com"
+        ):
+            errors.append("MICROSOFT365_GRAPH_URL must use https://graph.microsoft.com")
 
         ponto_configured = any(
             (
