@@ -18,11 +18,13 @@ from app.schemas.communications import (
     ChannelSettingRead,
     ChannelSettingUpdate,
     CommunicationConnectionRead,
-    ConnectionTestRead,
     CommunicationConnectionUpdate,
+    ConnectionTestRead,
     InfobipConnectRequest,
     InfobipOAuthStartRead,
+    Microsoft365OAuthStartRead,
 )
+from app.services import microsoft365
 from app.services.channel_config import SECRET_FIELDS, SUPPORTED_CHANNELS, internal_channel_configured
 from app.services.communications import test_smtp_imap
 from app.services.infobip import (
@@ -66,6 +68,10 @@ def _safe_email_fields(config: dict) -> dict:
     return result
 
 
+def _connection_active(connection: CommunicationConnection | None) -> bool:
+    return bool(connection and connection.status == "connected")
+
+
 def _read(
     channel: str,
     stored: CommunicationChannelSetting | None,
@@ -81,16 +87,21 @@ def _read(
 
     config = decrypt_config(stored.encrypted_config)
     connection = connections.get(stored.connection_id) if stored.connection_id else None
+    active = (
+        _connection_active(connection)
+        if stored.provider == "microsoft365"
+        else connection_is_active(connection)
+    )
     configured = stored.mode != "internal" or internal_channel_configured(
         channel,
         provider=stored.provider,
         config=config,
-        connection_active=connection_is_active(connection),
+        connection_active=active,
         sender=stored.sender,
     )
     webhook_url = (
         connection_webhook_url(connection.webhook_key)
-        if connection and connection.webhook_key
+        if connection and connection.provider == "infobip" and connection.webhook_key
         else None
     )
     return ChannelSettingRead(
@@ -100,7 +111,9 @@ def _read(
         configured=configured,
         sender=stored.sender,
         connection_id=stored.connection_id,
-        fields=_safe_email_fields(config) if channel == "email" and stored.provider == "smtp_imap" else {},
+        fields=_safe_email_fields(config)
+        if channel == "email" and stored.provider == "smtp_imap"
+        else {},
         webhook_url=webhook_url,
         status=stored.status,
         last_tested_at=stored.last_tested_at,
@@ -221,6 +234,110 @@ async def finish_infobip_oauth(code: str, state: str):
     )
 
 
+@router.get("/microsoft365/oauth/start", response_model=Microsoft365OAuthStartRead)
+async def start_microsoft365_oauth(
+    organization: Organization = Depends(get_organization),
+) -> Microsoft365OAuthStartRead:
+    async with SessionLocal.begin() as session:
+        connection = await session.scalar(
+            select(CommunicationConnection).where(
+                CommunicationConnection.organization_id == organization.id,
+                CommunicationConnection.provider == "microsoft365",
+            )
+        )
+        if connection is None:
+            connection = CommunicationConnection(
+                organization_id=organization.id,
+                provider="microsoft365",
+                auth_type="oauth",
+                status="connecting",
+                account_label="Microsoft 365",
+            )
+            session.add(connection)
+            await session.flush()
+        connection.auth_type = "oauth"
+        connection.status = "connecting"
+        connection.last_error = None
+        try:
+            url = microsoft365.authorization_url(connection, str(organization.id))
+        except ValueError as exc:
+            connection.status = "error"
+            connection.last_error = str(exc)[:2000]
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        return Microsoft365OAuthStartRead(authorization_url=url)
+
+
+def _microsoft_redirect(result: str) -> RedirectResponse:
+    return RedirectResponse(
+        f"{settings.public_app_url.rstrip('/')}?microsoft365={result}",
+        status_code=status.HTTP_302_FOUND,
+    )
+
+
+@router.get("/microsoft365/oauth/callback", include_in_schema=False)
+async def finish_microsoft365_oauth(
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+):
+    if not state:
+        return _microsoft_redirect("error")
+    try:
+        connection_id_raw, organization_id_raw = microsoft365.verify_state(state)
+        connection_id = UUID(connection_id_raw)
+        organization_id = UUID(organization_id_raw)
+    except (ValueError, TypeError):
+        return _microsoft_redirect("error")
+
+    if error:
+        async with SessionLocal.begin() as session:
+            connection = await session.get(CommunicationConnection, connection_id, with_for_update=True)
+            if connection and connection.organization_id == organization_id:
+                connection.status = "disconnected" if error == "access_denied" else "error"
+                connection.last_error = (error_description or error)[:2000]
+                connection.last_tested_at = datetime.now(UTC)
+        return _microsoft_redirect("cancelled" if error == "access_denied" else "error")
+    if not code:
+        return _microsoft_redirect("error")
+
+    try:
+        async with SessionLocal.begin() as session:
+            connection = await session.get(CommunicationConnection, connection_id, with_for_update=True)
+            if (
+                connection is None
+                or connection.organization_id != organization_id
+                or connection.provider != "microsoft365"
+            ):
+                raise ValueError("Microsoft 365 connection not found")
+            await microsoft365.exchange_code(connection, code)
+            connection.status = "connected"
+            connection.connected_at = datetime.now(UTC)
+            connection.last_error = None
+
+        profile = await microsoft365.profile(connection_id)
+        async with SessionLocal.begin() as session:
+            connection = await session.get(CommunicationConnection, connection_id, with_for_update=True)
+            if connection is None or connection.organization_id != organization_id:
+                raise ValueError("Microsoft 365 connection not found")
+            mailbox = str(profile.get("mail") or profile.get("userPrincipalName") or "").strip()
+            connection.account_label = mailbox or str(profile.get("displayName") or "Microsoft 365")
+            connection.account_key = str(profile.get("id") or "") or None
+            connection.status = "connected"
+            connection.connected_at = connection.connected_at or datetime.now(UTC)
+            connection.last_error = None
+            connection.last_tested_at = datetime.now(UTC)
+        return _microsoft_redirect("connected")
+    except Exception as exc:
+        async with SessionLocal.begin() as session:
+            connection = await session.get(CommunicationConnection, connection_id, with_for_update=True)
+            if connection and connection.organization_id == organization_id:
+                connection.status = "error"
+                connection.last_error = str(exc)[:2000]
+                connection.last_tested_at = datetime.now(UTC)
+        return _microsoft_redirect("error")
+
+
 @router.patch("/connections/{connection_id}", response_model=CommunicationConnectionRead)
 async def update_connection(
     connection_id: UUID,
@@ -270,6 +387,9 @@ async def disconnect_connection(
             row.provider = None
             row.connection_id = None
             row.sender = None
+            row.encrypted_config = None
+            row.status = "not_tested"
+            row.sync_cursor = None
         await session.delete(connection)
 
 
@@ -283,10 +403,14 @@ async def test_connection_endpoint(
         connection = await session.get(CommunicationConnection, connection_id, with_for_update=True)
         if connection is None or connection.organization_id != organization.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
-        if connection.provider != "infobip":
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported provider")
         try:
-            await test_infobip_connection(session, connection)
+            details: dict[str, str] = {}
+            if connection.provider == "infobip":
+                await test_infobip_connection(session, connection)
+            elif connection.provider == "microsoft365":
+                details = await microsoft365.test_connection(connection.id)
+            else:
+                raise ValueError("Unsupported provider")
         except Exception as exc:
             connection.status = "error"
             connection.last_error = str(exc)[:2000]
@@ -297,7 +421,9 @@ async def test_connection_endpoint(
         connection.status = "connected"
         connection.last_error = None
         connection.last_tested_at = tested_at
-        return ConnectionTestRead(ok=True, status="connected", tested_at=tested_at)
+        return ConnectionTestRead(
+            ok=True, status="connected", tested_at=tested_at, details=details
+        )
 
 
 @router.post("/{channel}/test", response_model=ConnectionTestRead)
@@ -328,6 +454,16 @@ async def test_channel_endpoint(
                 if connection is None:
                     raise ValueError("Infobip connection missing")
                 await test_infobip_connection(session, connection)
+                connection.status = "connected"
+                connection.last_error = None
+                connection.last_tested_at = tested_at
+            elif stored.provider == "microsoft365":
+                if stored.connection_id is None:
+                    raise ValueError("Microsoft 365 connection missing")
+                connection = await session.get(CommunicationConnection, stored.connection_id, with_for_update=True)
+                if connection is None or connection.provider != "microsoft365":
+                    raise ValueError("Microsoft 365 connection missing")
+                details = await microsoft365.test_connection(connection.id)
                 connection.status = "connected"
                 connection.last_error = None
                 connection.last_tested_at = tested_at
@@ -382,34 +518,35 @@ async def update_setting(
         provider = None
     elif channel == "email":
         provider = provider or "smtp_imap"
-        if provider not in {"smtp_imap", "infobip"}:
+        if provider not in {"smtp_imap", "infobip", "microsoft365"}:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Internal email supports Infobip or own SMTP/IMAP",
+                detail="Internal email supports Microsoft 365, Infobip or own SMTP/IMAP",
             )
     else:
         provider = "infobip"
 
     async with SessionLocal.begin() as session:
         connection = None
-        if payload.mode == "internal" and provider == "infobip":
+        if payload.mode == "internal" and provider in {"infobip", "microsoft365"}:
             if payload.connection_id is None:
+                name = "Infobip" if provider == "infobip" else "Microsoft 365"
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Connect an Infobip account first",
+                    detail=f"Connect a {name} account first",
                 )
             connection = await session.get(CommunicationConnection, payload.connection_id)
             if (
                 connection is None
                 or connection.organization_id != organization.id
-                or connection.provider != "infobip"
+                or connection.provider != provider
                 or connection.status != "connected"
             ):
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Infobip connection is not active",
+                    detail=f"{provider} connection is not active",
                 )
-            if not payload.sender:
+            if provider == "infobip" and not payload.sender:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="Select or enter the Infobip sender/resource for this channel",
@@ -447,9 +584,8 @@ async def update_setting(
         stored.connection_id = connection.id if connection else None
         stored.sender = payload.sender if provider == "infobip" else None
         stored.encrypted_config = encrypt_config(incoming) if incoming else None
-        # Legacy per-channel webhook keys are no longer required; one provider connection
-        # owns the Infobip webhook endpoint.
         stored.webhook_key = None
+        stored.sync_cursor = None if provider != "smtp_imap" else stored.sync_cursor
         stored.status = "not_tested"
         stored.last_tested_at = None
         stored.last_error = None
