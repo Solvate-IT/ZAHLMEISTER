@@ -19,7 +19,7 @@ export function TemplateSettingsPanel(){
   const [notice,setNotice]=useState("");
   const [newName,setNewName]=useState("");
   const [newBody,setNewBody]=useState("");
-  const [newLanguage,setNewLanguage]=useState(currentLanguage);
+  const [newLanguage,setNewLanguage]=useState("");
   const [autoTranslate,setAutoTranslate]=useState(true);
   const [busy,setBusy]=useState(false);
 
@@ -29,6 +29,7 @@ export function TemplateSettingsPanel(){
       setItems(templates);
       setTranslation(status);
       setAutoTranslate(current=>status.configured?current:false);
+      if(!status.configured)setNewLanguage(current=>current||currentLanguage);
       if(selected)setSelected(templates.find(item=>item.id===selected.id)??null);
     }catch{setNotice(t("loadError"))}
   }
@@ -41,10 +42,10 @@ export function TemplateSettingsPanel(){
       const item=await api.createTemplate({
         name:newName.trim(),
         body:newBody.trim(),
-        source_language:newLanguage,
+        source_language:newLanguage||undefined,
         auto_translate:Boolean(translation?.configured&&autoTranslate),
       });
-      setNewName("");setNewBody("");setSelected(item);await load();setNotice(t("templateSaved"));
+      setNewName("");setNewBody("");setNewLanguage(translation?.configured?"":currentLanguage);setSelected(item);await load();setNotice(t("templateSaved"));
     }catch(error){setNotice(error instanceof ApiError&&error.status===502?t("translationFailed"):t("requestFailed"))}
     finally{setBusy(false)}
   }
@@ -57,10 +58,10 @@ export function TemplateSettingsPanel(){
     <div className="card form">
       <strong>{t("newTemplate")}</strong>
       <div className="field"><label>{t("templateName")}</label><input className="input" value={newName} onChange={event=>setNewName(event.target.value)}/></div>
-      <div className="field"><label>{t("sourceLanguage")}</label><select className="select" value={newLanguage} onChange={event=>setNewLanguage(event.target.value)}>{languages.map(language=><option key={language} value={language}>{languageName(locale,language)}</option>)}</select></div>
+      <div className="field"><label>{t("sourceLanguage")}</label><select className="select" value={newLanguage} onChange={event=>setNewLanguage(event.target.value)}>{translation?.configured&&autoTranslate&&<option value="">{t("detectLanguageAutomatically")}</option>}{languages.map(language=><option key={language} value={language}>{languageName(locale,language)}</option>)}</select></div>
       <div className="field"><label>{t("initialTemplateText")}</label><textarea className="textarea" style={{minHeight:180}} value={newBody} onChange={event=>setNewBody(event.target.value)}/></div>
       <div className="notice">{t("variables")}: {"{{first_name}} · {{name}} · {{collection_name}} · {{amount}} · {{due_date}} · {{payment_link}} · {{payment_reference}}"}</div>
-      {translation?.configured?<label className="checkbox"><input type="checkbox" checked={autoTranslate} onChange={event=>setAutoTranslate(event.target.checked)}/>{t("autoTranslateMissing")}</label>:<p className="muted">{t("autoTranslationUnavailable")}</p>}
+      {translation?.configured?<label className="checkbox"><input type="checkbox" checked={autoTranslate} onChange={event=>{const enabled=event.target.checked;setAutoTranslate(enabled);if(!enabled&&!newLanguage)setNewLanguage(currentLanguage)}}/>{t("autoTranslateMissing")}</label>:<p className="muted">{t("autoTranslationUnavailable")}</p>}
       <button className="button" onClick={create} disabled={busy||!newName.trim()||!newBody.trim()}>{t("create")}</button>
     </div>
     <div className="split">
