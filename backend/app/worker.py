@@ -29,7 +29,7 @@ from app.services.central_mail import (
     platform_inbox_configured,
     reply_address,
 )
-from app.services.channel_strategy import load_channel_runtimes, set_channel_knowledge
+from app.services.channel_strategy import load_channel_runtimes
 from app.services.communications import fetch_imap, send_smtp_email
 from app.services.infobip import (
     authorization_for_connection,
@@ -246,7 +246,6 @@ async def send_message(job: ScheduledJob) -> None:
     connection_id: UUID | None = None
     recipient = ""
     channel = ""
-    participant_id: UUID | None = None
     organization_name = "Zahlmeister"
 
     async with SessionLocal.begin() as session:
@@ -278,7 +277,6 @@ async def send_message(job: ScheduledJob) -> None:
         connection_id = runtime.connection_id
         recipient = message.recipient
         channel = message.channel
-        participant_id = cp.participant_id
         organization = await session.get(Organization, message.organization_id)
         if organization is not None:
             organization_name = organization.name
@@ -351,8 +349,6 @@ async def send_message(job: ScheduledJob) -> None:
         elif stored.kind == "reminder":
             cp.last_reminder_at = now
             cp.reminder_count += 1
-        if channel == "whatsapp" and participant_id is not None:
-            await set_channel_knowledge(session, participant_id, "whatsapp", availability="available")
 
 
 async def _store_incoming_email(
