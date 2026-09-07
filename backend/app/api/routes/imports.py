@@ -8,6 +8,7 @@ from app.db.session import SessionLocal
 from app.models.entities import Organization, Participant, ParticipantList
 from app.schemas.imports import ImportCommitRequest, ImportCommitResponse, ImportPreview
 from app.services.imports import ImportParseError, parse_import
+from app.services.plans import FREE_PARTICIPANTS_PER_LIST, participant_capacity_available
 
 router = APIRouter(prefix="/participant-lists", tags=["participant-lists"])
 
@@ -28,7 +29,6 @@ async def import_preview(
     file: UploadFile = File(...),
     organization: Organization = Depends(get_organization),
 ) -> ImportPreview:
-    # Reading is capped in memory; original upload is discarded after this request.
     data = await file.read(10 * 1024 * 1024 + 1)
     try:
         return parse_import(file.filename or "upload", file.content_type, data)
@@ -62,7 +62,8 @@ async def commit_import(
             for name, email, phone in existing_rows
         }
 
-        imported = 0
+        candidates: list[tuple[object, tuple[str, str, str]]] = []
+        seen = set(existing)
         skipped = 0
         for item in payload.participants:
             key = (
@@ -70,16 +71,30 @@ async def commit_import(
                 (str(item.email) if item.email else "").casefold(),
                 "".join(char for char in (item.phone or "") if char.isdigit()),
             )
-            if key in existing:
+            if key in seen:
                 skipped += 1
                 continue
-            participant = Participant(
-                list_id=participant_list.id,
-                name=item.name,
-                email=str(item.email) if item.email else None,
-                phone=item.phone,
+            seen.add(key)
+            candidates.append((item, key))
+
+        if not await participant_capacity_available(
+            session,
+            organization.id,
+            participant_list.id,
+            adding=len(candidates),
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Free plan supports up to {FREE_PARTICIPANTS_PER_LIST} participants per list",
             )
-            session.add(participant)
-            existing.add(key)
-            imported += 1
-        return ImportCommitResponse(imported_count=imported, skipped_count=skipped)
+
+        for item, _ in candidates:
+            session.add(
+                Participant(
+                    list_id=participant_list.id,
+                    name=item.name,
+                    email=str(item.email) if item.email else None,
+                    phone=item.phone,
+                )
+            )
+        return ImportCommitResponse(imported_count=len(candidates), skipped_count=skipped)
