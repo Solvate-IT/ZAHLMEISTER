@@ -111,9 +111,20 @@ def _ensure_public_mail_host(host: str) -> None:
 
 
 def _effective_smtp_config(config: dict[str, Any]) -> dict[str, Any]:
-    if str(config.get("smtp_host") or "").strip() and str(
-        config.get("from_address") or ""
-    ).strip():
+    tenant_transport_keys = {
+        "smtp_host",
+        "smtp_port",
+        "smtp_username",
+        "smtp_password",
+        "smtp_starttls",
+        "smtp_ssl",
+        "from_address",
+    }
+    # A tenant SMTP configuration must never silently fall back to the central
+    # Zahlmeister transport when it is incomplete or invalid. Only the explicit
+    # platform path (which contributes presentation fields such as from_name and
+    # reply_to, but no tenant transport fields) may use installation-level SMTP.
+    if any(key in config for key in tenant_transport_keys):
         return config
     if not settings.smtp_host.strip() or not settings.mail_from_address.strip():
         return config
