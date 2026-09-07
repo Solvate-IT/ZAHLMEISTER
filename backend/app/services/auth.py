@@ -6,6 +6,7 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.entities import AuthSession, Organization, User
 from app.schemas.auth import AuthResponse, UserRead
 
@@ -50,17 +51,19 @@ def token_hash(token: str) -> str:
     return _hash_token(token)
 
 
-def auth_response(token: str, user: User, organization: Organization) -> AuthResponse:
-    return AuthResponse(
-        token=token,
-        user=UserRead(
-            id=str(user.id),
-            email=user.email,
-            display_name=user.display_name,
-            organization_id=str(user.organization_id),
-            organization_name=organization.name,
-            locale=organization.locale,
-            currency=organization.currency,
-            email_verified=user.email_verified_at is not None,
-        ),
+def user_read(user: User, organization: Organization) -> UserRead:
+    return UserRead(
+        id=str(user.id),
+        email=user.email,
+        display_name=user.display_name,
+        organization_id=str(user.organization_id),
+        organization_name=organization.name,
+        locale=organization.locale,
+        currency=organization.currency,
+        email_verified=user.email_verified_at is not None,
+        is_platform_admin=user.email.casefold() in settings.platform_admin_emails,
     )
+
+
+def auth_response(token: str, user: User, organization: Organization) -> AuthResponse:
+    return AuthResponse(token=token, user=user_read(user, organization))
