@@ -79,6 +79,8 @@ async def get_ponto_configuration(
 
 @router.post("/ponto/start", response_model=BankSyncStartRead)
 async def start_ponto(organization: Organization = Depends(get_organization)) -> BankSyncStartRead:
+    authorization_url: str | None = None
+    error_detail: str | None = None
     async with SessionLocal.begin() as session:
         item = await session.scalar(
             select(BankSyncConnection).where(
@@ -99,12 +101,21 @@ async def start_ponto(organization: Organization = Depends(get_organization)) ->
         item.last_error = None
         try:
             language = (organization.locale or "en").split("-", 1)[0]
-            url = ponto.start_authorization(item, str(organization.id), language)
+            authorization_url = ponto.start_authorization(
+                item, str(organization.id), language
+            )
         except ValueError as exc:
+            error_detail = str(exc)
             item.status = "error"
-            item.last_error = str(exc)[:2000]
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-        return BankSyncStartRead(authorization_url=url)
+            item.last_error = error_detail[:2000]
+            item.last_tested_at = datetime.now(UTC)
+
+    if error_detail:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=error_detail
+        )
+    assert authorization_url is not None
+    return BankSyncStartRead(authorization_url=authorization_url)
 
 
 @router.get("/ponto/callback", include_in_schema=False)
@@ -134,7 +145,7 @@ async def finish_ponto(
         if error:
             cancelled = error == "access_denied"
             item.status = "disconnected" if cancelled else "error"
-            description = (error_description or error).strip()
+            description = (error_description or error).replace("\r", " ").replace("\n", " ").strip()
             item.last_error = description[:2000] if description else "Ponto authorization failed"
             item.last_tested_at = now
             result = "cancelled" if cancelled else "error"
