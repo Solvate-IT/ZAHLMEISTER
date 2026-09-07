@@ -1,12 +1,12 @@
 from datetime import datetime
-from urllib.parse import urlparse
 from typing import Literal
+from urllib.parse import urlparse
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-Channel = Literal["email", "sms", "whatsapp", "telegram", "instagram", "messenger"]
-DeliveryMode = Literal["internal", "external"]
+Channel = Literal["email", "sms", "whatsapp", "telegram"]
+DeliveryMode = Literal["internal", "external", "disabled"]
 InternalProvider = Literal["infobip", "smtp_imap", "microsoft365"]
 
 
@@ -100,6 +100,14 @@ class ChannelSettingUpdate(BaseModel):
         return value or None
 
 
+class CommunicationPreferencesRead(BaseModel):
+    channel_order: list[Channel]
+
+
+class CommunicationPreferencesUpdate(BaseModel):
+    channel_order: list[Channel] = Field(min_length=4, max_length=4)
+
+
 class CommunicationRead(BaseModel):
     id: UUID
     kind: str
@@ -151,6 +159,30 @@ class InternalMessageRequest(BaseModel):
 class QueueMessageResult(BaseModel):
     message_id: UUID
     status: str
+
+
+class ChannelFeedbackRequest(BaseModel):
+    availability: Literal["unknown", "available", "unavailable"]
+    failure_reason: str | None = Field(default=None, max_length=1000)
+
+
+class DispatchRequest(BaseModel):
+    kind: Literal["initial", "reminder"] = "initial"
+    external_channels: list[Channel] = Field(default_factory=list)
+    collection_participant_ids: list[UUID] | None = Field(default=None, max_length=1000)
+
+
+class DispatchExternalItem(BaseModel):
+    collection_participant_id: UUID
+    participant_id: UUID
+    name: str
+    channel: Channel
+
+
+class DispatchResult(BaseModel):
+    queued_internal: int = 0
+    external: list[DispatchExternalItem] = Field(default_factory=list)
+    unreachable: list[UUID] = Field(default_factory=list)
 
 
 class ConnectionTestRead(BaseModel):
