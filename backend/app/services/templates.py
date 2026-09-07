@@ -1,6 +1,7 @@
 import gettext
 import json
 import re
+from collections import Counter
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -33,6 +34,11 @@ _LOCALE_DIR = Path(__file__).resolve().parents[2] / "locales"
 _TOKEN_RE = re.compile(r"{{\s*([a-z_]+)\s*}}")
 
 
+def normalize_language(value: str | None, *, fallback: str = "en") -> str:
+    language = (value or fallback).strip().lower().split("-", 1)[0].split("_", 1)[0]
+    return language if language in SUPPORTED_LANGUAGES else fallback
+
+
 def _translation(language: str) -> gettext.NullTranslations:
     return gettext.translation(
         "messages",
@@ -43,13 +49,11 @@ def _translation(language: str) -> gettext.NullTranslations:
 
 
 def default_template_name(language: str = "en") -> str:
-    language = language.split("-", 1)[0].lower()
-    return _translation(language).gettext(DEFAULT_TEMPLATE_NAME_MSGID)
+    return _translation(normalize_language(language)).gettext(DEFAULT_TEMPLATE_NAME_MSGID)
 
 
 def default_template_body(language: str = "en") -> str:
-    language = language.split("-", 1)[0].lower()
-    return _translation(language).gettext(DEFAULT_TEMPLATE_BODY_MSGID)
+    return _translation(normalize_language(language)).gettext(DEFAULT_TEMPLATE_BODY_MSGID)
 
 
 def default_template_translations() -> dict[str, str]:
@@ -76,19 +80,36 @@ def serialize_translations(translations: dict[str, str]) -> str:
     return json.dumps(translations, ensure_ascii=False, sort_keys=True)
 
 
-def template_body_for_locale(translations: dict[str, str], locale: str) -> str:
-    language = locale.split("-", 1)[0].lower()
+def template_body_for_locale(
+    translations: dict[str, str],
+    locale: str,
+    *,
+    fallback_locale: str | None = None,
+) -> str:
+    language = normalize_language(locale)
+    fallback_language = normalize_language(fallback_locale) if fallback_locale else None
     return (
         translations.get(language)
+        or (translations.get(fallback_language) if fallback_language else None)
         or translations.get("en")
         or default_template_body(language)
     )
+
+
+def template_variable_counts(body: str) -> Counter[str]:
+    return Counter(_TOKEN_RE.findall(body))
 
 
 def validate_template_body(body: str) -> None:
     unknown = sorted(set(_TOKEN_RE.findall(body)) - set(TEMPLATE_VARIABLES))
     if unknown:
         raise ValueError(f"Unknown template variables: {', '.join(unknown)}")
+
+
+def validate_same_template_variables(source: str, translated: str) -> None:
+    validate_template_body(translated)
+    if template_variable_counts(source) != template_variable_counts(translated):
+        raise ValueError("Translated template variables do not match the source template")
 
 
 def render_template(body: str, values: dict[str, Any]) -> str:
@@ -113,7 +134,11 @@ def message_values(
 ) -> dict[str, str]:
     name = " ".join(participant_name.split()).strip()
     first_name = name.split(" ", 1)[0] if name else ""
-    amount_text = f"{Decimal(amount):.2f} {currency}" if not isinstance(amount, str) else f"{amount} {currency}"
+    amount_text = (
+        f"{Decimal(amount):.2f} {currency}"
+        if not isinstance(amount, str)
+        else f"{amount} {currency}"
+    )
     return {
         "first_name": first_name,
         "name": name,
