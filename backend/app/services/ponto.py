@@ -111,98 +111,144 @@ async def _token_request(data: dict[str, str]) -> dict[str, Any]:
     async with httpx.AsyncClient(verify=_ssl_context(), timeout=30) as client:
         response = await client.post(
             settings.ponto_connect_token_url,
-            headers={"Authorization": _basic_auth(), "Accept": "application/vnd.api+json"},
             data=data,
+            headers={
+                "Authorization": _basic_auth(),
+                "Accept": "application/vnd.api+json, application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
         )
     response.raise_for_status()
     payload = response.json()
-    if not isinstance(payload, dict):
-        raise ValueError("Invalid Ponto token response")
+    if "access_token" not in payload:
+        raise ValueError("Ponto token response did not contain an access token")
     return payload
 
 
-async def exchange_code(connection: BankSyncConnection, code: str) -> dict[str, Any]:
+async def exchange_code(connection: BankSyncConnection, code: str) -> None:
     config = decrypt_config(connection.encrypted_config)
     verifier = str(config.get("pkce_verifier") or "")
     if not verifier:
-        raise ValueError("Missing Ponto PKCE verifier")
+        raise ValueError("Ponto PKCE verifier missing")
     payload = await _token_request(
         {
             "grant_type": "authorization_code",
             "code": code,
+            "client_id": settings.ponto_connect_client_id,
             "redirect_uri": redirect_uri(),
             "code_verifier": verifier,
         }
     )
-    config.pop("pkce_verifier", None)
-    config.pop("oauth_started_at", None)
     config.update(
         {
-            "access_token": payload.get("access_token"),
+            "access_token": payload["access_token"],
             "refresh_token": payload.get("refresh_token"),
-            "expires_at": time.time() + int(payload.get("expires_in") or 0),
+            "expires_at": time.time() + int(payload.get("expires_in") or 1800) - 60,
+            "scope": payload.get("scope"),
         }
     )
+    config.pop("pkce_verifier", None)
     connection.encrypted_config = encrypt_config(config)
     connection.status = "connected"
     connection.connected_at = datetime.now(UTC)
     connection.last_error = None
-    return payload
 
 
-async def access_token(session: AsyncSession, connection: BankSyncConnection) -> str:
+async def access_token(connection: BankSyncConnection) -> str:
     config = decrypt_config(connection.encrypted_config)
-    access = str(config.get("access_token") or "")
-    expires_at = float(config.get("expires_at") or 0)
-    if access and expires_at > time.time() + 60:
-        return access
-    refresh = str(config.get("refresh_token") or "")
-    if not refresh:
-        raise ValueError("Ponto refresh token missing")
-    payload = await _token_request({"grant_type": "refresh_token", "refresh_token": refresh})
-    config.update(
-        {
-            "access_token": payload.get("access_token"),
-            "refresh_token": payload.get("refresh_token") or refresh,
-            "expires_at": time.time() + int(payload.get("expires_in") or 0),
-        }
-    )
-    connection.encrypted_config = encrypt_config(config)
-    await session.flush()
-    return str(payload.get("access_token") or "")
+    token = str(config.get("access_token") or "")
+    if token and float(config.get("expires_at") or 0) > time.time():
+        return token
 
+    # Ponto refresh tokens are one-time tokens. Refresh them in a dedicated, immediately
+    # committed transaction and lock the connection row so API workers and background
+    # workers can never consume the same refresh token concurrently. This also prevents
+    # a later parsing error in a BankSync run from rolling back the newly issued token.
+    # Imported lazily so pure parsing/OAuth helpers remain testable without a database driver.
+    from app.db.session import SessionLocal
 
-async def api_request(
-    session: AsyncSession,
-    connection: BankSyncConnection,
-    method: str,
-    path: str,
-    *,
-    params: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    token = await access_token(session, connection)
-    url = f"{settings.ponto_connect_api_url.rstrip('/')}/{path.lstrip('/')}"
-    async with httpx.AsyncClient(verify=_ssl_context(), timeout=30) as client:
-        response = await client.request(
-            method,
-            url,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.api+json",
-            },
-            params=params,
+    async with SessionLocal.begin() as session:
+        stored = await session.get(BankSyncConnection, connection.id, with_for_update=True)
+        if stored is None:
+            raise ValueError("Ponto connection no longer exists")
+        fresh_config = decrypt_config(stored.encrypted_config)
+        fresh_token = str(fresh_config.get("access_token") or "")
+        if fresh_token and float(fresh_config.get("expires_at") or 0) > time.time():
+            return fresh_token
+        refresh = str(fresh_config.get("refresh_token") or "")
+        if not refresh:
+            raise ValueError("Ponto refresh token missing; reconnect the bank account")
+        payload = await _token_request(
+            {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh,
+                "client_id": settings.ponto_connect_client_id,
+            }
         )
+        fresh_config.update(
+            {
+                "access_token": payload["access_token"],
+                "refresh_token": payload.get("refresh_token") or refresh,
+                "expires_at": time.time() + int(payload.get("expires_in") or 1800) - 60,
+                "scope": payload.get("scope") or fresh_config.get("scope"),
+            }
+        )
+        stored.encrypted_config = encrypt_config(fresh_config)
+        stored.last_error = None
+        return str(payload["access_token"])
+
+
+def _safe_api_url(path_or_url: str) -> str:
+    base = settings.ponto_connect_api_url.rstrip("/")
+    url = path_or_url if path_or_url.startswith("https://") else f"{base}/{path_or_url.lstrip('/')}"
+    parsed = urlparse(url)
+    base_parsed = urlparse(base)
+    if parsed.scheme != "https" or parsed.hostname != base_parsed.hostname:
+        raise ValueError("Ponto API returned an unexpected pagination URL")
+    return url
+
+
+async def _get(connection: BankSyncConnection, path_or_url: str) -> dict[str, Any]:
+    token = await access_token(connection)
+    url = _safe_api_url(path_or_url)
+    async with httpx.AsyncClient(verify=_ssl_context(), timeout=30) as client:
+        response = await client.get(
+            url,
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.api+json, application/json"},
+        )
+    if response.status_code in {401, 403}:
+        raise ValueError("Ponto authorization is no longer valid; reconnect the bank account")
     response.raise_for_status()
-    payload = response.json()
-    return payload if isinstance(payload, dict) else {}
+    return response.json()
 
 
-def _resource_attributes(resource: dict[str, Any]) -> dict[str, Any]:
-    attrs = resource.get("attributes")
-    return attrs if isinstance(attrs, dict) else {}
+async def list_accounts(connection: BankSyncConnection) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    next_url: str | None = f"{settings.ponto_connect_api_url.rstrip('/')}/accounts?page[limit]=100"
+    while next_url:
+        payload = await _get(connection, next_url)
+        for item in payload.get("data") or []:
+            if isinstance(item, dict):
+                result.append(item)
+        links = payload.get("links") or {}
+        next_url = links.get("next") if isinstance(links, dict) else None
+    return result
 
 
-def parse_amount(value: Any) -> tuple[str, str]:
-    if isinstance(value, dict):
-        return str(value.get("value") or "0"), str(value.get("currency") or "EUR")
-    return "0", "EUR"
+async def list_transactions(connection: BankSyncConnection, account_external_id: str) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    next_url: str | None = (
+        f"{settings.ponto_connect_api_url.rstrip('/')}/accounts/{account_external_id}/transactions?page[limit]=100"
+    )
+    while next_url:
+        payload = await _get(connection, next_url)
+        for item in payload.get("data") or []:
+            if isinstance(item, dict):
+                result.append(item)
+        links = payload.get("links") or {}
+        next_url = links.get("next") if isinstance(links, dict) else None
+    return result
+
+
+async def test_connection(connection: BankSyncConnection) -> None:
+    await list_accounts(connection)
