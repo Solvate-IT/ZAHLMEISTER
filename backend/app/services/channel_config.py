@@ -5,17 +5,12 @@ SUPPORTED_CHANNELS = (
     "sms",
     "whatsapp",
     "telegram",
-    "instagram",
-    "messenger",
 )
 
 INFOBIP_CHANNELS = {
     "email",
     "sms",
     "whatsapp",
-    "telegram",
-    "instagram",
-    "messenger",
 }
 
 SECRET_FIELDS = {
@@ -44,8 +39,7 @@ def internal_channel_configured(
     if provider == "microsoft365":
         return channel == "email" and connection_active
     if provider == "infobip":
-        # Every outbound Infobip channel needs a configured sender/resource.
-        # Telegram is reply-only in Infobip Conversations; a configured resource still
-        # identifies the channel for inbound/reply traffic.
+        if channel not in INFOBIP_CHANNELS:
+            return False
         return connection_active and bool((sender or "").strip())
     return False
