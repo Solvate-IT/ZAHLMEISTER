@@ -28,18 +28,27 @@ from app.services.channel_strategy import (
     set_channel_knowledge,
 )
 from app.services.naming import unique_participant_list_name
+from app.services.participant_preferences import (
+    load_participant_locales,
+    save_participant_locale,
+)
 from app.services.plans import FREE_PARTICIPANTS_PER_LIST, participant_capacity_available
 
 router = APIRouter(prefix="/participant-lists", tags=["participant-lists"])
 
 
-def _participant_read(participant: Participant, overrides: dict | None = None) -> ParticipantRead:
+def _participant_read(
+    participant: Participant,
+    overrides: dict | None = None,
+    locale: str | None = None,
+) -> ParticipantRead:
     overrides = overrides or {}
     return ParticipantRead(
         id=participant.id,
         name=participant.name,
         email=participant.email,
         phone=participant.phone,
+        locale=locale,
         channel_addresses=channel_addresses(participant),
         channels=[
             ParticipantChannelRead(
@@ -165,15 +174,19 @@ async def get_participant_list(
             .order_by(Participant.name, Participant.created_at)
         )
     ).scalars().all()
-    overrides = await load_participant_channel_settings(
-        session, [participant.id for participant in participants]
-    )
+    participant_ids = [participant.id for participant in participants]
+    overrides = await load_participant_channel_settings(session, participant_ids)
+    locales = await load_participant_locales(session, participant_ids)
     return ParticipantListDetail(
         id=item.id,
         name=item.name,
         participant_count=len(participants),
         participants=[
-            _participant_read(participant, overrides.get(participant.id))
+            _participant_read(
+                participant,
+                overrides.get(participant.id),
+                locales.get(participant.id),
+            )
             for participant in participants
         ],
     )
@@ -230,8 +243,9 @@ async def add_participant(
         )
         session.add(participant)
         await session.flush()
+        locale = await save_participant_locale(session, participant.id, payload.locale)
         await session.refresh(participant)
-        return _participant_read(participant)
+        return _participant_read(participant, locale=locale)
 
 
 @router.patch(
@@ -267,6 +281,7 @@ async def update_participant(
         participant.channel_addresses_json = json.dumps(
             payload.channel_addresses or {}, ensure_ascii=False
         )
+        locale = await save_participant_locale(session, participant.id, payload.locale)
         if (old_email or "").casefold() != (email or "").casefold():
             await reset_channel_knowledge(session, participant.id, "email")
         if old_phone != phone:
@@ -277,7 +292,7 @@ async def update_participant(
         await session.flush()
         await session.refresh(participant)
         overrides = await load_participant_channel_settings(session, [participant.id])
-        return _participant_read(participant, overrides.get(participant.id))
+        return _participant_read(participant, overrides.get(participant.id), locale)
 
 
 @router.patch(
@@ -312,7 +327,12 @@ async def update_participant_channel(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
             ) from exc
         overrides = await load_participant_channel_settings(session, [participant.id])
-        return _participant_read(participant, overrides.get(participant.id))
+        locales = await load_participant_locales(session, [participant.id])
+        return _participant_read(
+            participant,
+            overrides.get(participant.id),
+            locales.get(participant.id),
+        )
 
 
 @router.delete("/{list_id}/participants/{participant_id}", status_code=status.HTTP_204_NO_CONTENT)
