@@ -36,10 +36,11 @@ x-backend-environment: &backend-environment
   INFOBIP_OAUTH_AUTHORIZE_URL: ${INFOBIP_OAUTH_AUTHORIZE_URL:-https://oneapi.infobip.com/exchange/1/oauth/authorize}
   INFOBIP_OAUTH_TOKEN_URL: ${INFOBIP_OAUTH_TOKEN_URL:-https://oneapi.infobip.com/exchange/1/oauth/token}
   INFOBIP_DEFAULT_BASE_URL: ${INFOBIP_DEFAULT_BASE_URL:-https://api.infobip.com}
+  PONTO_CONNECT_ENVIRONMENT: ${PONTO_CONNECT_ENVIRONMENT:-sandbox}
   PONTO_CONNECT_CLIENT_ID: ${PONTO_CONNECT_CLIENT_ID:-}
   PONTO_CONNECT_CLIENT_SECRET: ${PONTO_CONNECT_CLIENT_SECRET:-}
   PONTO_CONNECT_API_URL: ${PONTO_CONNECT_API_URL:-https://api.ibanity.com/ponto-connect}
-  PONTO_CONNECT_AUTHORIZE_URL: ${PONTO_CONNECT_AUTHORIZE_URL:-https://authorization.myponto.com/oauth2/auth}
+  PONTO_CONNECT_AUTHORIZE_URL: ${PONTO_CONNECT_AUTHORIZE_URL:-}
   PONTO_CONNECT_TOKEN_URL: ${PONTO_CONNECT_TOKEN_URL:-https://api.ibanity.com/ponto-connect/oauth2/token}
   PONTO_CONNECT_SCOPE: ${PONTO_CONNECT_SCOPE:-offline_access ai name}
   PONTO_CONNECT_CERT_PATH: ${PONTO_CONNECT_CERT_PATH:-/run/secrets/ponto/client.crt}
