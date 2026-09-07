@@ -149,6 +149,11 @@ class ExternalOpenedRequest(BaseModel):
     message_id: UUID
 
 
+class ExternalResultRequest(BaseModel):
+    message_id: UUID
+    result: Literal["sent", "unavailable", "skipped"]
+
+
 class InternalMessageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
