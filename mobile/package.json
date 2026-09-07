@@ -1,6 +1,6 @@
 {
   "name": "zahlmeister-mobile",
-  "version": "0.18.0",
+  "version": "0.18.1",
   "private": true,
   "scripts": {
     "sync": "cap sync",
@@ -22,6 +22,7 @@
     "@capacitor/share": "8.0.1"
   },
   "devDependencies": {
+    "@capacitor/assets": "3.0.5",
     "@capacitor/cli": "8.5.1",
     "typescript": "5.9.2"
   }

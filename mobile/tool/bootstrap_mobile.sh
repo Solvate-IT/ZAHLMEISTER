@@ -99,7 +99,9 @@ if plist_path.exists():
             project.write_text(text)
 PY
 
-# Keep the brand assets deterministic instead of relying on generated placeholders.
+# Keep compatibility with existing checked-in icon resources first. The canonical
+# vector logo below is then used by Capacitor Assets to generate the final native
+# Android/iOS resources, including adaptive launcher variants.
 for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
   src="$ROOT_DIR/assets/brand/native/android/mipmap-$density/ic_launcher.png"
   target_dir="$ROOT_DIR/android/app/src/main/res/mipmap-$density"
@@ -137,6 +139,19 @@ if [[ -d "$ROOT_DIR/ios/App/App/Assets.xcassets/AppIcon.appiconset" ]]; then
   "info": {"author":"xcode","version":1}
 }
 JSON
+fi
+
+ASSET_ARGS=(
+  generate
+  --assetPath "$ROOT_DIR/assets"
+  --iconBackgroundColor "#06183F"
+  --iconBackgroundColorDark "#06183F"
+  --splashBackgroundColor "#F7F9FD"
+  --splashBackgroundColorDark "#06183F"
+)
+npx capacitor-assets "${ASSET_ARGS[@]}" --android
+if [[ -d ios ]]; then
+  npx capacitor-assets "${ASSET_ARGS[@]}" --ios
 fi
 
 echo "Capacitor mobile projects synchronized."

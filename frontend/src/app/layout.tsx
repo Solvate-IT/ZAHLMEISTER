@@ -7,9 +7,17 @@ export const metadata: Metadata = {
   title: "Zahlmeister",
   description: "Zahlungen einfach einsammeln und nachverfolgen.",
   manifest: "/manifest.webmanifest",
-  icons: {icon: "/favicon.png", apple: "/icons/apple-touch-icon.png"},
+  icons: {
+    icon: [{url: "/favicon.svg", type: "image/svg+xml"}],
+    shortcut: "/favicon.svg",
+  },
 };
-export const viewport: Viewport = {themeColor: "#0B63D8", width: "device-width", initialScale: 1, viewportFit: "cover"};
+export const viewport: Viewport = {
+  themeColor: "#06183F",
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
 
 export default function RootLayout({children}: {children: React.ReactNode}) {
   return <html lang="de"><body><I18nProvider><NativeBridge/>{children}</I18nProvider></body></html>;

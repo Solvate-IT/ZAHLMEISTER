@@ -1,6 +1,6 @@
 {
   "name": "zahlmeister-frontend",
-  "version": "0.18.0",
+  "version": "0.18.1",
   "private": true,
   "scripts": {
     "dev": "next dev -H 0.0.0.0 -p 3000",

@@ -6,37 +6,15 @@
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#F6F9FE",
-  "theme_color": "#0B63D8",
-  "categories": [
-    "finance",
-    "productivity",
-    "utilities"
-  ],
+  "background_color": "#F7F9FD",
+  "theme_color": "#06183F",
+  "categories": ["finance", "productivity", "utilities"],
   "icons": [
     {
-      "src": "/icons/Icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icons/Icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icons/Icon-maskable-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "maskable"
-    },
-    {
-      "src": "/icons/Icon-maskable-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "maskable"
+      "src": "/icons/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
     }
   ]
 }
