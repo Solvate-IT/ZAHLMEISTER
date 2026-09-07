@@ -10,14 +10,19 @@ from app.models.entities import MessageTemplate, Organization
 from app.schemas.templates import (
     MessageTemplateCreate,
     MessageTemplateRead,
+    MessageTemplateTranslateRequest,
+    MessageTemplateTranslationStatus,
     MessageTemplateUpdate,
     TemplateVariableRead,
 )
+from app.services import translation
 from app.services.locks import transaction_lock
 from app.services.templates import (
+    SUPPORTED_LANGUAGES,
     TEMPLATE_VARIABLES,
     default_template_name,
     default_template_translations,
+    normalize_language,
     normalize_translations,
     serialize_translations,
 )
@@ -92,6 +97,14 @@ async def list_template_variables() -> list[TemplateVariableRead]:
     return [TemplateVariableRead(key=key) for key in TEMPLATE_VARIABLES]
 
 
+@router.get("/translation-status", response_model=MessageTemplateTranslationStatus)
+async def translation_status() -> MessageTemplateTranslationStatus:
+    return MessageTemplateTranslationStatus(
+        configured=translation.configured(),
+        supported_languages=list(SUPPORTED_LANGUAGES),
+    )
+
+
 @router.get("", response_model=list[MessageTemplateRead])
 async def list_message_templates(
     organization: Organization = Depends(get_organization),
@@ -115,6 +128,28 @@ async def create_message_template(
     payload: MessageTemplateCreate,
     organization: Organization = Depends(get_organization),
 ) -> MessageTemplateRead:
+    source_language = payload.source_language or normalize_language(organization.locale)
+    translations: dict[str, str] = {}
+    if payload.body:
+        translations[source_language] = payload.body
+        if payload.auto_translate:
+            if not translation.configured():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Automatic translation is not configured",
+                )
+            try:
+                translations = await translation.translate_missing(
+                    payload.body,
+                    source_language=source_language,
+                    existing=translations,
+                )
+            except (ValueError, RuntimeError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Automatic translation failed",
+                ) from exc
+
     async with SessionLocal.begin() as session:
         stored_org = await session.get(Organization, organization.id)
         assert stored_org is not None
@@ -122,7 +157,7 @@ async def create_message_template(
         item = MessageTemplate(
             organization_id=stored_org.id,
             name=await _unique_name(session, stored_org, payload.name),
-            translations_json=serialize_translations(default_template_translations()),
+            translations_json=serialize_translations(translations),
             is_default=False,
         )
         session.add(item)
@@ -163,7 +198,7 @@ async def update_message_template(
         if payload.translations is not None:
             current = normalize_translations(item.translations_json)
             for language, body in payload.translations.items():
-                current[language.split("-", 1)[0].lower()] = body.strip()
+                current[normalize_language(language)] = body.strip()
             item.translations_json = serialize_translations(current)
         if payload.is_default is True and not item.is_default:
             others = (
@@ -178,6 +213,64 @@ async def update_message_template(
             for other in others:
                 other.is_default = False
             item.is_default = True
+        await session.flush()
+        return _read(item)
+
+
+@router.post(
+    "/{template_id}/translate-missing",
+    response_model=MessageTemplateRead,
+)
+async def translate_missing_template_languages(
+    template_id: UUID,
+    payload: MessageTemplateTranslateRequest,
+    organization: Organization = Depends(get_organization),
+) -> MessageTemplateRead:
+    if not translation.configured():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Automatic translation is not configured",
+        )
+
+    async with SessionLocal() as session:
+        stored_org = await session.get(Organization, organization.id)
+        assert stored_org is not None
+        item = await _owned_template(session, stored_org, template_id)
+        snapshot = normalize_translations(item.translations_json)
+        source_text = snapshot.get(payload.source_language)
+        if not source_text:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The selected source language has no template text",
+            )
+
+    try:
+        generated = await translation.translate_missing(
+            source_text,
+            source_language=payload.source_language,
+            existing=snapshot,
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Automatic translation failed",
+        ) from exc
+
+    async with SessionLocal.begin() as session:
+        stored_org = await session.get(Organization, organization.id)
+        assert stored_org is not None
+        await transaction_lock(session, "message-template", stored_org.id)
+        item = await _owned_template(session, stored_org, template_id)
+        current = normalize_translations(item.translations_json)
+        if current.get(payload.source_language) != source_text:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Source template changed while translations were generated",
+            )
+        for language, body in generated.items():
+            if language not in current:
+                current[language] = body
+        item.translations_json = serialize_translations(current)
         await session.flush()
         return _read(item)
 
