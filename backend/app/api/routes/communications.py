@@ -26,8 +26,8 @@ from app.schemas.communications import (
     QueueMessageResult,
 )
 from app.services.channel_config import internal_channel_configured
-from app.services.infobip import connection_is_active
 from app.services.communications import external_launch_uri, recipient_for_channel
+from app.services.infobip import connection_is_active
 from app.services.message_renderer import render_collection_message
 from app.services.secrets import decrypt_config
 
@@ -44,14 +44,7 @@ def _channel_addresses(participant: Participant) -> dict[str, str]:
     return {str(key): str(value) for key, value in data.items() if value}
 
 
-async def _owned_context(
-    session,
-    organization: Organization,
-    collection_id: UUID,
-    cp_id: UUID,
-    *,
-    for_update: bool = False,
-):
+async def _owned_context(session, organization: Organization, collection_id: UUID, cp_id: UUID, *, for_update: bool = False):
     stmt = (
         select(CollectionParticipant, Collection, Participant)
         .join(Collection, Collection.id == CollectionParticipant.collection_id)
@@ -90,16 +83,8 @@ def _to_read(message: CommunicationMessage) -> CommunicationRead:
     )
 
 
-@router.get(
-    "/collections/{collection_id}/participants/{cp_id}/communications",
-    response_model=list[CommunicationRead],
-)
-async def list_communications(
-    collection_id: UUID,
-    cp_id: UUID,
-    organization: Organization = Depends(get_organization),
-    session=Depends(get_session),
-) -> list[CommunicationRead]:
+@router.get("/collections/{collection_id}/participants/{cp_id}/communications", response_model=list[CommunicationRead])
+async def list_communications(collection_id: UUID, cp_id: UUID, organization: Organization = Depends(get_organization), session=Depends(get_session)) -> list[CommunicationRead]:
     await _owned_context(session, organization, collection_id, cp_id)
     messages = (
         await session.execute(
@@ -125,12 +110,12 @@ async def create_external_draft(
     payload: ExternalDraftRequest,
     organization: Organization = Depends(get_organization),
 ) -> ExternalDraftRead:
+    failure_detail: str | None = None
+    result: ExternalDraftRead | None = None
     async with SessionLocal.begin() as session:
         stored_org = await session.get(Organization, organization.id)
         assert stored_org is not None
-        cp, collection, participant = await _owned_context(
-            session, stored_org, collection_id, cp_id
-        )
+        cp, collection, participant = await _owned_context(session, stored_org, collection_id, cp_id)
         recipient = recipient_for_channel(
             payload.channel,
             email=participant.email,
@@ -138,6 +123,7 @@ async def create_external_draft(
             channel_addresses=_channel_addresses(participant),
         )
         if not recipient and payload.channel not in {"telegram", "instagram", "messenger"}:
+            failure_detail = f"No recipient available for {payload.channel}"
             session.add(
                 CommunicationMessage(
                     organization_id=stored_org.id,
@@ -148,55 +134,53 @@ async def create_external_draft(
                     delivery_mode="external",
                     direction="outgoing",
                     status="failed",
-                    error=f"No recipient available for {payload.channel}",
+                    error=failure_detail,
                 )
             )
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"No recipient available for {payload.channel}",
+        else:
+            content = await render_collection_message(
+                session,
+                collection=collection,
+                collection_participant=cp,
+                participant=participant,
+                organization=stored_org,
             )
-        content = await render_collection_message(
-            session,
-            collection=collection,
-            collection_participant=cp,
-            participant=participant,
-            organization=stored_org,
-        )
-        subject = content.subject
-        body = content.text
-        payment_qr_url = content.payment_qr_url
-        message = CommunicationMessage(
-            organization_id=stored_org.id,
-            collection_id=collection.id,
-            collection_participant_id=cp.id,
-            kind=payload.kind,
-            channel=payload.channel,
-            delivery_mode="external",
-            direction="outgoing",
-            recipient=recipient,
-            subject=subject,
-            body=body,
-            status="draft",
-            metadata_json=content.metadata_json(),
-        )
-        session.add(message)
-        await session.flush()
-        launch_uri, recipient_selection_required = external_launch_uri(
-            payload.channel, recipient, subject, body
-        )
-        return ExternalDraftRead(
-            message_id=message.id,
-            channel=payload.channel,
-            recipient=recipient,
-            subject=subject,
-            body=body,
-            launch_uri=launch_uri,
-            recipient_selection_required=recipient_selection_required,
-            payment_qr_url=payment_qr_url,
-            payment_qr_filename=(
-                f"zahlmeister-{cp.payment_reference}-qr.png" if payment_qr_url else None
-            ),
-        )
+            message = CommunicationMessage(
+                organization_id=stored_org.id,
+                collection_id=collection.id,
+                collection_participant_id=cp.id,
+                kind=payload.kind,
+                channel=payload.channel,
+                delivery_mode="external",
+                direction="outgoing",
+                recipient=recipient,
+                subject=content.subject,
+                body=content.text,
+                status="draft",
+                metadata_json=content.metadata_json(),
+            )
+            session.add(message)
+            await session.flush()
+            launch_uri, recipient_selection_required = external_launch_uri(
+                payload.channel, recipient, content.subject, content.text
+            )
+            result = ExternalDraftRead(
+                message_id=message.id,
+                channel=payload.channel,
+                recipient=recipient,
+                subject=content.subject,
+                body=content.text,
+                launch_uri=launch_uri,
+                recipient_selection_required=recipient_selection_required,
+                payment_qr_url=content.payment_qr_url,
+                payment_qr_filename=(
+                    f"zahlmeister-{cp.payment_reference}-qr.png" if content.payment_qr_url else None
+                ),
+            )
+    if failure_detail:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=failure_detail)
+    assert result is not None
+    return result
 
 
 @router.post(
