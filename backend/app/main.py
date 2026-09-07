@@ -7,6 +7,7 @@ from app.api.public_router import public_api_router
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.observability import RequestLoggingMiddleware, configure_logging
+from app.services.platform_admin import bootstrap_platform_admin
 
 configure_logging()
 
@@ -16,12 +17,13 @@ async def lifespan(_: FastAPI):
     security_errors = settings.production_security_errors()
     if security_errors:
         raise RuntimeError("Unsafe production configuration: " + "; ".join(security_errors))
+    await bootstrap_platform_admin()
     yield
 
 
 app = FastAPI(
     title="Zahlmeister API",
-    version="0.18.0",
+    version="0.19.0",
     docs_url="/api/docs" if settings.environment != "production" else None,
     redoc_url=None,
     lifespan=lifespan,
