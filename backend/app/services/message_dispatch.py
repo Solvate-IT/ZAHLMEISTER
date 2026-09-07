@@ -17,6 +17,7 @@ from app.models.entities import (
     ScheduledJob,
 )
 from app.services.channel_strategy import (
+    SUPPORTED_CHANNELS,
     get_channel_order,
     load_channel_runtimes,
     load_participant_channel_settings,
@@ -46,6 +47,18 @@ def _eligible(cp: CollectionParticipant, kind: str) -> bool:
     if kind == "reminder":
         return cp.status == "open" and cp.initial_sent_at is not None
     return False
+
+
+async def _collection_channel_order(
+    session: AsyncSession,
+    *,
+    collection: Collection,
+    organization_id: UUID,
+) -> list[str]:
+    override = str(collection.communication_channel or "auto").strip().lower()
+    if override in SUPPORTED_CHANNELS:
+        return [override]
+    return await get_channel_order(session, organization_id)
 
 
 async def queue_collection_messages(
@@ -82,7 +95,9 @@ async def queue_collection_messages(
     cp_ids = [cp.id for cp, _participant in eligible_rows]
     overrides = await load_participant_channel_settings(session, participant_ids)
     runtimes = await load_channel_runtimes(session, organization.id)
-    order = await get_channel_order(session, organization.id)
+    order = await _collection_channel_order(
+        session, collection=collection, organization_id=organization.id
+    )
 
     # Only an outstanding queue item prevents another dispatch. Previously sent reminders
     # must not block later reminder rounds for the same participant.
@@ -248,7 +263,9 @@ async def all_routes_internal(
         session, [participant.id for _cp, participant in rows]
     )
     runtimes = await load_channel_runtimes(session, organization.id)
-    order = await get_channel_order(session, organization.id)
+    order = await _collection_channel_order(
+        session, collection=collection, organization_id=organization.id
+    )
     for _cp, participant in rows:
         route = resolve_channel(
             participant,
