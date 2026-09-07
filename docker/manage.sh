@@ -27,10 +27,13 @@ compose() {
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
 }
 
-pause() {
-  read -r -p "Press Enter to continue..." _
+env_value() {
+  local key="$1" fallback="$2" value
+  value="$(grep -E "^${key}=" "$ENV_FILE" | tail -n1 | cut -d= -f2- || true)"
+  printf '%s' "${value:-$fallback}"
 }
 
+pause() { read -r -p "Press Enter to continue..." _; }
 start_stack() { compose up -d --build; }
 stop_stack() { compose down; }
 clean_rebuild() { compose down --remove-orphans; compose build --no-cache; compose up -d; }
@@ -56,6 +59,8 @@ ops_status() { "$SCRIPT_DIR/scripts/ops-status.sh"; }
 generate_secrets() { ZM_ENV_FILE="$ENV_FILE" "$SCRIPT_DIR/scripts/generate-secrets.sh"; }
 
 while true; do
+  frontend_port="$(env_value FRONTEND_PORT 3003)"
+  mailpit_port="$(env_value MAILPIT_PORT 8027)"
   cat <<EOF
 ------------------------------------------------------------
  Zahlmeister - Docker ${MODE}
@@ -79,9 +84,9 @@ while true; do
 17) Remove containers + volumes
 18) Exit
 ------------------------------------------------------------
- Frontend: http://localhost:8080 (development) / configured APP_HOST (production)
+ Frontend: http://localhost:${frontend_port} (development) / configured APP_HOST (production)
  Backend:  /api/v1/health and /api/v1/ready
- Mailpit:  http://localhost:${MAILPIT_PORT:-8025} (development only)
+ Mailpit:  http://localhost:${mailpit_port} (development only)
 EOF
   read -r -p "Select: " choice
   case "$choice" in
