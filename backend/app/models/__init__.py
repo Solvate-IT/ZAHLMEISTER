@@ -21,4 +21,5 @@ from app.models.entities import (  # noqa: F401
     ScheduledJob,
     User,
 )
+from app.models.participant_preferences import ParticipantPreference  # noqa: F401
 from app.models.platform import PlatformAdminAudit, StoreSubscription  # noqa: F401
