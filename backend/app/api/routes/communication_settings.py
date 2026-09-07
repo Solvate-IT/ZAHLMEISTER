@@ -19,6 +19,8 @@ from app.schemas.communications import (
     ChannelSettingUpdate,
     CommunicationConnectionRead,
     CommunicationConnectionUpdate,
+    CommunicationPreferencesRead,
+    CommunicationPreferencesUpdate,
     ConnectionTestRead,
     InfobipConnectRequest,
     InfobipOAuthStartRead,
@@ -26,6 +28,11 @@ from app.schemas.communications import (
 )
 from app.services import microsoft365
 from app.services.channel_config import SECRET_FIELDS, SUPPORTED_CHANNELS, internal_channel_configured
+from app.services.channel_strategy import (
+    DEFAULT_CHANNEL_MODES,
+    get_channel_order,
+    save_channel_order,
+)
 from app.services.communications import test_smtp_imap
 from app.services.infobip import (
     connection_is_active,
@@ -78,7 +85,23 @@ def _read(
     connections: dict[UUID, CommunicationConnection],
 ) -> ChannelSettingRead:
     if stored is None:
-        return ChannelSettingRead(channel=channel, mode="external", configured=True, fields={})
+        mode = DEFAULT_CHANNEL_MODES[channel]
+        provider = "smtp_imap" if channel == "email" and mode == "internal" else None
+        configured = mode != "internal" or internal_channel_configured(
+            channel,
+            provider=provider,
+            config={},
+            connection_active=False,
+            sender=None,
+        )
+        return ChannelSettingRead(
+            channel=channel,
+            mode=mode,
+            provider=provider,
+            configured=configured,
+            fields={},
+            supports_internal=channel != "telegram",
+        )
 
     config = decrypt_config(stored.encrypted_config)
     connection = connections.get(stored.connection_id) if stored.connection_id else None
@@ -110,10 +133,37 @@ def _read(
         if channel == "email" and stored.provider == "smtp_imap"
         else {},
         webhook_url=webhook_url,
+        supports_internal=channel != "telegram",
         status=stored.status,
         last_tested_at=stored.last_tested_at,
         last_error=stored.last_error,
     )
+
+
+@router.get("/preferences", response_model=CommunicationPreferencesRead)
+async def get_preferences(
+    organization: Organization = Depends(get_organization),
+) -> CommunicationPreferencesRead:
+    async with SessionLocal() as session:
+        order = await get_channel_order(session, organization.id)
+    return CommunicationPreferencesRead(channel_order=order)
+
+
+@router.put("/preferences", response_model=CommunicationPreferencesRead)
+async def update_preferences(
+    payload: CommunicationPreferencesUpdate,
+    organization: Organization = Depends(get_organization),
+) -> CommunicationPreferencesRead:
+    async with SessionLocal.begin() as session:
+        try:
+            order = await save_channel_order(
+                session, organization.id, [str(channel) for channel in payload.channel_order]
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+    return CommunicationPreferencesRead(channel_order=order)
 
 
 @router.get("/connections", response_model=list[CommunicationConnectionRead])
@@ -395,8 +445,8 @@ async def disconnect_connection(
             )
         ).scalars().all()
         for row in settings_rows:
-            row.mode = "external"
-            row.provider = None
+            row.mode = DEFAULT_CHANNEL_MODES.get(row.channel, "external")
+            row.provider = "smtp_imap" if row.channel == "email" and row.mode == "internal" else None
             row.connection_id = None
             row.sender = None
             row.encrypted_config = None
@@ -494,7 +544,12 @@ async def test_channel_endpoint(
                 CommunicationChannelSetting.channel == channel,
             )
         )
-        if stored is None or stored.mode != "internal":
+        if stored is None:
+            if channel == "email" and DEFAULT_CHANNEL_MODES[channel] == "internal":
+                details = await test_smtp_imap({})
+                return ConnectionTestRead(ok=True, status="ok", tested_at=tested_at, details=details)
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Internal channel is not enabled")
+        if stored.mode != "internal":
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Internal channel is not enabled")
         setting_id = stored.id
         provider = stored.provider
@@ -537,7 +592,8 @@ async def get_settings(organization: Organization = Depends(get_organization)) -
         rows = (
             await session.execute(
                 select(CommunicationChannelSetting).where(
-                    CommunicationChannelSetting.organization_id == organization.id
+                    CommunicationChannelSetting.organization_id == organization.id,
+                    CommunicationChannelSetting.channel.in_(SUPPORTED_CHANNELS),
                 )
             )
         ).scalars().all()
@@ -561,9 +617,14 @@ async def update_setting(
 ) -> ChannelSettingRead:
     if channel not in SUPPORTED_CHANNELS:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown channel")
+    if channel == "telegram" and payload.mode == "internal":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Telegram can be external or disabled; initiating internal Telegram conversations is not supported",
+        )
 
     provider = payload.provider
-    if payload.mode == "external":
+    if payload.mode in {"external", "disabled"}:
         provider = None
     elif channel == "email":
         provider = provider or "smtp_imap"
