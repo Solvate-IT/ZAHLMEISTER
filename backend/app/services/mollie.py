@@ -62,7 +62,7 @@ def verify_oauth_state(value: str) -> str:
 
 
 def oauth_redirect_uri() -> str:
-    return f"{settings.public_app_url.rstrip('/')}/api/v1/online-payments/mollie/oauth/callback"
+    return f"{settings.oauth_callback_base}/api/v1/online-payments/mollie/oauth/callback"
 
 
 def oauth_authorization_url(organization_id: str) -> str:
@@ -222,8 +222,6 @@ def normalize_locale(value: str | None) -> str | None:
     cleaned = value.replace("-", "_")
     language = cleaned.split("_", 1)[0].lower()
     country = cleaned.split("_", 1)[1].upper() if "_" in cleaned else ""
-    # Mollie's hosted checkout supports a finite set. Use the closest common locale
-    # and let Mollie/browser fall back when a locale is not explicitly supported.
     supported = {
         "ca_ES", "cs_CZ", "da_DK", "de_AT", "de_CH", "de_DE", "de_LU",
         "en_BE", "en_GB", "en_NL", "en_US", "es_ES", "fi_FI", "fr_BE",
@@ -362,5 +360,4 @@ async def revoke_connection(connection: OnlinePaymentConnection) -> None:
         if response.status_code not in {200, 204, 401, 404}:
             response.raise_for_status()
     except httpx.HTTPError:
-        # Local disconnect must remain possible even if Mollie is temporarily unavailable.
         return
