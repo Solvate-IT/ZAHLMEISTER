@@ -1,36 +1,70 @@
 # Optional external integrations
 
-Zahlmeister remains fully usable without these integrations. The normal/default mode opens the user's local communication apps and payments can be marked manually or matched from an imported statement.
+Zahlmeister remains usable without optional provider integrations. Bank transfers can be matched manually/imported, and external communication can open the user's local apps.
 
-## Infobip (internal messaging)
+## Communication strategy
 
-Internal SMS/WhatsApp/social messaging uses the customer's own Infobip account. Provider usage costs remain with that customer.
+Zahlmeister deliberately supports only four participant communication channels:
 
-Preferred setup:
+- Email
+- WhatsApp
+- SMS
+- Telegram
 
-1. Create an Infobip Exchange/OAuth app for Zahlmeister.
-2. Register this redirect URI:
-   `https://<APP_HOST>/api/v1/communication-settings/infobip/oauth/callback`
-3. Set `INFOBIP_OAUTH_CLIENT_ID` and `INFOBIP_OAUTH_CLIENT_SECRET` in `docker/.env`.
-4. Users connect their own Infobip account under **Advanced communication**.
-5. If the customer's Infobip account uses a personalized API base URL, enter it in the connection settings (for example `https://xxxxx.api.infobip.com`).
+Instagram and Messenger are not part of the product communication model.
 
-An API key remains available as a fallback. Credentials/tokens are encrypted with `APP_SECRET` before they are stored.
+Each organization configures every channel once as **Internal**, **External** or **Disabled** and defines one global priority order. Collections do not contain their own channel configuration. For every participant Zahlmeister selects the first usable channel from the organization's order.
 
-For internal email, users can alternatively use Zahlmeister's platform SMTP, configure their own SMTP/IMAP account, or connect Microsoft 365. Custom mail accounts support SMTP SSL/STARTTLS and optional IMAP SSL/STARTTLS for reply import. Microsoft 365 does not use a mailbox password in Zahlmeister.
+Participant-specific channel knowledge is sparse and learned over time:
 
-## Microsoft 365 (internal email)
+- Email with an address is available by default.
+- SMS with a phone number is available by default.
+- WhatsApp with a phone number starts as unknown because normal clients cannot reliably query whether a number is registered with WhatsApp.
+- Telegram is available when a username is stored.
+- Explicitly learned or manually changed `available`/`unavailable` states are stored per participant/channel.
+- Changing the relevant email address, phone number or Telegram username resets learned knowledge for that address.
 
-Microsoft 365 mailboxes use Microsoft Graph with delegated OAuth 2.0 authorization. Zahlmeister stores encrypted OAuth tokens, never the customer's Microsoft password. MFA and the customer's normal Microsoft sign-in policies remain in the Microsoft login flow.
+No rows are created for every participant/channel combination up front. Overrides are batch-loaded for collection dispatch, so lists with hundreds or thousands of participants do not create N+1 queries or unnecessary configuration rows.
 
-Create one multi-tenant Microsoft Entra application for Zahlmeister and configure it as a web application. Use organizational/work-school accounts; `MICROSOFT365_TENANT=organizations` is the default.
+For external sending the current client also constrains what can be used. Desktop web allows Email, WhatsApp Web/Desktop and Telegram, but external SMS is intentionally not offered. Native/mobile clients can also use SMS. If an external WhatsApp attempt is confirmed as unavailable, Zahlmeister stores that knowledge and immediately resolves the next channel for that participant.
 
-Register these redirect URIs as applicable:
+Telegram is supported as an external channel only. Initiating arbitrary Telegram conversations server-side is not a reliable general-purpose workflow, so internal Telegram sending is intentionally disabled.
+
+## Central Zahlmeister email
+
+**Send via Zahlmeister** is the default internal email path. All organizations use the same technically verified platform sender address/domain. The visible sender name is the customer's organization name.
+
+Every outgoing central email receives an opaque HMAC-protected Reply-To alias such as:
+
+`reply+<opaque-token>@<MAIL_REPLY_DOMAIN>`
+
+The token contains no readable participant, collection or organization identifiers. Production mail routing must deliver `reply+*@<MAIL_REPLY_DOMAIN>` to the central mailbox configured with `PLATFORM_IMAP_*`. The worker polls that mailbox and attaches valid replies directly to the original collection participant's communication history.
+
+Required production settings include:
+
+- `MAIL_FROM_ADDRESS`
+- `MAIL_REPLY_DOMAIN`
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD_FILE`, `SMTP_STARTTLS`
+- `PLATFORM_IMAP_HOST`, `PLATFORM_IMAP_PORT`, `PLATFORM_IMAP_USERNAME`, `PLATFORM_IMAP_PASSWORD_FILE`
+- `PLATFORM_IMAP_SSL` or `PLATFORM_IMAP_STARTTLS`
+- `PLATFORM_IMAP_FOLDER`
+
+Development uses Mailpit for SMTP. Mailpit is SMTP-only, so central reply import is disabled locally unless a development IMAP mailbox is explicitly configured.
+
+## Own SMTP/IMAP account
+
+An organization can use its own email server instead of the central Zahlmeister sender. SMTP supports SSL or STARTTLS. IMAP is optional for custom accounts and, when configured, imports replies into the matching participant communication history. Credentials are encrypted with `APP_SECRET` before storage.
+
+## Microsoft 365
+
+Microsoft 365 mailboxes use Microsoft Graph with delegated OAuth 2.0/PKCE. Zahlmeister stores encrypted OAuth access/refresh tokens, never the customer's Microsoft password. MFA and tenant sign-in policies remain in Microsoft's login flow.
+
+Create one multi-tenant Microsoft Entra web application for Zahlmeister. `MICROSOFT365_TENANT=organizations` is the default. Register these redirect URIs as applicable:
 
 - Development: `http://localhost:8003/api/v1/communication-settings/microsoft365/oauth/callback`
 - Production: `https://<APP_HOST>/api/v1/communication-settings/microsoft365/oauth/callback`
 
-Configure these delegated Microsoft Graph permissions/scopes:
+Delegated scopes:
 
 - `User.Read`
 - `Mail.ReadWrite`
@@ -39,91 +73,65 @@ Configure these delegated Microsoft Graph permissions/scopes:
 - `openid`
 - `profile`
 
-Development configuration in `docker/.env`:
+Development uses `MICROSOFT365_CLIENT_ID` and `MICROSOFT365_CLIENT_SECRET` in the ignored local `docker/.env`. Production stores the secret in an untracked file and sets `MICROSOFT365_CLIENT_SECRET_FILE`.
 
-- `MICROSOFT365_CLIENT_ID=<application/client id>`
-- `MICROSOFT365_CLIENT_SECRET=<development client secret>`
-- `MICROSOFT365_TENANT=organizations`
+Outgoing messages are sent through Microsoft Graph. The worker reads the connected Inbox and links replies through Microsoft message/conversation identifiers. SMTP AUTH or IMAP Basic Authentication is not used for Microsoft 365. The current implementation targets the connected user's mailbox; shared mailbox support remains intentionally separate.
 
-Production must keep the client secret in an untracked secret file and set `MICROSOFT365_CLIENT_SECRET_FILE` to that mounted path. Never commit the client secret.
+## Infobip
 
-A customer then selects **Microsoft 365** under the internal email settings and signs in to their own Microsoft 365 account. The connection is tenant/customer-specific even though the Zahlmeister Entra application is shared. The selected mailbox can be tested, reconnected, or disconnected from Zahlmeister.
+Infobip is optional for internal **SMS and WhatsApp**. Provider usage costs remain with the customer's Infobip account.
 
-Outgoing messages are created and sent through Microsoft Graph. The worker polls the connected Inbox for new messages and stores incoming replies against the corresponding Zahlmeister communication using the Microsoft conversation/message identifiers. No SMTP AUTH or IMAP Basic Authentication is used for Microsoft 365.
+Preferred setup:
 
-The current Microsoft 365 integration targets the connected user's own mailbox. Shared mailbox selection is intentionally not enabled until its separate authorization/sender semantics are implemented and tested.
+1. Create an Infobip Exchange/OAuth app for Zahlmeister.
+2. Register `https://<APP_HOST>/api/v1/communication-settings/infobip/oauth/callback`.
+3. Configure `INFOBIP_OAUTH_CLIENT_ID` and its secret.
+4. The customer connects their Infobip account and configures the sender/resource for SMS and/or WhatsApp.
+
+An API key remains available as a fallback. Provider credentials/tokens are encrypted with `APP_SECRET`.
+
+WhatsApp is not marked available merely because Infobip accepted a send request. Delivery/read events or an inbound WhatsApp reply establish availability. A failed delivery only marks WhatsApp unavailable when the provider payload explicitly identifies a permanent destination problem such as an unregistered/invalid WhatsApp recipient; generic transient failures never permanently disable the participant channel.
 
 ## Ponto Connect (optional automatic BankSync)
 
-Use **Ponto Connect** with Ponto's customer-paying model so the connected customer pays Ponto directly. Zahlmeister does not resell BankSync usage. The Ponto client id, client secret and mTLS certificate belong to the Zahlmeister installation. Individual Zahlmeister customers never enter those technical credentials; they authorize their own Ponto organization and selected bank accounts in Ponto's OAuth screen.
+Use **Ponto Connect** with Ponto's customer-paying model so the connected customer pays Ponto directly. Zahlmeister does not resell BankSync usage. The Ponto client id, client secret and mTLS certificate belong to the Zahlmeister installation. Individual customers authorize their own Ponto organization and selected bank accounts through OAuth.
 
 ### Sandbox
 
-Ponto routes sandbox versus live by the application credentials. The API and token endpoints use the same request format in both environments; the authorization page differs:
+- Sandbox authorization: `https://sandbox-authorization.myponto.com/oauth2/auth`
+- Live authorization: `https://authorization.myponto.com/oauth2/auth`
 
-- Sandbox: `https://sandbox-authorization.myponto.com/oauth2/auth`
-- Live: `https://authorization.myponto.com/oauth2/auth`
+Development defaults to `PONTO_CONNECT_ENVIRONMENT=sandbox`. Production rejects configured sandbox Ponto credentials.
 
-Development defaults to `PONTO_CONNECT_ENVIRONMENT=sandbox`. Production refuses a configured Ponto integration unless `PONTO_CONNECT_ENVIRONMENT=live`.
+Local sandbox setup:
 
-For the local Zahlmeister development stack:
+1. Create a sandbox application in the Ibanity developer portal and enable Ponto Connect Account Information.
+2. Register `http://localhost:8003/api/v1/bank-sync/ponto/callback`, or use an HTTPS development hostname and set exactly the same value through `OAUTH_CALLBACK_BASE_URL` if required by the portal.
+3. Set `PONTO_CONNECT_ENVIRONMENT=sandbox`, client id and client secret in ignored `docker/.env`.
+4. Store the sandbox mTLS certificate/key as `docker/secrets/ponto/client.crt` and `client.key`; set `PONTO_CONNECT_KEY_PASSWORD` only for an encrypted key.
+5. Keep `PONTO_CONNECT_AUTHORIZE_URL` empty in development so the environment selects the official sandbox URL.
+6. Connect Ponto in Zahlmeister, authorize sandbox accounts and run a sync.
 
-1. Create a **sandbox application** in the Ibanity developer portal and enable Ponto Connect Account Information.
-2. In the Ponto Connect product security settings, register the exact local callback used by Zahlmeister:
-   `http://localhost:8003/api/v1/bank-sync/ponto/callback`
-   If the developer portal requires a public HTTPS callback, expose the backend through a temporary HTTPS development hostname/tunnel and set the same URL in `OAUTH_CALLBACK_BASE_URL`. The registered URI and Zahlmeister's generated URI must match exactly.
-3. Copy the sandbox `client_id` and `client_secret` to the local `docker/.env` only:
-   - `PONTO_CONNECT_ENVIRONMENT=sandbox`
-   - `PONTO_CONNECT_CLIENT_ID=...`
-   - `PONTO_CONNECT_CLIENT_SECRET=...`
-4. Put the sandbox mTLS credentials on the development machine as:
-   - `docker/secrets/ponto/client.crt`
-   - `docker/secrets/ponto/client.key`
-   - set `PONTO_CONNECT_KEY_PASSWORD` only when the private key is encrypted.
-5. Keep `PONTO_CONNECT_AUTHORIZE_URL` empty in development. Zahlmeister selects the official sandbox authorization URL from `PONTO_CONNECT_ENVIRONMENT`.
-6. Rebuild/restart the backend and worker, sign in to Zahlmeister, open BankSync and choose **Ponto verbinden**.
-7. Complete Ponto's sandbox authorization and select sandbox accounts. Ponto's sandbox uses fake institutions/accounts/transactions; the sandbox digipass response for adding/signing test accounts is `123456` according to Ponto's documentation.
-8. After the redirect back to Zahlmeister, verify that the connection is `connected`, accounts are listed and **Jetzt synchronisieren** imports the sandbox transactions.
+`GET /api/v1/bank-sync/ponto/configuration` is an authenticated diagnostic endpoint that reports only readiness, environment, callback URI and missing configuration names. It never exposes secrets or tokens.
 
-A safe authenticated diagnostic endpoint is available at:
-`GET /api/v1/bank-sync/ponto/configuration`
+The OAuth implementation uses signed short-lived state, PKCE/S256, mTLS for token/API calls and encrypted token storage. Refresh tokens are rotated under a database row lock. The worker periodically fetches fresh Ponto data for connected accounts, and users can also request a sync explicitly. Only an exact payment reference plus matching amount/currency is applied automatically; ambiguous candidates remain for review.
 
-It returns only environment, readiness, callback URI and names of missing configuration elements. It never exposes the client secret, certificate contents, private key or OAuth tokens.
+### Moving Ponto to live
 
-The OAuth implementation uses a signed short-lived `state`, PKCE/S256, mTLS for token/API calls and encrypted token storage. Sandbox/live environment identity is stored with the connection; switching environments requires reconnecting so sandbox tokens can never silently be reused against live configuration. OAuth cancellation and provider errors are persisted as connection status/error information and redirect safely back to Zahlmeister.
-
-Ponto's optional `onboarding_details_id` can later be used to prefill known customer information during Ponto onboarding. It is not required to execute the complete sandbox authorization/account-sync test and is therefore intentionally not coupled to the core BankSync flow.
-
-The containers mount `docker/secrets/ponto` read-only at `/run/secrets/ponto`. `docker/.gitignore` excludes the certificate/private key; never commit them.
-
-Zahlmeister does **not** trigger unattended bank synchronizations. Ponto refreshes account information itself; Zahlmeister only fetches the latest available data in the background. A user can also explicitly request a fetch from the advanced BankSync screen.
-
-Ponto refresh tokens are rotated in a separate committed database transaction under a row lock, preventing two workers from consuming the same one-time refresh token.
-
-Only an exact payment reference plus matching amount/currency is applied automatically. Ambiguous matches are exposed through the same review workflow as manually uploaded bank statements.
-
-### Moving to live
-
-Create/use a separate live Ponto application, register the production HTTPS callback, replace all sandbox client credentials and mTLS material with the live credentials, set `PONTO_CONNECT_ENVIRONMENT=live`, and keep the live authorization URL. Never copy sandbox tokens or customer connections into production; customers reconnect once against the live environment.
+Use a separate live Ponto application, register the production HTTPS callback, replace all sandbox credentials/certificates with live material, set `PONTO_CONNECT_ENVIRONMENT=live` and reconnect customers. Never reuse sandbox tokens in production.
 
 ## Mollie Connect (optional online payments)
 
-Online payments use **Mollie Connect**. Each Zahlmeister customer connects their own Mollie account through OAuth. The payment belongs to that connected merchant and Mollie bills its processing fees to that merchant; Zahlmeister does not hold customer funds or resell processing.
+Online payments use **Mollie Connect**. Each Zahlmeister customer connects their own Mollie account through OAuth. The payment belongs to that merchant and Mollie charges processing fees to that merchant; Zahlmeister does not hold customer funds.
 
-1. Register a Mollie OAuth app for Zahlmeister.
-2. Register this redirect URI:
-   `https://<APP_HOST>/api/v1/online-payments/mollie/oauth/callback`
-3. Set `MOLLIE_OAUTH_CLIENT_ID` and `MOLLIE_OAUTH_CLIENT_SECRET` in `docker/.env`.
-4. Required scopes are configured through `MOLLIE_OAUTH_SCOPES` and default to:
-   `organizations.read profiles.read payments.read payments.write`
-5. Customers connect their own Mollie account under **Payment > Advanced > Online payments**.
-6. If an account has multiple payment profiles, the customer can choose one in the advanced view.
-7. Apple Pay, Google Pay, cards and other methods are shown by Mollie's hosted checkout when they are available/enabled for that merchant profile.
+1. Register a Mollie OAuth app.
+2. Register `https://<APP_HOST>/api/v1/online-payments/mollie/oauth/callback`.
+3. Configure the client id/secret.
+4. Default scopes are `organizations.read profiles.read payments.read payments.write`.
+5. Customers connect their Mollie account and, when needed, select a payment profile.
 
-Provider tokens are encrypted with `APP_SECRET`. Disconnecting attempts to revoke the refresh token at Mollie and always removes the local connection. `MOLLIE_TEST_MODE=true` can be used for sandbox/test payments where supported.
+Provider tokens are encrypted with `APP_SECRET`. `MOLLIE_TEST_MODE=true` can be used for test payments where supported.
 
 ## Customer API
 
-The customer API is part of the FastAPI backend and is disabled per organization by default. Customers enable it under **API & integrations**, create scoped credentials and call `/api/public/v1` with a Bearer API key. Keys are stored only as hashes; the raw key is returned once when created. Current scopes separate participant, collection and payment-status reads/writes.
-
-The same API contracts are independent from the Next.js/Capacitor clients, so school, club, course and ERP systems can integrate without bypassing Zahlmeister business rules or tenant isolation.
+The customer API is disabled per organization by default. Customers can enable it under **API & integrations**, create scoped credentials and call `/api/public/v1` with a Bearer API key. Raw keys are returned once and only hashes are persisted. The API uses the same business rules and tenant isolation as the Next.js/Capacitor clients.
