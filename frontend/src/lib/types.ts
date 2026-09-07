@@ -4,13 +4,17 @@ export interface AccountUser {
 }
 export interface AuthResponse { token: string; user: AccountUser; }
 export interface ParticipantListSummary { id: string; name: string; participant_count: number; }
-export interface Participant { id: string; name: string; email?: string | null; phone?: string | null; channel_addresses: Record<string,string>; }
+export type CommunicationChannel = "email"|"whatsapp"|"sms"|"telegram";
+export type ChannelAvailability = "unknown"|"available"|"unavailable";
+export interface ParticipantChannel { channel: CommunicationChannel; enabled: boolean; availability: ChannelAvailability; learned: boolean; }
+export interface Participant { id: string; name: string; email?: string | null; phone?: string | null; channel_addresses: Record<string,string>; channels?: ParticipantChannel[]; }
 export interface ParticipantListDetail extends ParticipantListSummary { participants: Participant[]; }
 export interface ReminderRule { type: "after_send"|"before_due"|"on_due"|"after_due"; days: number; }
 export interface CollectionSummary {
   id: string; name: string; participant_list_id: string; amount: string | number; currency: string;
   send_at?: string | null; due_at?: string | null; status: string; participant_count: number;
   paid_count: number; paid_amount: string | number; communication_channel: string; communication_mode: string;
+  channel_order: CommunicationChannel[];
   message_template_id?: string | null; message_body_override?: string | null; reminder_rules: ReminderRule[];
   include_payment_link: boolean; include_payment_qr: boolean;
 }
@@ -18,7 +22,8 @@ export interface CollectionParticipant {
   id: string; participant_id: string; name: string; email?: string | null; phone?: string | null;
   payment_reference: string; payment_url: string; payment_qr_url?: string | null; status: string;
   paid_at?: string | null; payment_method?: string | null; initial_sent_at?: string | null;
-  last_reminder_at?: string | null; reminder_count: number; delivery_status?: string | null; communication_count: number;
+  last_reminder_at?: string | null; reminder_count: number; delivery_status?: string | null;
+  delivery_channel?: CommunicationChannel | null; communication_count: number;
 }
 export interface CollectionDetail extends CollectionSummary { participants: CollectionParticipant[]; }
 export interface ImportDraft { name: string; email?: string | null; phone?: string | null; selected?: boolean; }
@@ -39,9 +44,12 @@ export interface BankSyncRunResult { imported: number; auto_matched: number; nee
 export interface OnlinePaymentConnection { id: string; provider: string; status: string; enabled: boolean; account_label?: string|null; profile_id?: string|null; connected_at?: string|null; last_tested_at?: string|null; last_error?: string|null; }
 export interface OnlinePaymentProfile { id: string; name: string; status?: string; }
 export interface CommunicationConnection { id: string; provider: string; auth_type: string; status: string; account_label?: string|null; account_key?: string|null; base_url?: string|null; connected_at?: string|null; last_error?: string|null; last_tested_at?: string|null; }
-export interface ChannelSetting { channel: string; mode: string; provider?: string|null; connection_id?: string|null; sender?: string|null; fields?: Record<string,unknown>; configured: boolean; webhook_url?: string|null; supports_internal?: boolean; status: string; last_tested_at?: string|null; last_error?: string|null; }
+export interface ChannelSetting { channel: CommunicationChannel; mode: "internal"|"external"|"disabled"; provider?: string|null; connection_id?: string|null; sender?: string|null; fields?: Record<string,unknown>; configured: boolean; webhook_url?: string|null; supports_internal?: boolean; status: string; last_tested_at?: string|null; last_error?: string|null; }
+export interface CommunicationPreferences { channel_order: CommunicationChannel[]; }
 export interface CommunicationItem { id: string; kind: string; channel: string; delivery_mode: string; direction: string; sender?: string|null; recipient?: string|null; subject?: string|null; body?: string|null; status: string; provider?: string|null; created_at: string; sent_at?: string|null; received_at?: string|null; error?: string|null; }
-export interface ExternalDraft { message_id: string; channel: string; launch_uri: string; recipient?: string|null; subject?: string|null; body?: string|null; recipient_selection_required?: boolean; payment_qr_url?: string|null; payment_qr_filename?: string|null; }
+export interface ExternalDraft { message_id: string; channel: CommunicationChannel; launch_uri: string; recipient?: string|null; subject?: string|null; body?: string|null; recipient_selection_required?: boolean; payment_qr_url?: string|null; payment_qr_filename?: string|null; }
+export interface DispatchExternalItem { collection_participant_id:string; participant_id:string; name:string; channel:CommunicationChannel; }
+export interface DispatchResult { queued_internal:number; external:DispatchExternalItem[]; unreachable:string[]; }
 export interface ApiSettings { enabled: boolean; available_scopes: string[]; }
 export interface ApiCredential { id: string; name: string; token_prefix: string; scopes: string[]; created_at: string; last_used_at?: string|null; expires_at?: string|null; revoked_at?: string|null; }
 export interface ApiCredentialCreated extends ApiCredential { token: string; }
