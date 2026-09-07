@@ -58,20 +58,23 @@ async def translate_text(
     }
     if source:
         payload["source"] = source
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(
-            settings.google_translate_api_url,
-            params={"key": settings.google_translate_api_key},
-            json=payload,
-        )
-    response.raise_for_status()
-    data = response.json()
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                settings.google_translate_api_url,
+                params={"key": settings.google_translate_api_key},
+                json=payload,
+            )
+        response.raise_for_status()
+        data = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise RuntimeError("Automatic translation provider request failed") from exc
     rows = data.get("data", {}).get("translations", [])
     if not rows or not isinstance(rows[0], dict):
-        raise ValueError("Translation provider returned no translation")
+        raise RuntimeError("Automatic translation provider returned no translation")
     translated = _restore_variables(str(rows[0].get("translatedText") or ""), replacements).strip()
     if not translated:
-        raise ValueError("Translation provider returned an empty translation")
+        raise RuntimeError("Automatic translation provider returned an empty translation")
     validate_same_template_variables(body, translated)
     return translated
 
