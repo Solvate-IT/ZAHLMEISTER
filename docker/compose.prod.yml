@@ -77,6 +77,9 @@ x-backend-environment: &backend-environment
   MOLLIE_API_URL: ${MOLLIE_API_URL:-https://api.mollie.com/v2}
   MOLLIE_OAUTH_SCOPES: ${MOLLIE_OAUTH_SCOPES:-organizations.read profiles.read payments.read payments.write}
   MOLLIE_TEST_MODE: ${MOLLIE_TEST_MODE:-false}
+  GOOGLE_TRANSLATE_API_KEY: ${GOOGLE_TRANSLATE_API_KEY:-}
+  GOOGLE_TRANSLATE_API_KEY_FILE: ${GOOGLE_TRANSLATE_API_KEY_FILE:-}
+  GOOGLE_TRANSLATE_API_URL: ${GOOGLE_TRANSLATE_API_URL:-https://translation.googleapis.com/language/translate/v2}
 
 x-default-logging: &default-logging
   driver: json-file
