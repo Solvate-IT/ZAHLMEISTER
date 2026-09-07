@@ -15,7 +15,7 @@ import {SettingsPage} from "./workspace/SettingsPage";
 
 type View="overview"|"lists"|"collections"|"settings";
 
-export function Workspace(){const router=useRouter();const params=useSearchParams();const {t}=useI18n();const [user,setUser]=useState<AccountUser|null>(null);const [loading,setLoading]=useState(true);const raw=params.get("view");const view:View=raw==="lists"||raw==="collections"||raw==="settings"?raw:"overview";
+export function Workspace(){const router=useRouter();const params=useSearchParams();const {t,setLocale}=useI18n();const [user,setUser]=useState<AccountUser|null>(null);const [loading,setLoading]=useState(true);const raw=params.get("view");const view:View=raw==="lists"||raw==="collections"||raw==="settings"?raw:"overview";
   useEffect(()=>{api.restore().then(u=>{if(!u){router.replace("/?auth=login");return}setUser(u);if(u.locale)setLocale(u.locale)}).catch(()=>router.replace("/?auth=login")).finally(()=>setLoading(false))},[router,setLocale]);
   function navigate(next:View){const url=new URL(window.location.href);url.searchParams.set("view",next);url.searchParams.delete("id");router.push(`${url.pathname}?${url.searchParams}`)}
   async function logout(){await api.logout();router.replace("/")}
