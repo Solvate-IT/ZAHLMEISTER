@@ -19,8 +19,6 @@ from app.services.secrets import decrypt_config, encrypt_config
 INFOBIP_MESSAGES_CHANNELS = {
     "sms": "SMS",
     "whatsapp": "WHATSAPP",
-    "instagram": "INSTAGRAM",
-    "messenger": "MESSENGER",
 }
 
 
@@ -68,7 +66,7 @@ def verify_oauth_state(value: str) -> str:
 
 
 def oauth_redirect_uri() -> str:
-    return f"{settings.public_app_url.rstrip('/')}/api/v1/communication-settings/infobip/oauth/callback"
+    return f"{settings.oauth_callback_base}/api/v1/communication-settings/infobip/oauth/callback"
 
 
 def oauth_authorization_url(organization_id: str) -> str:
@@ -147,8 +145,6 @@ async def authorization_for_connection(
         raise ValueError(f"Unsupported Infobip auth type: {connection.auth_type}")
 
     obtained_at = float(config.get("obtained_at") or 0)
-    # Infobip Exchange OAuth tokens are intentionally short lived. Refresh before use
-    # when the local token is older than 40 seconds.
     if time.time() - obtained_at > 40:
         payload = await refresh_oauth_token(config)
         config.update(
@@ -171,8 +167,6 @@ async def authorization_for_connection(
 
 
 async def validate_api_key(base_url: str, api_key: str) -> None:
-    # A lightweight authenticated endpoint. A 2xx/4xx response proves connectivity;
-    # 401/403 means the key or scopes are not usable.
     url = f"{base_url.rstrip('/')}/account/1/balance"
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.get(url, headers={"Authorization": f"App {api_key}"})
@@ -204,14 +198,11 @@ async def send_infobip_message(
             "subject": content.subject,
             "text": content.text,
         }
-        # Keep our own ID in a custom header where supported for easier diagnostics.
         data["header"] = f"X-Zahlmeister-Message-ID: {callback_data}"
         files = None
         if content.payment_qr_payload:
             image_bytes = await asyncio.to_thread(render_qr_png, content.payment_qr_payload)
-            files = {
-                "attachment": ("zahlmeister-payment-qr.png", image_bytes, "image/png")
-            }
+            files = {"attachment": ("zahlmeister-payment-qr.png", image_bytes, "image/png")}
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(
                 f"{base_url}/email/3/send",
