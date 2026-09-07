@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from types import SimpleNamespace
 
-from app.services import ponto
+import pytest
+
+from app.services import microsoft365, ponto
 from app.services.bank_sync import parse_ponto_account, parse_ponto_transaction
 from app.services.bank_sync_providers import get_bank_sync_provider
+from app.services.channel_config import internal_channel_configured
 from app.services.communications import _test_smtp_imap
 
 
@@ -220,3 +224,90 @@ def test_ponto_pagination_url_rejects_foreign_host(monkeypatch) -> None:
         assert "unexpected pagination URL" in str(exc)
     else:
         raise AssertionError("foreign pagination URL must be rejected")
+
+
+def test_microsoft365_oauth_state_roundtrip() -> None:
+    state = microsoft365._state(
+        "33333333-3333-3333-3333-333333333333",
+        "44444444-4444-4444-4444-444444444444",
+    )
+    assert microsoft365.verify_state(state) == (
+        "33333333-3333-3333-3333-333333333333",
+        "44444444-4444-4444-4444-444444444444",
+    )
+
+
+def test_microsoft365_authorization_uses_pkce_and_organization_accounts(monkeypatch) -> None:
+    monkeypatch.setattr(microsoft365.settings, "microsoft365_client_id", "client-id")
+    monkeypatch.setattr(microsoft365.settings, "microsoft365_client_secret", "client-secret")
+    monkeypatch.setattr(microsoft365.settings, "microsoft365_tenant", "organizations")
+    monkeypatch.setattr(microsoft365.settings, "oauth_callback_base_url", "http://localhost:8003")
+    connection = SimpleNamespace(
+        id="33333333-3333-3333-3333-333333333333",
+        encrypted_config=None,
+    )
+    url = microsoft365.authorization_url(
+        connection,
+        "44444444-4444-4444-4444-444444444444",
+    )
+    assert url.startswith("https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?")
+    assert "code_challenge_method=S256" in url
+    assert "client_id=client-id" in url
+    assert "Mail.ReadWrite" in url
+    assert "Mail.Send" in url
+    assert connection.encrypted_config
+
+
+def test_microsoft365_is_valid_internal_email_provider() -> None:
+    assert internal_channel_configured(
+        "email",
+        provider="microsoft365",
+        connection_active=True,
+    )
+    assert not internal_channel_configured(
+        "sms",
+        provider="microsoft365",
+        connection_active=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_microsoft365_inbox_parses_reply_metadata(monkeypatch) -> None:
+    class FakeResponse:
+        def json(self):
+            return {
+                "value": [
+                    {
+                        "id": "immutable-1",
+                        "conversationId": "conversation-1",
+                        "internetMessageId": "<incoming@example.test>",
+                        "receivedDateTime": "2026-09-07T12:00:00Z",
+                        "subject": "Re: Schulausflug",
+                        "from": {"emailAddress": {"address": "parent@example.test"}},
+                        "toRecipients": [
+                            {"emailAddress": {"address": "teacher@example.test"}}
+                        ],
+                        "body": {"contentType": "text", "content": "Ist überwiesen."},
+                        "internetMessageHeaders": [
+                            {"name": "In-Reply-To", "value": "<outgoing@example.test>"},
+                            {"name": "References", "value": "<older@example.test> <outgoing@example.test>"},
+                        ],
+                    }
+                ]
+            }
+
+    async def fake_graph(*args, **kwargs):
+        return FakeResponse()
+
+    monkeypatch.setattr(microsoft365, "_graph", fake_graph)
+    rows, cursor = await microsoft365.fetch_inbox(
+        "33333333-3333-3333-3333-333333333333",
+        "2026-09-07T11:55:00Z",
+    )
+    assert len(rows) == 1
+    assert rows[0].conversation_id == "conversation-1"
+    assert rows[0].in_reply_to == "<outgoing@example.test>"
+    assert rows[0].references[-1] == "<outgoing@example.test>"
+    assert rows[0].sender == "parent@example.test"
+    assert rows[0].text == "Ist überwiesen."
+    assert cursor == "2026-09-07T12:00:00Z"
