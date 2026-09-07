@@ -3,11 +3,11 @@ from typing import Literal
 from urllib.parse import urlparse
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Channel = Literal["email", "sms", "whatsapp", "telegram"]
 DeliveryMode = Literal["internal", "external", "disabled"]
-InternalProvider = Literal["infobip", "smtp_imap", "microsoft365"]
+InternalProvider = Literal["zahlmeister_email", "infobip", "smtp_imap", "microsoft365"]
 
 
 class CommunicationConnectionRead(BaseModel):
@@ -98,6 +98,14 @@ class ChannelSettingUpdate(BaseModel):
     def clean_sender(cls, value: str | None) -> str | None:
         value = value.strip() if value else None
         return value or None
+
+    @model_validator(mode="after")
+    def normalize_legacy_platform_mail(self) -> "ChannelSettingUpdate":
+        # Older clients selected the central Zahlmeister mail server as smtp_imap
+        # with an empty tenant configuration. Store the explicit provider now.
+        if self.mode == "internal" and self.provider == "smtp_imap" and not self.fields:
+            self.provider = "zahlmeister_email"
+        return self
 
 
 class CommunicationPreferencesRead(BaseModel):

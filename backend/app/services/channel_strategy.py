@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.channel_strategy import CommunicationPreference, ParticipantChannelSetting
 from app.models.entities import CommunicationChannelSetting, CommunicationConnection, Participant
-from app.services.channel_config import internal_channel_configured
+from app.services.channel_config import canonical_internal_provider, internal_channel_configured
 from app.services.communications import recipient_for_channel
 from app.services.infobip import connection_is_active
 from app.services.secrets import decrypt_config
@@ -101,7 +101,7 @@ async def save_channel_order(
 
 def _default_setting(channel: str) -> ChannelRuntime:
     mode = DEFAULT_CHANNEL_MODES[channel]
-    provider = "smtp_imap" if channel == "email" and mode == "internal" else None
+    provider = "zahlmeister_email" if channel == "email" and mode == "internal" else None
     configured = mode == "external" or (
         channel == "email"
         and mode == "internal"
@@ -147,8 +147,9 @@ async def load_channel_runtimes(
             continue
         mode = row.mode if row.mode in {"internal", "external", "disabled"} else "external"
         config = decrypt_config(row.encrypted_config)
+        provider = canonical_internal_provider(row.channel, row.provider, config)
         connection = connections.get(row.connection_id) if row.connection_id else None
-        if row.provider == "microsoft365":
+        if provider == "microsoft365":
             active = bool(connection and connection.status == "connected")
         else:
             active = connection_is_active(connection)
@@ -156,7 +157,7 @@ async def load_channel_runtimes(
             mode == "internal"
             and internal_channel_configured(
                 row.channel,
-                provider=row.provider,
+                provider=provider,
                 config=config,
                 connection_active=active,
                 sender=row.sender,
@@ -165,7 +166,7 @@ async def load_channel_runtimes(
         result[row.channel] = ChannelRuntime(
             channel=row.channel,
             mode=mode,
-            provider=row.provider,
+            provider=provider,
             connection_id=row.connection_id,
             sender=row.sender,
             config=config,

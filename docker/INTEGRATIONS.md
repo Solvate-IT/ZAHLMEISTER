@@ -32,9 +32,9 @@ Telegram is supported as an external channel only. Initiating arbitrary Telegram
 
 ## Central Zahlmeister email
 
-**Send via Zahlmeister** is the default internal email path. All organizations use the same technically verified platform sender address/domain. The visible sender name is the customer's organization name.
+**Send via Zahlmeister** is the default internal email path and uses the explicit backend provider `zahlmeister_email`. All organizations use the same technically verified platform sender address/domain. Platform SMTP/IMAP credentials stay in installation secrets and are never copied into organization settings or returned to the frontend. Older organization rows that represented the platform sender as `smtp_imap` with an empty tenant configuration are normalized transparently for backwards compatibility.
 
-Every outgoing central email receives an opaque HMAC-protected Reply-To alias such as:
+The visible sender name is the customer's organization name. Every outgoing central email receives an opaque HMAC-protected Reply-To alias such as:
 
 `reply+<opaque-token>@<MAIL_REPLY_DOMAIN>`
 
@@ -53,7 +53,7 @@ Development uses Mailpit for SMTP. Mailpit is SMTP-only, so central reply import
 
 ## Own SMTP/IMAP account
 
-An organization can use its own email server instead of the central Zahlmeister sender. SMTP supports SSL or STARTTLS. IMAP is optional for custom accounts and, when configured, imports replies into the matching participant communication history. Credentials are encrypted with `APP_SECRET` before storage.
+An organization can use its own email server instead of the central Zahlmeister sender. This is the separate `smtp_imap` provider. SMTP supports SSL or STARTTLS. IMAP is optional for custom accounts and, when configured, imports replies into the matching participant communication history. Credentials are encrypted with `APP_SECRET` before storage.
 
 ## Microsoft 365
 
@@ -67,15 +67,17 @@ Create one multi-tenant Microsoft Entra web application for Zahlmeister. `MICROS
 Delegated scopes:
 
 - `User.Read`
-- `Mail.ReadWrite`
+- `Mail.Read`
 - `Mail.Send`
 - `offline_access`
 - `openid`
 - `profile`
 
+`Mail.ReadWrite` is intentionally not required. Outgoing mail uses Graph `sendMail` directly instead of creating mailbox drafts. Each outgoing MIME message receives a stable RFC `Message-ID` derived from the Zahlmeister communication record. The worker reads the connected Inbox and links replies through `In-Reply-To`/`References` and Microsoft conversation metadata.
+
 Development uses `MICROSOFT365_CLIENT_ID` and `MICROSOFT365_CLIENT_SECRET` in the ignored local `docker/.env`. Production stores the secret in an untracked file and sets `MICROSOFT365_CLIENT_SECRET_FILE`.
 
-Outgoing messages are sent through Microsoft Graph. The worker reads the connected Inbox and links replies through Microsoft message/conversation identifiers. SMTP AUTH or IMAP Basic Authentication is not used for Microsoft 365. The current implementation targets the connected user's mailbox; shared mailbox support remains intentionally separate.
+SMTP AUTH or IMAP Basic Authentication is not used for Microsoft 365. The current implementation targets the connected user's mailbox; shared mailbox permissions are intentionally not requested until shared-mailbox support is actually enabled.
 
 ## Infobip
 
@@ -94,7 +96,7 @@ WhatsApp is not marked available merely because Infobip accepted a send request.
 
 ## Ponto Connect (optional automatic BankSync)
 
-Use **Ponto Connect** with Ponto's customer-paying model so the connected customer pays Ponto directly. Zahlmeister does not resell BankSync usage. The Ponto client id, client secret and mTLS certificate belong to the Zahlmeister installation. Individual customers authorize their own Ponto organization and selected bank accounts through OAuth.
+Use **Ponto Connect** with Ponto's customer-paying model so the connected customer pays Ponto directly. Zahlmeister does not resell BankSync usage. The Ponto client id, client secret and mTLS certificate belong to the Zahlmeister installation. Individual customers authorize their own Ponto organization and selected bank accounts through OAuth; they never enter Ponto API credentials in Zahlmeister.
 
 ### Sandbox
 
@@ -116,9 +118,15 @@ Local sandbox setup:
 
 The OAuth implementation uses signed short-lived state, PKCE/S256, mTLS for token/API calls and encrypted token storage. Refresh tokens are rotated under a database row lock. The worker periodically fetches fresh Ponto data for connected accounts, and users can also request a sync explicitly. Only an exact payment reference plus matching amount/currency is applied automatically; ambiguous candidates remain for review.
 
+Ponto's optional integrated onboarding/prefill may be added on top of this OAuth flow without changing the BankSync architecture. Do not make VAT/company fields mandatory in Zahlmeister solely for Ponto until Ponto has confirmed that the customer-paying model supports the intended individual teacher/private-person customer segment and clarified the required onboarding data for that segment.
+
 ### Moving Ponto to live
 
 Use a separate live Ponto application, register the production HTTPS callback, replace all sandbox credentials/certificates with live material, set `PONTO_CONNECT_ENVIRONMENT=live` and reconnect customers. Never reuse sandbox tokens in production.
+
+## OAuth callback base
+
+`PUBLIC_APP_URL` is the public frontend URL and is not implicitly the production OAuth callback configuration. Set `OAUTH_CALLBACK_BASE_URL` explicitly in production to the public base that routes `/api/v1/.../callback` to the FastAPI backend. Development may use the direct backend base such as `http://localhost:8003`.
 
 ## Mollie Connect (optional online payments)
 

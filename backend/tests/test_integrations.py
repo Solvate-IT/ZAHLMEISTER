@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import base64
 from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 
+from app.core.config import settings
+from app.schemas.communications import ChannelSettingUpdate
 from app.services import microsoft365, ponto
 from app.services.bank_sync import parse_ponto_account, parse_ponto_transaction
 from app.services.bank_sync_providers import get_bank_sync_provider
-from app.services.channel_config import internal_channel_configured
+from app.services.channel_config import canonical_internal_provider, internal_channel_configured
 from app.services.communications import _test_smtp_imap
+from app.services.message_renderer import CanonicalMessage
 
 
 def test_ponto_account_parser_handles_json_api_attributes() -> None:
@@ -112,6 +116,13 @@ def test_production_rejects_ponto_sandbox_configuration(monkeypatch) -> None:
     monkeypatch.setattr(ponto.settings, "ponto_connect_client_id", "sandbox-client")
     errors = ponto.settings.production_security_errors()
     assert "PONTO_CONNECT_ENVIRONMENT must be live in production" in errors
+
+
+def test_production_requires_explicit_oauth_callback_base(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "oauth_callback_base_url", "")
+    errors = settings.production_security_errors()
+    assert "OAUTH_CALLBACK_BASE_URL must be explicitly configured in production" in errors
 
 
 def test_bank_sync_provider_registry_is_replaceable() -> None:
@@ -226,6 +237,23 @@ def test_ponto_pagination_url_rejects_foreign_host(monkeypatch) -> None:
         raise AssertionError("foreign pagination URL must be rejected")
 
 
+def test_platform_email_provider_is_explicit_and_legacy_compatible(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "smtp_host", "smtp.platform.example")
+    monkeypatch.setattr(settings, "mail_from_address", "noreply@example.test")
+    assert canonical_internal_provider("email", "smtp_imap", {}) == "zahlmeister_email"
+    assert canonical_internal_provider(
+        "email", "smtp_imap", {"smtp_host": "smtp.customer.example"}
+    ) == "smtp_imap"
+    assert internal_channel_configured(
+        "email", provider="zahlmeister_email", config={}
+    )
+
+
+def test_legacy_empty_smtp_payload_is_stored_as_platform_provider() -> None:
+    payload = ChannelSettingUpdate(mode="internal", provider="smtp_imap", fields={})
+    assert payload.provider == "zahlmeister_email"
+
+
 def test_microsoft365_oauth_state_roundtrip() -> None:
     state = microsoft365._state(
         "33333333-3333-3333-3333-333333333333",
@@ -237,10 +265,15 @@ def test_microsoft365_oauth_state_roundtrip() -> None:
     )
 
 
-def test_microsoft365_authorization_uses_pkce_and_organization_accounts(monkeypatch) -> None:
+def test_microsoft365_authorization_uses_pkce_and_minimal_mail_scopes(monkeypatch) -> None:
     monkeypatch.setattr(microsoft365.settings, "microsoft365_client_id", "client-id")
     monkeypatch.setattr(microsoft365.settings, "microsoft365_client_secret", "client-secret")
     monkeypatch.setattr(microsoft365.settings, "microsoft365_tenant", "organizations")
+    monkeypatch.setattr(
+        microsoft365.settings,
+        "microsoft365_scopes",
+        "openid profile offline_access User.Read Mail.Read Mail.Send",
+    )
     monkeypatch.setattr(microsoft365.settings, "oauth_callback_base_url", "http://localhost:8003")
     connection = SimpleNamespace(
         id="33333333-3333-3333-3333-333333333333",
@@ -253,8 +286,9 @@ def test_microsoft365_authorization_uses_pkce_and_organization_accounts(monkeypa
     assert url.startswith("https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?")
     assert "code_challenge_method=S256" in url
     assert "client_id=client-id" in url
-    assert "Mail.ReadWrite" in url
+    assert "Mail.Read" in url
     assert "Mail.Send" in url
+    assert "Mail.ReadWrite" not in url
     assert connection.encrypted_config
 
 
@@ -269,6 +303,49 @@ def test_microsoft365_is_valid_internal_email_provider() -> None:
         provider="microsoft365",
         connection_active=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_microsoft365_sendmail_uses_mime_message_id(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    async def fake_mailbox(_connection_id):
+        return "teacher@example.test"
+
+    async def fake_graph(connection_id, method, path, **kwargs):
+        calls.append(
+            {
+                "connection_id": connection_id,
+                "method": method,
+                "path": path,
+                "headers": kwargs.get("headers") or {},
+                "content": kwargs.get("content") or b"",
+            }
+        )
+        return SimpleNamespace(status_code=202)
+
+    monkeypatch.setattr(microsoft365, "_mailbox_address", fake_mailbox)
+    monkeypatch.setattr(microsoft365, "_graph", fake_graph)
+    content = CanonicalMessage(
+        subject="Schulausflug",
+        text="Bitte bezahlen.",
+        payment_link_included=False,
+        payment_qr_requested=False,
+        transport_key="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    )
+    external_id = await microsoft365.send_email(
+        connection_id="connection-1",
+        recipient="parent@example.test",
+        content=content,
+    )
+    assert external_id == "<zm-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@zahlmeister>"
+    assert len(calls) == 1
+    assert calls[0]["method"] == "POST"
+    assert calls[0]["path"] == "/me/sendMail"
+    assert calls[0]["headers"]["Content-Type"] == "text/plain"
+    decoded = base64.b64decode(calls[0]["content"]).decode("utf-8")
+    assert "Message-ID: <zm-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@zahlmeister>" in decoded
+    assert "Subject: Schulausflug" in decoded
 
 
 @pytest.mark.asyncio

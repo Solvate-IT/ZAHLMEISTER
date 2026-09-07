@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     microsoft365_client_secret: str = ""
     microsoft365_client_secret_file: str = ""
     microsoft365_tenant: str = "organizations"
-    microsoft365_scopes: str = "openid profile offline_access User.Read Mail.ReadWrite Mail.Send"
+    microsoft365_scopes: str = "openid profile offline_access User.Read Mail.Read Mail.Send"
     microsoft365_graph_url: str = "https://graph.microsoft.com/v1.0"
 
     ponto_connect_environment: Literal["sandbox", "live"] = "sandbox"
@@ -170,6 +170,8 @@ class Settings(BaseSettings):
         public_url = urlparse(self.public_app_url.strip())
         if public_url.scheme != "https" or not public_url.netloc:
             errors.append("PUBLIC_APP_URL must be an absolute HTTPS URL")
+        if not self.oauth_callback_base_url.strip():
+            errors.append("OAUTH_CALLBACK_BASE_URL must be explicitly configured in production")
         callback_url = urlparse(self.oauth_callback_base)
         if callback_url.scheme != "https" or not callback_url.netloc:
             errors.append("OAUTH_CALLBACK_BASE_URL must resolve to an absolute HTTPS URL")

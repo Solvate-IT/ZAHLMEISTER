@@ -8,6 +8,8 @@ import secrets
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from email import policy
+from email.message import EmailMessage
 from typing import Any
 from urllib.parse import urlencode
 
@@ -237,46 +239,53 @@ async def test_connection(connection_id) -> dict[str, str]:
     }
 
 
+async def _mailbox_address(connection_id) -> str:
+    async with SessionLocal() as session:
+        connection = await session.get(CommunicationConnection, connection_id)
+        if connection is None or connection.provider != "microsoft365":
+            raise ValueError("Microsoft 365 connection does not exist")
+        label = str(connection.account_label or "").strip()
+    if "@" in label and "\r" not in label and "\n" not in label:
+        return label
+    me = await profile(connection_id)
+    mailbox = str(me.get("mail") or me.get("userPrincipalName") or "").strip()
+    if "@" not in mailbox or "\r" in mailbox or "\n" in mailbox:
+        raise ValueError("Microsoft 365 mailbox address is unavailable")
+    return mailbox
+
+
 async def send_email(
     *,
     connection_id,
     recipient: str,
     content: CanonicalMessage,
 ) -> str:
-    message: dict[str, Any] = {
-        "subject": content.subject or "",
-        "body": {"contentType": "Text", "content": content.text},
-        "toRecipients": [{"emailAddress": {"address": recipient}}],
-    }
+    """Send through Graph sendMail with a stable RFC Message-ID for reply correlation."""
+    sender = await _mailbox_address(connection_id)
+    transport_key = content.transport_key or secrets.token_hex(16)
+    message_id = f"<zm-{transport_key}@zahlmeister>"
+    message = EmailMessage(policy=policy.SMTP)
+    message["From"] = sender
+    message["To"] = recipient
+    message["Subject"] = content.subject or ""
+    message["Message-ID"] = message_id
+    message.set_content(content.text)
     if content.payment_qr_payload:
-        message["attachments"] = [
-            {
-                "@odata.type": "#microsoft.graph.fileAttachment",
-                "name": "zahlmeister-payment-qr.png",
-                "contentType": "image/png",
-                "contentBytes": base64.b64encode(render_qr_png(content.payment_qr_payload)).decode("ascii"),
-            }
-        ]
-    response = await _graph(
-        connection_id,
-        "POST",
-        "/me/messages",
-        headers={"Prefer": 'IdType="ImmutableId"'},
-        json=message,
-    )
-    draft = response.json()
-    draft_id = str(draft.get("id") or "")
-    conversation_id = str(draft.get("conversationId") or "")
-    if not draft_id:
-        raise ValueError("Microsoft Graph did not return a draft message id")
+        message.add_attachment(
+            render_qr_png(content.payment_qr_payload),
+            maintype="image",
+            subtype="png",
+            filename="zahlmeister-payment-qr.png",
+        )
+    encoded = base64.b64encode(message.as_bytes()).decode("ascii")
     await _graph(
         connection_id,
         "POST",
-        f"/me/messages/{draft_id}/send",
-        headers={"Prefer": 'IdType="ImmutableId"'},
-        content=b"",
+        "/me/sendMail",
+        headers={"Content-Type": "text/plain"},
+        content=encoded.encode("ascii"),
     )
-    return conversation_id or f"graph:{draft_id}"
+    return message_id
 
 
 def _parse_datetime(value: str | None) -> datetime:

@@ -33,6 +33,7 @@ class CanonicalMessage:
     payment_qr_requested: bool
     payment_qr_url: str | None = None
     payment_qr_payload: str | None = None
+    transport_key: str | None = None
 
     @property
     def payment_qr_included(self) -> bool:
@@ -149,4 +150,5 @@ def canonical_from_stored_message(message: CommunicationMessage) -> CanonicalMes
         payment_qr_payload=(
             str(metadata["payment_qr_payload"]) if metadata.get("payment_qr_payload") else None
         ),
+        transport_key=str(message.id),
     )

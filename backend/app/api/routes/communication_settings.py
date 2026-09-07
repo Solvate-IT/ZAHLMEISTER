@@ -27,7 +27,12 @@ from app.schemas.communications import (
     Microsoft365OAuthStartRead,
 )
 from app.services import microsoft365
-from app.services.channel_config import SECRET_FIELDS, SUPPORTED_CHANNELS, internal_channel_configured
+from app.services.channel_config import (
+    SECRET_FIELDS,
+    SUPPORTED_CHANNELS,
+    canonical_internal_provider,
+    internal_channel_configured,
+)
 from app.services.channel_strategy import (
     DEFAULT_CHANNEL_MODES,
     get_channel_order,
@@ -86,7 +91,7 @@ def _read(
 ) -> ChannelSettingRead:
     if stored is None:
         mode = DEFAULT_CHANNEL_MODES[channel]
-        provider = "smtp_imap" if channel == "email" and mode == "internal" else None
+        provider = "zahlmeister_email" if channel == "email" and mode == "internal" else None
         configured = mode != "internal" or internal_channel_configured(
             channel,
             provider=provider,
@@ -104,15 +109,16 @@ def _read(
         )
 
     config = decrypt_config(stored.encrypted_config)
+    provider = canonical_internal_provider(channel, stored.provider, config)
     connection = connections.get(stored.connection_id) if stored.connection_id else None
     active = (
         _connection_active(connection)
-        if stored.provider == "microsoft365"
+        if provider == "microsoft365"
         else connection_is_active(connection)
     )
     configured = stored.mode != "internal" or internal_channel_configured(
         channel,
-        provider=stored.provider,
+        provider=provider,
         config=config,
         connection_active=active,
         sender=stored.sender,
@@ -125,12 +131,12 @@ def _read(
     return ChannelSettingRead(
         channel=channel,
         mode=stored.mode,
-        provider=stored.provider,
+        provider=provider,
         configured=configured,
         sender=stored.sender,
         connection_id=stored.connection_id,
         fields=_safe_email_fields(config)
-        if channel == "email" and stored.provider == "smtp_imap"
+        if channel == "email" and provider == "smtp_imap"
         else {},
         webhook_url=webhook_url,
         supports_internal=channel != "telegram",
@@ -446,7 +452,9 @@ async def disconnect_connection(
         ).scalars().all()
         for row in settings_rows:
             row.mode = DEFAULT_CHANNEL_MODES.get(row.channel, "external")
-            row.provider = "smtp_imap" if row.channel == "email" and row.mode == "internal" else None
+            row.provider = (
+                "zahlmeister_email" if row.channel == "email" and row.mode == "internal" else None
+            )
             row.connection_id = None
             row.sender = None
             row.encrypted_config = None
@@ -552,14 +560,14 @@ async def test_channel_endpoint(
         if stored.mode != "internal":
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Internal channel is not enabled")
         setting_id = stored.id
-        provider = stored.provider
-        connection_id = stored.connection_id
         config = decrypt_config(stored.encrypted_config)
+        provider = canonical_internal_provider(channel, stored.provider, config)
+        connection_id = stored.connection_id
 
     details: dict[str, str] = {}
     try:
-        if provider == "smtp_imap":
-            details = await test_smtp_imap(config)
+        if provider in {"zahlmeister_email", "smtp_imap"}:
+            details = await test_smtp_imap(config if provider == "smtp_imap" else {})
         elif provider == "infobip":
             if connection_id is None:
                 raise ValueError("Infobip connection missing")
@@ -627,11 +635,11 @@ async def update_setting(
     if payload.mode in {"external", "disabled"}:
         provider = None
     elif channel == "email":
-        provider = provider or "smtp_imap"
-        if provider not in {"smtp_imap", "infobip", "microsoft365"}:
+        provider = provider or "zahlmeister_email"
+        if provider not in {"zahlmeister_email", "smtp_imap", "infobip", "microsoft365"}:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Internal email supports Microsoft 365, Infobip or own SMTP/IMAP",
+                detail="Internal email supports Zahlmeister email, Microsoft 365, Infobip or own SMTP/IMAP",
             )
     else:
         provider = "infobip"
@@ -689,7 +697,7 @@ async def update_setting(
                 if secret_field not in incoming and secret_field in existing:
                     incoming[secret_field] = existing[secret_field]
 
-        old_provider = stored.provider
+        old_provider = canonical_internal_provider(channel, stored.provider, existing)
         old_connection_id = stored.connection_id
         stored.mode = payload.mode
         stored.provider = provider

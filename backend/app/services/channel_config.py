@@ -2,8 +2,8 @@ from app.core.config import settings
 
 SUPPORTED_CHANNELS = (
     "email",
-    "sms",
     "whatsapp",
+    "sms",
     "telegram",
 )
 
@@ -20,6 +20,20 @@ SECRET_FIELDS = {
 REQUIRED_SMTP_IMAP_FIELDS = {"from_address", "smtp_host"}
 
 
+def canonical_internal_provider(
+    channel: str,
+    provider: str | None,
+    config: dict | None = None,
+) -> str | None:
+    """Normalize legacy provider values without exposing platform credentials per tenant."""
+    if channel == "email" and provider == "smtp_imap" and not config:
+        # Older settings used smtp_imap + an empty organization config to mean the
+        # central Zahlmeister mail server. Keep those rows backwards compatible,
+        # but expose a distinct provider to the runtime from now on.
+        return "zahlmeister_email"
+    return provider
+
+
 def internal_channel_configured(
     channel: str,
     *,
@@ -28,14 +42,15 @@ def internal_channel_configured(
     connection_active: bool = False,
     sender: str | None = None,
 ) -> bool:
+    provider = canonical_internal_provider(channel, provider, config)
+    if provider == "zahlmeister_email":
+        return channel == "email" and bool(
+            settings.smtp_host.strip() and settings.mail_from_address.strip()
+        )
     if provider == "smtp_imap":
-        if channel != "email":
-            return False
-        if config and all(
+        return channel == "email" and bool(config) and all(
             str(config.get(key) or "").strip() for key in REQUIRED_SMTP_IMAP_FIELDS
-        ):
-            return True
-        return bool(settings.smtp_host.strip() and settings.mail_from_address.strip())
+        )
     if provider == "microsoft365":
         return channel == "email" and connection_active
     if provider == "infobip":
