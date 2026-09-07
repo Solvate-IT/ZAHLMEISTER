@@ -13,7 +13,7 @@ Zahlmeister deliberately supports only four participant communication channels:
 
 Instagram and Messenger are not part of the product communication model.
 
-Each organization configures every channel once as **Internal**, **External** or **Disabled** and defines one global priority order. Collections do not contain their own channel configuration. For every participant Zahlmeister selects the first usable channel from the organization's order.
+Each organization configures every channel once as **Internal**, **External** or **Disabled** and defines one global priority order. Collections use this order by default; an explicit collection channel remains available only as an advanced override. For every participant Zahlmeister selects the first usable channel from the effective order.
 
 Participant-specific channel knowledge is sparse and learned over time:
 
@@ -29,6 +29,27 @@ No rows are created for every participant/channel combination up front. Override
 For external sending the current client also constrains what can be used. Desktop web allows Email, WhatsApp Web/Desktop and Telegram, but external SMS is intentionally not offered. Native/mobile clients can also use SMS. If an external WhatsApp attempt is confirmed as unavailable, Zahlmeister stores that knowledge and immediately resolves the next channel for that participant.
 
 Telegram is supported as an external channel only. Initiating arbitrary Telegram conversations server-side is not a reliable general-purpose workflow, so internal Telegram sending is intentionally disabled.
+
+## Multilingual message templates
+
+Message templates support all Zahlmeister UI languages. A custom template starts with one source text instead of copying the generic system message into every language. Every language version remains editable independently.
+
+Participants can optionally store a preferred message language. Message rendering uses this fallback order:
+
+1. participant language,
+2. organization language,
+3. English,
+4. built-in system template for the requested language.
+
+Participant locale preferences are stored separately from contact data and batch-loaded for collection dispatch, avoiding N+1 queries. Existing participants without a preference continue to use the organization language.
+
+Automatic translation is optional and platform-wide. Configure `GOOGLE_TRANSLATE_API_KEY` in development or `GOOGLE_TRANSLATE_API_KEY_FILE` in production. The credential belongs to the Zahlmeister installation and is never exposed in organization settings or the frontend. `GOOGLE_TRANSLATE_API_URL` defaults to the official Cloud Translation Basic endpoint.
+
+When automatic translation is enabled, the source language can be detected automatically. Zahlmeister generates only language versions that are still missing. Existing or manually edited translations are never overwritten by the bulk translation action. Template variables such as `{{first_name}}`, `{{amount}}` and `{{payment_link}}` are replaced with protected markers before translation and must match exactly after translation; otherwise the result is rejected and nothing is stored.
+
+Translation happens only when a template is created or when the user explicitly requests missing translations. Sending a collection does not call the translation provider; completed translations are stored in PostgreSQL.
+
+The built-in/default message template remains protected from deletion. Non-default templates may be deleted.
 
 ## Central Zahlmeister email
 
