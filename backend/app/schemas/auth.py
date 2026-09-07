@@ -56,6 +56,7 @@ class UserRead(BaseModel):
     locale: str
     currency: str
     email_verified: bool = False
+    is_platform_admin: bool = False
 
 
 class AuthResponse(BaseModel):
