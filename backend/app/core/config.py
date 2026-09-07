@@ -32,6 +32,7 @@ class Settings(BaseSettings):
         validation_alias="CORS_ORIGINS",
     )
     public_app_url: str = "http://localhost:3003"
+    oauth_callback_base_url: str = ""
 
     platform_admin_emails_raw: str = Field(
         default="",
@@ -117,6 +118,10 @@ class Settings(BaseSettings):
         return [item.strip() for item in self.cors_origins_raw.split(",") if item.strip()]
 
     @property
+    def oauth_callback_base(self) -> str:
+        return (self.oauth_callback_base_url.strip() or self.public_app_url.strip()).rstrip("/")
+
+    @property
     def platform_admin_emails(self) -> set[str]:
         return {
             item.strip().casefold()
@@ -147,6 +152,9 @@ class Settings(BaseSettings):
         public_url = urlparse(self.public_app_url.strip())
         if public_url.scheme != "https" or not public_url.netloc:
             errors.append("PUBLIC_APP_URL must be an absolute HTTPS URL")
+        callback_url = urlparse(self.oauth_callback_base)
+        if callback_url.scheme != "https" or not callback_url.netloc:
+            errors.append("OAUTH_CALLBACK_BASE_URL must resolve to an absolute HTTPS URL")
 
         origins = self.cors_origins
         if not origins:
