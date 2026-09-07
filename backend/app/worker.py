@@ -23,6 +23,12 @@ from app.models.entities import (
 )
 from app.services import microsoft365
 from app.services.bank_sync import sync_connection as sync_bank_connection
+from app.services.central_mail import (
+    message_id_from_reply_address,
+    platform_imap_config,
+    platform_inbox_configured,
+    reply_address,
+)
 from app.services.channel_strategy import load_channel_runtimes, set_channel_knowledge
 from app.services.communications import fetch_imap, send_smtp_email
 from app.services.infobip import (
@@ -151,10 +157,7 @@ async def recover_stale_jobs() -> int:
                 job.finished_at = datetime.now(UTC)
             recovered += 1
     if recovered:
-        logger.warning(
-            "Recovered stale jobs",
-            extra={"event": "jobs_recovered", "attempt": recovered},
-        )
+        logger.warning("Recovered stale jobs", extra={"event": "jobs_recovered", "attempt": recovered})
     return recovered
 
 
@@ -207,11 +210,7 @@ async def send_collection(job: ScheduledJob) -> None:
             async with SessionLocal.begin() as session:
                 for rule_key, scheduled_at in schedules:
                     payload = json.dumps(
-                        {
-                            "collection_id": str(collection_id),
-                            "automatic": True,
-                            "rule": rule_key,
-                        }
+                        {"collection_id": str(collection_id), "automatic": True, "rule": rule_key}
                     )
                     existing = await session.scalar(
                         select(ScheduledJob.id)
@@ -248,14 +247,13 @@ async def send_message(job: ScheduledJob) -> None:
     recipient = ""
     channel = ""
     participant_id: UUID | None = None
+    organization_name = "Zahlmeister"
 
     async with SessionLocal.begin() as session:
         message = await session.get(CommunicationMessage, message_id, with_for_update=True)
         if message is None:
             raise ValueError(f"Message {message_id} not found")
-        cp = await session.get(
-            CollectionParticipant, message.collection_participant_id, with_for_update=True
-        )
+        cp = await session.get(CollectionParticipant, message.collection_participant_id, with_for_update=True)
         if cp is None:
             raise ValueError("Collection participant missing")
         if message.status in {"sent", "delivered", "read"}:
@@ -274,16 +272,30 @@ async def send_message(job: ScheduledJob) -> None:
         runtime = runtimes.get(message.channel)
         if runtime is None or runtime.mode != "internal" or not runtime.configured:
             raise ValueError(f"Internal {message.channel} is not configured")
-        provider = runtime.provider or ""
+        provider = message.provider or runtime.provider or ""
         sender = runtime.sender or ""
         config = runtime.config
         connection_id = runtime.connection_id
         recipient = message.recipient
         channel = message.channel
         participant_id = cp.participant_id
+        organization = await session.get(Organization, message.organization_id)
+        if organization is not None:
+            organization_name = organization.name
 
     message_header_id = f"<zm-{message_id}@zahlmeister>"
-    if provider == "smtp_imap":
+    if provider == "zahlmeister_email":
+        external_id = await send_smtp_email(
+            recipient=recipient,
+            content=content,
+            config={
+                **config,
+                "from_name": organization_name,
+                "reply_to": reply_address(message_id),
+            },
+            message_id=message_header_id,
+        )
+    elif provider == "smtp_imap":
         external_id = await send_smtp_email(
             recipient=recipient,
             content=content,
@@ -307,11 +319,7 @@ async def send_message(job: ScheduledJob) -> None:
                 raise ValueError("Infobip connection is not active")
             assert connection is not None
             authorization, base_url = await authorization_for_connection(session, connection)
-            webhook_url = (
-                connection_webhook_url(connection.webhook_key)
-                if connection.webhook_key
-                else None
-            )
+            webhook_url = connection_webhook_url(connection.webhook_key) if connection.webhook_key else None
         external_id = await send_infobip_message(
             authorization=authorization,
             base_url=base_url,
@@ -330,9 +338,7 @@ async def send_message(job: ScheduledJob) -> None:
         stored = await session.get(CommunicationMessage, message_id, with_for_update=True)
         if stored is None:
             return
-        cp = await session.get(
-            CollectionParticipant, stored.collection_participant_id, with_for_update=True
-        )
+        cp = await session.get(CollectionParticipant, stored.collection_participant_id, with_for_update=True)
         if cp is None:
             raise ValueError("Collection participant missing")
         stored.status = "sent"
@@ -346,12 +352,7 @@ async def send_message(job: ScheduledJob) -> None:
             cp.last_reminder_at = now
             cp.reminder_count += 1
         if channel == "whatsapp" and participant_id is not None:
-            await set_channel_knowledge(
-                session,
-                participant_id,
-                "whatsapp",
-                availability="available",
-            )
+            await set_channel_knowledge(session, participant_id, "whatsapp", availability="available")
 
 
 async def _store_incoming_email(
@@ -418,6 +419,76 @@ async def _store_incoming_email(
         )
 
 
+async def _sync_platform_email_inbox() -> None:
+    if not platform_inbox_configured():
+        return
+    async with SessionLocal() as session:
+        state = await session.get(RuntimeHeartbeat, "platform_email_inbox")
+        try:
+            details = json.loads(state.details_json or "{}") if state else {}
+            last_uid = int(details.get("last_uid") or 0)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            last_uid = 0
+    mails = await fetch_imap(platform_imap_config(), last_uid)
+    max_uid = last_uid
+    for mail in mails:
+        max_uid = max(max_uid, mail.uid)
+        parent_id = message_id_from_reply_address(mail.recipient)
+        if parent_id is None:
+            continue
+        async with SessionLocal.begin() as session:
+            parent = await session.get(CommunicationMessage, parent_id, with_for_update=True)
+            if (
+                parent is None
+                or parent.direction != "outgoing"
+                or parent.channel != "email"
+                or parent.provider != "zahlmeister_email"
+            ):
+                continue
+            if mail.message_id:
+                duplicate = await session.scalar(
+                    select(CommunicationMessage.id).where(
+                        CommunicationMessage.direction == "incoming",
+                        CommunicationMessage.external_id == mail.message_id,
+                    )
+                )
+                if duplicate is not None:
+                    continue
+            session.add(
+                CommunicationMessage(
+                    organization_id=parent.organization_id,
+                    collection_id=parent.collection_id,
+                    collection_participant_id=parent.collection_participant_id,
+                    kind="reply",
+                    channel="email",
+                    delivery_mode="internal",
+                    direction="incoming",
+                    sender=mail.sender,
+                    recipient=mail.recipient,
+                    subject=mail.subject,
+                    body=mail.text,
+                    status="received",
+                    provider="zahlmeister_email",
+                    external_id=mail.message_id,
+                    in_reply_to=mail.in_reply_to,
+                    received_at=datetime.now(UTC),
+                )
+            )
+    async with SessionLocal.begin() as session:
+        state = await session.get(RuntimeHeartbeat, "platform_email_inbox", with_for_update=True)
+        if state is None:
+            session.add(
+                RuntimeHeartbeat(
+                    name="platform_email_inbox",
+                    last_seen_at=datetime.now(UTC),
+                    details_json=json.dumps({"last_uid": max_uid}),
+                )
+            )
+        else:
+            state.last_seen_at = datetime.now(UTC)
+            state.details_json = json.dumps({"last_uid": max_uid})
+
+
 async def _sync_smtp_inbox(channel_setting: CommunicationChannelSetting) -> None:
     config = decrypt_config(channel_setting.encrypted_config)
     if not config.get("imap_host"):
@@ -443,9 +514,7 @@ async def _sync_smtp_inbox(channel_setting: CommunicationChannelSetting) -> None
             received_at=datetime.now(UTC),
         )
     async with SessionLocal.begin() as session:
-        stored = await session.get(
-            CommunicationChannelSetting, channel_setting.id, with_for_update=True
-        )
+        stored = await session.get(CommunicationChannelSetting, channel_setting.id, with_for_update=True)
         if stored:
             if max_uid > last_uid:
                 stored.sync_cursor = str(max_uid)
@@ -456,19 +525,12 @@ async def _sync_smtp_inbox(channel_setting: CommunicationChannelSetting) -> None
 async def _sync_microsoft365_inbox(channel_setting: CommunicationChannelSetting) -> None:
     if channel_setting.connection_id is None:
         raise ValueError("Microsoft 365 connection missing")
-    mails, cursor = await microsoft365.fetch_inbox(
-        channel_setting.connection_id,
-        channel_setting.sync_cursor,
-    )
+    mails, cursor = await microsoft365.fetch_inbox(channel_setting.connection_id, channel_setting.sync_cursor)
     for mail in mails:
         await _store_incoming_email(
             channel_setting,
             provider="microsoft365",
-            candidates=[
-                mail.conversation_id or "",
-                mail.in_reply_to or "",
-                *reversed(mail.references),
-            ],
+            candidates=[mail.conversation_id or "", mail.in_reply_to or "", *reversed(mail.references)],
             external_id=mail.external_id,
             in_reply_to=mail.in_reply_to,
             sender=mail.sender,
@@ -478,9 +540,7 @@ async def _sync_microsoft365_inbox(channel_setting: CommunicationChannelSetting)
             received_at=mail.received_at,
         )
     async with SessionLocal.begin() as session:
-        stored = await session.get(
-            CommunicationChannelSetting, channel_setting.id, with_for_update=True
-        )
+        stored = await session.get(CommunicationChannelSetting, channel_setting.id, with_for_update=True)
         if stored:
             stored.sync_cursor = cursor
             stored.status = "connected"
@@ -488,6 +548,11 @@ async def _sync_microsoft365_inbox(channel_setting: CommunicationChannelSetting)
 
 
 async def sync_internal_email_inboxes() -> None:
+    try:
+        await _sync_platform_email_inbox()
+    except Exception:
+        logger.exception("Platform reply inbox sync failed", extra={"event": "platform_email_inbox_sync_failed"})
+
     async with SessionLocal() as session:
         settings_rows = (
             await session.execute(
@@ -519,9 +584,7 @@ async def sync_internal_email_inboxes() -> None:
                 },
             )
             async with SessionLocal.begin() as session:
-                stored = await session.get(
-                    CommunicationChannelSetting, channel_setting.id, with_for_update=True
-                )
+                stored = await session.get(CommunicationChannelSetting, channel_setting.id, with_for_update=True)
                 if stored:
                     stored.status = "error"
                     stored.last_error = str(exc)[:2000]
@@ -564,11 +627,7 @@ async def sync_bank_connections() -> None:
 
 
 async def run_job(job: ScheduledJob) -> None:
-    handlers = {
-        "send_collection": send_collection,
-        "send_reminders": send_reminders,
-        "send_message": send_message,
-    }
+    handlers = {"send_collection": send_collection, "send_reminders": send_reminders, "send_message": send_message}
     handler = handlers.get(job.job_type)
     if handler is None:
         raise ValueError(f"Unknown job type: {job.job_type}")
