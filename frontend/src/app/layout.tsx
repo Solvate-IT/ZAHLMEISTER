@@ -1,10 +1,11 @@
 import type {Metadata, Viewport} from "next";
 import "./globals.css";
+import "./portal.css";
 import {I18nProvider} from "@/lib/i18n";
 import {NativeBridge} from "@/components/NativeBridge";
 
 export const metadata: Metadata = {
-  title: "Zahlmeister",
+  title: "Zahlmeister – Ihr Geldeintreiber",
   description: "Zahlungen einfach einsammeln und nachverfolgen.",
   manifest: "/manifest.webmanifest",
   icons: {
