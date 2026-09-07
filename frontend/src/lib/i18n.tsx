@@ -3,6 +3,7 @@
 import {createContext, useCallback, useContext, useEffect, useMemo, useState} from "react";
 import de from "@/locales/de.json";
 import en from "@/locales/en.json";
+import {adminMessages} from "@/locales/admin";
 
 type Messages = Record<string, string>;
 type Params = Record<string, string | number>;
@@ -62,13 +63,14 @@ export function I18nProvider({children}: {children: React.ReactNode}) {
   }, []);
 
   const t = useCallback((key: string, params: Params = {}) => {
-    const fallback = (de as Messages)[key] ?? (en as Messages)[key] ?? key;
+    const adminForLocale = adminMessages[locale] ?? adminMessages.en;
+    const fallback = adminForLocale[key] ?? adminMessages.en[key] ?? (de as Messages)[key] ?? (en as Messages)[key] ?? key;
     let value = messages[key] ?? fallback;
     for (const [name, replacement] of Object.entries(params)) {
       value = value.replaceAll(`{${name}}`, String(replacement));
     }
     return value;
-  }, [messages]);
+  }, [messages, locale]);
 
   const value = useMemo(() => ({locale, setLocale, t}), [locale, setLocale, t]);
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
