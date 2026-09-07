@@ -19,6 +19,13 @@ class BankSyncStartRead(BaseModel):
     authorization_url: str
 
 
+class PontoConfigurationRead(BaseModel):
+    environment: str
+    configured: bool
+    redirect_uri: str
+    missing: list[str]
+
+
 class BankSyncAccountRead(BaseModel):
     id: UUID
     external_id: str
