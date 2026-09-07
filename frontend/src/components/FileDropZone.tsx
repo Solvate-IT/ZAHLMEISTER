@@ -1,6 +1,7 @@
 "use client";
 
 import {useRef,useState} from "react";
+import styles from "./FileDropZone.module.css";
 
 type CaptureMode="user"|"environment";
 
@@ -14,15 +15,15 @@ export function FileDropZone({accept,disabled=false,file,label,hint,selectLabel,
   return <div className="field">
     <label>{label}</label>
     <div
-      className={`file-drop-zone${dragging?" dragging":""}${disabled?" disabled":""}`}
+      className={`${styles.zone}${dragging?` ${styles.dragging}`:""}${disabled?` ${styles.disabled}`:""}`}
       role="button"
       tabIndex={disabled?-1:0}
       aria-disabled={disabled}
       onClick={choose}
       onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();choose()}}}
       onDragEnter={event=>{event.preventDefault();if(!disabled)setDragging(true)}}
-      onDragOver={event=>{event.preventDefault();if(!disabled){event.dataTransfer.dropEffect="copy";setDragging(true)}}}
-      onDragLeave={event=>{event.preventDefault();if(event.currentTarget===event.target)setDragging(false)}}
+      onDragOver={event=>{event.preventDefault();if(!disabled){event.dataTransfer.dropEffect="copy";setDragging(true)}}
+      onDragLeave={event=>{event.preventDefault();setDragging(false)}}
       onDrop={event=>{event.preventDefault();setDragging(false);picked(event.dataTransfer.files?.[0])}}
     >
       <input ref={inputRef} className="hidden" type="file" accept={accept} capture={capture} disabled={disabled} onChange={event=>{picked(event.target.files?.[0]);event.currentTarget.value=""}}/>
