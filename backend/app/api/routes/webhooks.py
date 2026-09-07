@@ -17,6 +17,7 @@ from app.models.entities import (
 )
 from app.services.channel_strategy import set_channel_knowledge
 from app.services.communications import normalize_phone
+from app.services.message_dispatch import queue_failed_channel_fallback
 from app.services.mollie import mollie_provider
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -196,6 +197,19 @@ def _permanent_whatsapp_failure(item: dict[str, Any]) -> bool:
     return any(marker in normalized for marker in _PERMANENT_WHATSAPP_FAILURE_MARKERS)
 
 
+def _advanced_delivery_status(current: str, new_status: str) -> str:
+    """Advance provider status without allowing a late failure to undo delivery evidence."""
+    if new_status == "read":
+        return "read"
+    if new_status == "delivered":
+        return "read" if current == "read" else "delivered"
+    if new_status == "failed":
+        return current if current in {"delivered", "read"} else "failed"
+    if new_status == "sent":
+        return "sent" if current in {"queued", "sent", "failed"} else current
+    return current
+
+
 async def _connection(webhook_key: str) -> CommunicationConnection:
     async with SessionLocal() as session:
         connection = await session.scalar(
@@ -350,9 +364,8 @@ async def _update_delivery(
         if message is None:
             return
 
-        rank = {"queued": 0, "sent": 1, "delivered": 2, "failed": 3, "read": 4}
-        if rank.get(new_status, 1) >= rank.get(message.status, 0):
-            message.status = new_status
+        previous_status = message.status
+        message.status = _advanced_delivery_status(previous_status, new_status)
         message.metadata_json = json.dumps(raw, ensure_ascii=False)[:20000]
 
         if message.channel != "whatsapp":
@@ -367,7 +380,11 @@ async def _update_delivery(
                 "whatsapp",
                 availability="available",
             )
-        elif new_status == "failed" and _permanent_whatsapp_failure(raw):
+        elif (
+            new_status == "failed"
+            and previous_status not in {"delivered", "read"}
+            and _permanent_whatsapp_failure(raw)
+        ):
             await set_channel_knowledge(
                 session,
                 cp.participant_id,
@@ -375,6 +392,7 @@ async def _update_delivery(
                 availability="unavailable",
                 failure_reason="Provider reports that the WhatsApp destination is unavailable",
             )
+            await queue_failed_channel_fallback(session, failed_message=message)
 
 
 @router.post("/infobip/{webhook_key}", status_code=204)
