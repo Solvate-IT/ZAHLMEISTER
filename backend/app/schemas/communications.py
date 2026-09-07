@@ -180,10 +180,9 @@ class ChannelFeedbackRequest(BaseModel):
 
 
 class DispatchRequest(BaseModel):
-    kind: Literal["initial", "reminder", "manual"] = "initial"
+    kind: Literal["initial", "reminder"] = "initial"
     external_channels: list[Channel] = Field(default_factory=list)
     collection_participant_ids: list[UUID] | None = Field(default=None, max_length=1000)
-    channel_override: Channel | None = None
 
 
 class DispatchExternalItem(BaseModel):
