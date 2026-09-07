@@ -5,6 +5,7 @@ export interface AccountUser {
 export interface AuthResponse { token: string; user: AccountUser; }
 export interface ParticipantListSummary { id: string; name: string; participant_count: number; }
 export type CommunicationChannel = "email"|"whatsapp"|"sms"|"telegram";
+export type CollectionChannel = "auto"|CommunicationChannel;
 export type ChannelAvailability = "unknown"|"available"|"unavailable";
 export interface ParticipantChannel { channel: CommunicationChannel; enabled: boolean; availability: ChannelAvailability; learned: boolean; }
 export interface Participant { id: string; name: string; email?: string | null; phone?: string | null; channel_addresses: Record<string,string>; channels?: ParticipantChannel[]; }
@@ -13,7 +14,7 @@ export interface ReminderRule { type: "after_send"|"before_due"|"on_due"|"after_
 export interface CollectionSummary {
   id: string; name: string; participant_list_id: string; amount: string | number; currency: string;
   send_at?: string | null; due_at?: string | null; status: string; participant_count: number;
-  paid_count: number; paid_amount: string | number; communication_channel: string; communication_mode: string;
+  paid_count: number; paid_amount: string | number; communication_channel: CollectionChannel; communication_mode: string;
   channel_order: CommunicationChannel[];
   message_template_id?: string | null; message_body_override?: string | null; reminder_rules: ReminderRule[];
   include_payment_link: boolean; include_payment_qr: boolean;
@@ -54,4 +55,4 @@ export interface ApiSettings { enabled: boolean; available_scopes: string[]; }
 export interface ApiCredential { id: string; name: string; token_prefix: string; scopes: string[]; created_at: string; last_used_at?: string|null; expires_at?: string|null; revoked_at?: string|null; }
 export interface ApiCredentialCreated extends ApiCredential { token: string; }
 export interface PlatformAdminSummary { customers:number; free_customers:number; pro_customers:number; active_users:number; }
-export interface PlatformCustomer { organization_id:string; organization_name:string; created_at:string; locale:string; currency:string; api_enabled:boolean; plan:"free"|"pro"; billing_provider?:string|null; subscription_status?:string|null; subscription_expires_at?:string|null; user_count:number; active_user_count:number; primary_email?:string|null; last_login_at?:string|null; participant_lists:number; participants:number; collections:number; }
+export interface PlatformCustomer { organization_id:string; organization_name:string; created_at:string; locale:string; currency:string; api_enabled:boolean; plan:"free"|"pro"; billing_provider?:string|null; subscription_status:string|null; subscription_expires_at?:string|null; user_count:number; active_user_count:number; primary_email?:string|null; last_login_at?:string|null; participant_lists:number; participants:number; collections:number; }
