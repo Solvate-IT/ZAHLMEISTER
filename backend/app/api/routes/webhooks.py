@@ -15,6 +15,7 @@ from app.models.entities import (
     OnlinePaymentConnection,
     Payment,
 )
+from app.services.channel_strategy import set_channel_knowledge
 from app.services.communications import normalize_phone
 from app.services.mollie import mollie_provider
 
@@ -23,15 +24,19 @@ router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 _CHANNEL_MAP = {
     "SMS": "sms",
     "WHATSAPP": "whatsapp",
-    "INSTAGRAM": "instagram",
-    "INSTAGRAM_DIRECT": "instagram",
-    "INSTAGRAMDIRECT": "instagram",
-    "MESSENGER": "messenger",
-    "FACEBOOK": "messenger",
-    "FACEBOOK_MESSENGER": "messenger",
     "TELEGRAM": "telegram",
     "EMAIL": "email",
 }
+
+_PERMANENT_WHATSAPP_FAILURE_MARKERS = (
+    "NOT_REGISTERED",
+    "NOT_WHATSAPP_USER",
+    "NOT A WHATSAPP USER",
+    "NO_WHATSAPP_ACCOUNT",
+    "RECIPIENT_NOT_FOUND",
+    "DESTINATION_NOT_FOUND",
+    "INVALID_DESTINATION",
+)
 
 
 def _first(data: Any, *paths: tuple[str, ...] | str) -> Any:
@@ -56,10 +61,6 @@ def _normalize_channel(item: dict[str, Any]) -> str | None:
         return _CHANNEL_MAP[raw]
     if "WHATSAPP" in raw:
         return "whatsapp"
-    if "INSTAGRAM" in raw:
-        return "instagram"
-    if "MESSENGER" in raw or "FACEBOOK" in raw:
-        return "messenger"
     if "TELEGRAM" in raw:
         return "telegram"
     if raw == "SMS":
@@ -187,9 +188,12 @@ def _is_inbound(item: dict[str, Any]) -> bool:
     event = str(_first(item, "eventType", "event", "direction") or "").upper()
     if event in {"INBOUND_MESSAGE", "INBOUND", "MO"}:
         return True
-    # Native channel inbound formats (for example WhatsApp MO) contain a message body
-    # and from/to but no delivery status.
     return bool(_sender(item) and _text(item) and not _status_value(item))
+
+
+def _permanent_whatsapp_failure(item: dict[str, Any]) -> bool:
+    normalized = json.dumps(item, ensure_ascii=True, sort_keys=True).upper()
+    return any(marker in normalized for marker in _PERMANENT_WHATSAPP_FAILURE_MARKERS)
 
 
 async def _connection(webhook_key: str) -> CommunicationConnection:
@@ -308,6 +312,15 @@ async def _store_incoming(
                 metadata_json=json.dumps(raw, ensure_ascii=False)[:20000],
             )
         )
+        if outgoing.channel == "whatsapp":
+            cp = await session.get(CollectionParticipant, locked_outgoing.collection_participant_id)
+            if cp is not None:
+                await set_channel_knowledge(
+                    session,
+                    cp.participant_id,
+                    "whatsapp",
+                    availability="available",
+                )
 
 
 async def _update_delivery(
@@ -321,9 +334,7 @@ async def _update_delivery(
     async with SessionLocal.begin() as session:
         message = None
         if callback_id:
-            message = await session.get(
-                CommunicationMessage, callback_id, with_for_update=True
-            )
+            message = await session.get(CommunicationMessage, callback_id, with_for_update=True)
             if message is not None and message.organization_id != organization_id:
                 message = None
         if message is None and external_id:
@@ -336,12 +347,34 @@ async def _update_delivery(
                 )
                 .with_for_update()
             )
-        if message is not None:
-            # Never downgrade a stronger final state.
-            rank = {"queued": 0, "sent": 1, "delivered": 2, "failed": 3, "read": 4}
-            if rank.get(new_status, 1) >= rank.get(message.status, 0):
-                message.status = new_status
-            message.metadata_json = json.dumps(raw, ensure_ascii=False)[:20000]
+        if message is None:
+            return
+
+        rank = {"queued": 0, "sent": 1, "delivered": 2, "failed": 3, "read": 4}
+        if rank.get(new_status, 1) >= rank.get(message.status, 0):
+            message.status = new_status
+        message.metadata_json = json.dumps(raw, ensure_ascii=False)[:20000]
+
+        if message.channel != "whatsapp":
+            return
+        cp = await session.get(CollectionParticipant, message.collection_participant_id)
+        if cp is None:
+            return
+        if new_status in {"delivered", "read"}:
+            await set_channel_knowledge(
+                session,
+                cp.participant_id,
+                "whatsapp",
+                availability="available",
+            )
+        elif new_status == "failed" and _permanent_whatsapp_failure(raw):
+            await set_channel_knowledge(
+                session,
+                cp.participant_id,
+                "whatsapp",
+                availability="unavailable",
+                failure_reason="Provider reports that the WhatsApp destination is unavailable",
+            )
 
 
 @router.post("/infobip/{webhook_key}", status_code=204)
@@ -391,6 +424,7 @@ async def infobip_webhook(webhook_key: str, request: Request) -> Response:
             )
 
     return Response(status_code=204)
+
 
 @router.post("/mollie/{webhook_key}", status_code=200)
 async def mollie_webhook(webhook_key: str, request: Request) -> Response:
@@ -476,4 +510,3 @@ async def mollie_webhook(webhook_key: str, request: Request) -> Response:
                 cp.paid_at = booked_at
 
     return Response(status_code=200)
-
