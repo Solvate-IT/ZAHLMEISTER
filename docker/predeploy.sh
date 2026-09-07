@@ -172,8 +172,9 @@ APP_RUNTIME_GID_VALUE="${APP_RUNTIME_GID_VALUE:-10001}"
 
 echo
 echo "[8/11] Checking final runtime images..."
-IMAGE_TAG="$IMAGE_TAG" docker compose --env-file "$ENV_FILE" -f "$PROD_FILE" run --rm --no-deps \
-  -e EXPECTED_RUNTIME_UID="$APP_RUNTIME_UID_VALUE" backend \
+docker run --rm \
+  -e EXPECTED_RUNTIME_UID="$APP_RUNTIME_UID_VALUE" \
+  "$BACKEND_RUNTIME_IMAGE" \
   sh -c '
     command -v tesseract >/dev/null &&
     command -v pdftoppm >/dev/null &&
@@ -189,8 +190,7 @@ IMAGE_TAG="$IMAGE_TAG" docker compose --env-file "$ENV_FILE" -f "$PROD_FILE" run
     ! command -v ruff >/dev/null
   '
 
-IMAGE_TAG="$IMAGE_TAG" docker compose --env-file "$ENV_FILE" -f "$PROD_FILE" run --rm --no-deps \
-  --entrypoint sh frontend -c '
+docker run --rm --entrypoint sh "$FRONTEND_RUNTIME_IMAGE" -c '
     nginx -t &&
     test -f /usr/share/nginx/html/index.html &&
     test -f /usr/share/nginx/html/app/index.html &&
@@ -204,6 +204,12 @@ IMAGE_TAG="$IMAGE_TAG" docker compose --env-file "$ENV_FILE" -f "$PROD_FILE" run
     test -f /usr/share/nginx/html/brand/logo.png &&
     test -d /usr/share/nginx/html/_next/static
   '
+
+docker run --rm --network "$NETWORK" \
+  -e ENVIRONMENT=test \
+  -e DATABASE_URL="$TEST_DATABASE_URL" \
+  "$BACKEND_RUNTIME_IMAGE" \
+  sh -c 'alembic current --check-heads; alembic upgrade head'
 
 echo
 echo "[9/11] Starting production runtime smoke test..."
