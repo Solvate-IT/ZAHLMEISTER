@@ -17,7 +17,41 @@ Preferred setup:
 
 An API key remains available as a fallback. Credentials/tokens are encrypted with `APP_SECRET` before they are stored.
 
-For internal email, users can alternatively configure their own SMTP/IMAP account. Port 465 is treated as SMTP-over-SSL, other SMTP ports use STARTTLS; port 993 uses IMAP-over-SSL.
+For internal email, users can alternatively use Zahlmeister's platform SMTP, configure their own SMTP/IMAP account, or connect Microsoft 365. Custom mail accounts support SMTP SSL/STARTTLS and optional IMAP SSL/STARTTLS for reply import. Microsoft 365 does not use a mailbox password in Zahlmeister.
+
+## Microsoft 365 (internal email)
+
+Microsoft 365 mailboxes use Microsoft Graph with delegated OAuth 2.0 authorization. Zahlmeister stores encrypted OAuth tokens, never the customer's Microsoft password. MFA and the customer's normal Microsoft sign-in policies remain in the Microsoft login flow.
+
+Create one multi-tenant Microsoft Entra application for Zahlmeister and configure it as a web application. Use organizational/work-school accounts; `MICROSOFT365_TENANT=organizations` is the default.
+
+Register these redirect URIs as applicable:
+
+- Development: `http://localhost:8003/api/v1/communication-settings/microsoft365/oauth/callback`
+- Production: `https://<APP_HOST>/api/v1/communication-settings/microsoft365/oauth/callback`
+
+Configure these delegated Microsoft Graph permissions/scopes:
+
+- `User.Read`
+- `Mail.ReadWrite`
+- `Mail.Send`
+- `offline_access`
+- `openid`
+- `profile`
+
+Development configuration in `docker/.env`:
+
+- `MICROSOFT365_CLIENT_ID=<application/client id>`
+- `MICROSOFT365_CLIENT_SECRET=<development client secret>`
+- `MICROSOFT365_TENANT=organizations`
+
+Production must keep the client secret in an untracked secret file and set `MICROSOFT365_CLIENT_SECRET_FILE` to that mounted path. Never commit the client secret.
+
+A customer then selects **Microsoft 365** under the internal email settings and signs in to their own Microsoft 365 account. The connection is tenant/customer-specific even though the Zahlmeister Entra application is shared. The selected mailbox can be tested, reconnected, or disconnected from Zahlmeister.
+
+Outgoing messages are created and sent through Microsoft Graph. The worker polls the connected Inbox for new messages and stores incoming replies against the corresponding Zahlmeister communication using the Microsoft conversation/message identifiers. No SMTP AUTH or IMAP Basic Authentication is used for Microsoft 365.
+
+The current Microsoft 365 integration targets the connected user's own mailbox. Shared mailbox selection is intentionally not enabled until its separate authorization/sender semantics are implemented and tested.
 
 ## Ponto Connect (optional automatic BankSync)
 
