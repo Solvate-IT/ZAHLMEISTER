@@ -84,22 +84,24 @@ async def queue_collection_messages(
     runtimes = await load_channel_runtimes(session, organization.id)
     order = await get_channel_order(session, organization.id)
 
-    existing_rows = (
+    # Only an outstanding queue item prevents another dispatch. Previously sent reminders
+    # must not block later reminder rounds for the same participant.
+    queued_rows = (
         await session.execute(
             select(CommunicationMessage.collection_participant_id).where(
                 CommunicationMessage.collection_participant_id.in_(cp_ids),
                 CommunicationMessage.kind == kind,
                 CommunicationMessage.direction == "outgoing",
-                CommunicationMessage.status.in_(["queued", "sent", "delivered", "read"]),
+                CommunicationMessage.status == "queued",
             )
         )
     ).scalars().all()
-    already_active = set(existing_rows)
+    already_queued = set(queued_rows)
 
     outcome = DispatchOutcome()
     now = datetime.now(UTC)
     for cp, participant in eligible_rows:
-        if cp.id in already_active:
+        if cp.id in already_queued:
             continue
         route = resolve_channel(
             participant,
