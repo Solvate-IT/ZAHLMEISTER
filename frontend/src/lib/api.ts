@@ -109,6 +109,7 @@ export const api = {
   communicationSettings:()=>request<T.ChannelSetting[]>("/communication-settings"),
   connectInfobip:(payload:Record<string,unknown>)=>request<T.CommunicationConnection>("/communication-settings/infobip/api-key",{method:"POST",body:JSON.stringify(payload)}),
   startInfobip:()=>request<{authorization_url:string}>("/communication-settings/infobip/oauth/start"),
+  startMicrosoft365:()=>request<{authorization_url:string}>("/communication-settings/microsoft365/oauth/start"),
   updateCommunicationConnection:(id:string,payload:Record<string,unknown>)=>request<T.CommunicationConnection>(`/communication-settings/connections/${id}`,{method:"PATCH",body:JSON.stringify(payload)}),
   disconnectCommunicationConnection:(id:string)=>request<void>(`/communication-settings/connections/${id}`,{method:"DELETE"}),
   testCommunicationConnection:(id:string)=>request<T.IntegrationTestResult>(`/communication-settings/connections/${id}/test`,{method:"POST"}),
