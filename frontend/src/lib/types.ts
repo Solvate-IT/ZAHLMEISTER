@@ -8,7 +8,7 @@ export type CommunicationChannel = "email"|"whatsapp"|"sms"|"telegram";
 export type CollectionChannel = "auto"|CommunicationChannel;
 export type ChannelAvailability = "unknown"|"available"|"unavailable";
 export interface ParticipantChannel { channel: CommunicationChannel; enabled: boolean; availability: ChannelAvailability; learned: boolean; }
-export interface Participant { id: string; name: string; email?: string | null; phone?: string | null; channel_addresses: Record<string,string>; channels?: ParticipantChannel[]; }
+export interface Participant { id: string; name: string; email?: string | null; phone?: string | null; locale?: string | null; channel_addresses: Record<string,string>; channels?: ParticipantChannel[]; }
 export interface ParticipantListDetail extends ParticipantListSummary { participants: Participant[]; }
 export interface ReminderRule { type: "after_send"|"before_due"|"on_due"|"after_due"; days: number; }
 export interface CollectionSummary {
@@ -35,6 +35,7 @@ export interface PaymentSettings { account_name: string | null; iban: string | n
 export interface PublicPayment { collection_name: string; participant_name: string; amount: string | number; currency: string; status: string; paid_at?: string | null; account_name?: string | null; iban?: string | null; bic?: string | null; payment_reference: string; epc_qr_data?: string | null; online_payment_available: boolean; online_payment_provider?: string | null; }
 export interface OnlineCheckout { checkout_url: string; provider?: string; }
 export interface MessageTemplate { id: string; name: string; translations: Record<string,string>; is_default: boolean; }
+export interface TemplateTranslationStatus { configured: boolean; provider: string; supported_languages: string[]; }
 export interface BankImportSummary { id: string; filename: string; format: string; created_at: string; transaction_count: number; auto_matched_count: number; review_count: number; unmatched_count: number; duplicate_count: number; transactions?: BankTransaction[]; }
 export interface BankMatchSuggestion { collection_participant_id: string; collection_name: string; participant_name: string; amount: string|number; currency: string; payment_reference: string; }
 export interface BankTransaction { id: string; booked_at: string; amount: string|number; currency: string; counterparty_name?: string|null; reference?: string|null; status: string; match_confidence?: string|number|null; match_reason?: string|null; candidate_collection_participant_id?: string|null; candidate_collection_name?: string|null; candidate_participant_name?: string|null; suggestions: BankMatchSuggestion[]; }
