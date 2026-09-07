@@ -9,6 +9,8 @@ from app.api.deps import get_organization, get_session
 from app.db.session import SessionLocal
 from app.models.entities import Organization, Participant, ParticipantList
 from app.schemas.workflow import (
+    ParticipantChannelRead,
+    ParticipantChannelUpdate,
     ParticipantCreate,
     ParticipantListCreate,
     ParticipantListDetail,
@@ -17,25 +19,37 @@ from app.schemas.workflow import (
     ParticipantRead,
     ParticipantUpdate,
 )
+from app.services.channel_strategy import (
+    SUPPORTED_CHANNELS,
+    channel_addresses,
+    effective_availability,
+    load_participant_channel_settings,
+    reset_channel_knowledge,
+    set_channel_knowledge,
+)
 from app.services.naming import unique_participant_list_name
 from app.services.plans import FREE_PARTICIPANTS_PER_LIST, participant_capacity_available
 
 router = APIRouter(prefix="/participant-lists", tags=["participant-lists"])
 
 
-def _participant_read(participant: Participant) -> ParticipantRead:
-    try:
-        addresses = json.loads(participant.channel_addresses_json or "{}")
-    except (TypeError, ValueError):
-        addresses = {}
-    if not isinstance(addresses, dict):
-        addresses = {}
+def _participant_read(participant: Participant, overrides: dict | None = None) -> ParticipantRead:
+    overrides = overrides or {}
     return ParticipantRead(
         id=participant.id,
         name=participant.name,
         email=participant.email,
         phone=participant.phone,
-        channel_addresses={str(k): str(v) for k, v in addresses.items() if v},
+        channel_addresses=channel_addresses(participant),
+        channels=[
+            ParticipantChannelRead(
+                channel=channel,
+                enabled=bool(overrides.get(channel).enabled) if overrides.get(channel) else True,
+                availability=effective_availability(participant, channel, overrides.get(channel)),
+                learned=overrides.get(channel) is not None,
+            )
+            for channel in SUPPORTED_CHANNELS
+        ],
     )
 
 
@@ -87,6 +101,21 @@ async def _owned_list(
     return item
 
 
+async def _owned_participant(
+    session: AsyncSession,
+    organization: Organization,
+    list_id: UUID,
+    participant_id: UUID,
+    *,
+    for_update: bool = False,
+) -> tuple[ParticipantList, Participant]:
+    item = await _owned_list(session, organization, list_id, for_update=for_update)
+    participant = await session.get(Participant, participant_id, with_for_update=for_update)
+    if participant is None or participant.list_id != item.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Participant not found")
+    return item, participant
+
+
 @router.get("", response_model=list[ParticipantListRead])
 async def list_participant_lists(
     organization: Organization = Depends(get_organization),
@@ -136,11 +165,17 @@ async def get_participant_list(
             .order_by(Participant.name, Participant.created_at)
         )
     ).scalars().all()
+    overrides = await load_participant_channel_settings(
+        session, [participant.id for participant in participants]
+    )
     return ParticipantListDetail(
         id=item.id,
         name=item.name,
         participant_count=len(participants),
-        participants=[_participant_read(participant) for participant in participants],
+        participants=[
+            _participant_read(participant, overrides.get(participant.id))
+            for participant in participants
+        ],
     )
 
 
@@ -212,12 +247,9 @@ async def update_participant(
     async with SessionLocal.begin() as session:
         stored_org = await session.get(Organization, organization.id)
         assert stored_org is not None
-        item = await _owned_list(session, stored_org, list_id, for_update=True)
-        participant = await session.get(Participant, participant_id, with_for_update=True)
-        if participant is None or participant.list_id != item.id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Participant not found"
-            )
+        item, participant = await _owned_participant(
+            session, stored_org, list_id, participant_id, for_update=True
+        )
         duplicate = await _duplicate_participant(
             session, item.id, payload, exclude_id=participant.id
         )
@@ -226,15 +258,61 @@ async def update_participant(
                 status_code=status.HTTP_409_CONFLICT, detail="Participant already exists"
             )
         email, phone, _ = _participant_values(payload)
+        old_email = participant.email
+        old_phone = participant.phone
+        old_addresses = channel_addresses(participant)
         participant.name = payload.name
         participant.email = email
         participant.phone = phone
         participant.channel_addresses_json = json.dumps(
             payload.channel_addresses or {}, ensure_ascii=False
         )
+        if (old_email or "").casefold() != (email or "").casefold():
+            await reset_channel_knowledge(session, participant.id, "email")
+        if old_phone != phone:
+            await reset_channel_knowledge(session, participant.id, "whatsapp")
+            await reset_channel_knowledge(session, participant.id, "sms")
+        if old_addresses.get("telegram") != (payload.channel_addresses or {}).get("telegram"):
+            await reset_channel_knowledge(session, participant.id, "telegram")
         await session.flush()
         await session.refresh(participant)
-        return _participant_read(participant)
+        overrides = await load_participant_channel_settings(session, [participant.id])
+        return _participant_read(participant, overrides.get(participant.id))
+
+
+@router.patch(
+    "/{list_id}/participants/{participant_id}/channels/{channel}",
+    response_model=ParticipantRead,
+)
+async def update_participant_channel(
+    list_id: UUID,
+    participant_id: UUID,
+    channel: str,
+    payload: ParticipantChannelUpdate,
+    organization: Organization = Depends(get_organization),
+) -> ParticipantRead:
+    if channel not in SUPPORTED_CHANNELS:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown channel")
+    async with SessionLocal.begin() as session:
+        stored_org = await session.get(Organization, organization.id)
+        assert stored_org is not None
+        _item, participant = await _owned_participant(
+            session, stored_org, list_id, participant_id, for_update=True
+        )
+        try:
+            await set_channel_knowledge(
+                session,
+                participant.id,
+                channel,
+                enabled=payload.enabled,
+                availability=payload.availability,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+        overrides = await load_participant_channel_settings(session, [participant.id])
+        return _participant_read(participant, overrides.get(participant.id))
 
 
 @router.delete("/{list_id}/participants/{participant_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -246,10 +324,7 @@ async def delete_participant(
     async with SessionLocal.begin() as session:
         stored_org = await session.get(Organization, organization.id)
         assert stored_org is not None
-        item = await _owned_list(session, stored_org, list_id)
-        participant = await session.get(Participant, participant_id)
-        if participant is None or participant.list_id != item.id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Participant not found"
-            )
+        _item, participant = await _owned_participant(
+            session, stored_org, list_id, participant_id
+        )
         await session.delete(participant)
