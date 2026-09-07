@@ -111,6 +111,7 @@ class CommunicationRead(BaseModel):
     sent_at: datetime | None
     received_at: datetime | None
     created_at: datetime
+    error: str | None = None
 
 
 class ExternalDraftRequest(BaseModel):
