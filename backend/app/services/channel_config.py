@@ -41,6 +41,8 @@ def internal_channel_configured(
         ):
             return True
         return bool(settings.smtp_host.strip() and settings.mail_from_address.strip())
+    if provider == "microsoft365":
+        return channel == "email" and connection_active
     if provider == "infobip":
         # Every outbound Infobip channel needs a configured sender/resource.
         # Telegram is reply-only in Infobip Conversations; a configured resource still
