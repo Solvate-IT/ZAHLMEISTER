@@ -64,6 +64,7 @@ class CollectionCreate(BaseModel):
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     send_at: datetime | None = None
     due_at: datetime | None = None
+    save_as_draft: bool = False
     communication_channel: str = Field(
         default="email", pattern="^(email|sms|whatsapp|telegram|instagram|messenger)$"
     )
