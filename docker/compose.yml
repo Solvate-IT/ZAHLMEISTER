@@ -126,6 +126,8 @@ services:
     build:
       context: ..
       dockerfile: docker/frontend.Dockerfile.dev
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:${BACKEND_PORT}/api/v1
     command: ["sh", "-c", "if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi && npm run dev"]
     ports:
       - "${FRONTEND_PORT}:3000"
