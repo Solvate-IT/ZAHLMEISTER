@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.services.participant_preferences import normalize_participant_locale
+
 
 class ParticipantListCreate(BaseModel):
     name: str | None = Field(default=None, max_length=200)
@@ -18,6 +20,7 @@ class ParticipantCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     email: str | None = Field(default=None, max_length=320)
     phone: str | None = Field(default=None, max_length=50)
+    locale: str | None = Field(default=None, max_length=10)
     channel_addresses: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("name")
@@ -27,6 +30,11 @@ class ParticipantCreate(BaseModel):
         if not value:
             raise ValueError("Participant name must not be empty")
         return value
+
+    @field_validator("locale")
+    @classmethod
+    def clean_locale(cls, value: str | None) -> str | None:
+        return normalize_participant_locale(value)
 
     @field_validator("channel_addresses")
     @classmethod
@@ -58,6 +66,7 @@ class ParticipantRead(BaseModel):
     name: str
     email: str | None
     phone: str | None
+    locale: str | None = None
     channel_addresses: dict[str, str] = Field(default_factory=dict)
     channels: list[ParticipantChannelRead] = Field(default_factory=list)
 
