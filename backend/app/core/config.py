@@ -17,6 +17,7 @@ _SECRET_FIELDS = {
     "ponto_connect_client_secret": "ponto_connect_client_secret_file",
     "ponto_connect_key_password": "ponto_connect_key_password_file",
     "mollie_oauth_client_secret": "mollie_oauth_client_secret_file",
+    "google_translate_api_key": "google_translate_api_key_file",
     "monitoring_token": "monitoring_token_file",
     "platform_admin_bootstrap_password": "platform_admin_bootstrap_password_file",
 }
@@ -111,6 +112,10 @@ class Settings(BaseSettings):
     mollie_api_url: str = "https://api.mollie.com/v2"
     mollie_oauth_scopes: str = "organizations.read profiles.read payments.read payments.write"
     mollie_test_mode: bool = False
+
+    google_translate_api_key: str = ""
+    google_translate_api_key_file: str = ""
+    google_translate_api_url: str = "https://translation.googleapis.com/language/translate/v2"
 
     @model_validator(mode="after")
     def load_file_secrets(self) -> "Settings":
@@ -211,6 +216,15 @@ class Settings(BaseSettings):
             errors.append("PONTO_CONNECT_ENVIRONMENT must be live in production")
         if ponto_configured and "sandbox-authorization.myponto.com" in self.ponto_authorization_url:
             errors.append("Ponto sandbox authorization URL must not be used in production")
+
+        if self.google_translate_api_key.strip():
+            translation_url = urlparse(self.google_translate_api_url.strip())
+            if (
+                translation_url.scheme != "https"
+                or translation_url.hostname != "translation.googleapis.com"
+                or translation_url.path != "/language/translate/v2"
+            ):
+                errors.append("GOOGLE_TRANSLATE_API_URL must use the official Google Translation v2 endpoint")
 
         if self.mail_delivery_mode != "smtp":
             errors.append("MAIL_DELIVERY_MODE must be smtp in production")
