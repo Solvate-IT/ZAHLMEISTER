@@ -64,7 +64,6 @@ class CollectionCreate(BaseModel):
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     send_at: datetime | None = None
     due_at: datetime | None = None
-    save_as_draft: bool = False
     communication_channel: str = Field(
         default="email", pattern="^(email|sms|whatsapp|telegram|instagram|messenger)$"
     )
@@ -104,7 +103,6 @@ class CollectionParticipantRead(BaseModel):
     last_reminder_at: datetime | None = None
     reminder_count: int = 0
     delivery_status: str | None = None
-    delivery_error: str | None = None
     communication_count: int = 0
 
 
