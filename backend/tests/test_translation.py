@@ -64,7 +64,7 @@ async def test_translate_missing_never_overwrites_existing_languages(monkeypatch
         source_language: str | None = None,
     ) -> str:
         calls.append(target_language)
-        return f"Translated {target_language} {{name}}"
+        return f"Translated {target_language} {{{{name}}}}"
 
     monkeypatch.setattr(translation, "SUPPORTED_LANGUAGES", ("de", "en", "fr"))
     monkeypatch.setattr(translation, "translate_text", fake_translate_text)
@@ -79,7 +79,7 @@ async def test_translate_missing_never_overwrites_existing_languages(monkeypatch
     assert calls == ["en"]
     assert result["de"] == source
     assert result["fr"] == "Manuel {{name}}"
-    assert result["en"] == "Translated en {name}"
+    assert result["en"] == "Translated en {{name}}"
 
 
 @pytest.mark.asyncio
