@@ -21,11 +21,19 @@ def _index_names(inspector, table: str) -> set[str]:
 
 
 def _unique_names(inspector, table: str) -> set[str]:
-    return {constraint["name"] for constraint in inspector.get_unique_constraints(table) if constraint.get("name")}
+    return {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints(table)
+        if constraint.get("name")
+    }
 
 
 def _check_names(inspector, table: str) -> set[str]:
-    return {constraint["name"] for constraint in inspector.get_check_constraints(table) if constraint.get("name")}
+    return {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints(table)
+        if constraint.get("name")
+    }
 
 
 def upgrade() -> None:
@@ -41,10 +49,18 @@ def upgrade() -> None:
                 "channel_order_json",
                 sa.Text(),
                 nullable=False,
-                server_default=sa.text("'["email","whatsapp","sms","telegram"]'"),
+                server_default=sa.text("'[]'"),
             ),
-            sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
+            sa.ForeignKeyConstraint(
+                ["organization_id"], ["organizations.id"], ondelete="CASCADE"
+            ),
             sa.PrimaryKeyConstraint("organization_id"),
+        )
+        op.execute(
+            sa.text(
+                "UPDATE communication_preferences "
+                "SET channel_order_json = :value WHERE channel_order_json = '[]'"
+            ).bindparams(value='["email","whatsapp","sms","telegram"]')
         )
 
     inspector = sa.inspect(bind)
@@ -54,13 +70,28 @@ def upgrade() -> None:
             "participant_channel_settings",
             sa.Column("participant_id", postgresql.UUID(as_uuid=True), nullable=False),
             sa.Column("channel", sa.String(length=30), nullable=False),
-            sa.Column("availability", sa.String(length=20), nullable=False, server_default="unknown"),
+            sa.Column(
+                "availability",
+                sa.String(length=20),
+                nullable=False,
+                server_default="unknown",
+            ),
             sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
             sa.Column("last_failure_reason", sa.Text(), nullable=True),
             sa.Column("last_checked_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
-            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-            sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+            sa.Column(
+                "created_at",
+                sa.DateTime(timezone=True),
+                server_default=sa.text("now()"),
+                nullable=False,
+            ),
+            sa.Column(
+                "updated_at",
+                sa.DateTime(timezone=True),
+                server_default=sa.text("now()"),
+                nullable=False,
+            ),
             sa.CheckConstraint(
                 "channel IN ('email','sms','whatsapp','telegram')",
                 name="ck_participant_channel_settings_channel",
@@ -69,7 +100,9 @@ def upgrade() -> None:
                 "availability IN ('unknown','available','unavailable')",
                 name="ck_participant_channel_settings_availability",
             ),
-            sa.ForeignKeyConstraint(["participant_id"], ["participants.id"], ondelete="CASCADE"),
+            sa.ForeignKeyConstraint(
+                ["participant_id"], ["participants.id"], ondelete="CASCADE"
+            ),
             sa.PrimaryKeyConstraint("id"),
             sa.UniqueConstraint(
                 "participant_id",
