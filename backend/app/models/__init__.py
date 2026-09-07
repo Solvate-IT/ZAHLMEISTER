@@ -1,3 +1,7 @@
+from app.models.channel_strategy import (  # noqa: F401
+    CommunicationPreference,
+    ParticipantChannelSetting,
+)
 from app.models.entities import (  # noqa: F401
     AccountActionToken,
     AuthSession,
