@@ -42,7 +42,7 @@ class DispatchOutcome:
 
 def _eligible(cp: CollectionParticipant, kind: str) -> bool:
     if kind == "initial":
-        return cp.initial_sent_at is None
+        return cp.status == "open" and cp.initial_sent_at is None
     if kind == "reminder":
         return cp.status == "open" and cp.initial_sent_at is not None
     return False
@@ -168,6 +168,65 @@ async def queue_collection_messages(
         outcome.queued_internal += 1
 
     return outcome
+
+
+async def queue_failed_channel_fallback(
+    session: AsyncSession,
+    *,
+    failed_message: CommunicationMessage,
+) -> DispatchOutcome:
+    """Queue the next internal route after a confirmed permanent channel failure.
+
+    External fallbacks are deliberately not opened from a background webhook. Leaving the
+    participant eligible means the next interactive dispatch presents only that participant
+    in the manual assistant.
+    """
+    if failed_message.kind not in {"initial", "reminder"}:
+        return DispatchOutcome()
+
+    cp = await session.get(
+        CollectionParticipant,
+        failed_message.collection_participant_id,
+        with_for_update=True,
+    )
+    if cp is None or cp.status != "open":
+        return DispatchOutcome()
+
+    # Provider webhooks may be delivered more than once or out of order. If another
+    # attempt for the same logical message has already succeeded, never reopen dispatch.
+    later_success = await session.scalar(
+        select(CommunicationMessage.id)
+        .where(
+            CommunicationMessage.collection_participant_id == cp.id,
+            CommunicationMessage.kind == failed_message.kind,
+            CommunicationMessage.direction == "outgoing",
+            CommunicationMessage.id != failed_message.id,
+            CommunicationMessage.created_at >= failed_message.created_at,
+            CommunicationMessage.status.in_(["sent", "delivered", "read"]),
+        )
+        .limit(1)
+    )
+    if later_success is not None:
+        return DispatchOutcome()
+
+    if failed_message.kind == "initial":
+        # Internal sends mark initial_sent_at when the provider accepts the request. A
+        # confirmed permanent failure must reopen the participant for the next route.
+        cp.initial_sent_at = None
+
+    collection = await session.get(Collection, failed_message.collection_id)
+    organization = await session.get(Organization, failed_message.organization_id)
+    if collection is None or organization is None:
+        return DispatchOutcome()
+
+    return await queue_collection_messages(
+        session,
+        collection=collection,
+        organization=organization,
+        kind=failed_message.kind,
+        collection_participant_ids={cp.id},
+        include_external=False,
+    )
 
 
 async def all_routes_internal(
