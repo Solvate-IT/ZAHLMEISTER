@@ -13,6 +13,7 @@ from app.models.entities import (
     Organization,
     Participant,
 )
+from app.services.participant_preferences import get_participant_locale
 from app.services.payments import epc_qr_payload, public_payment_qr_url, public_payment_url
 from app.services.templates import (
     default_template_body,
@@ -21,6 +22,8 @@ from app.services.templates import (
     render_template,
     template_body_for_locale,
 )
+
+_LOCALE_UNSET = object()
 
 
 @dataclass(frozen=True)
@@ -72,17 +75,26 @@ async def render_collection_message(
     collection_participant: CollectionParticipant,
     participant: Participant,
     organization: Organization,
+    participant_locale: str | None | object = _LOCALE_UNSET,
 ) -> CanonicalMessage:
     """Render one canonical message independent of channel and provider."""
+
+    if participant_locale is _LOCALE_UNSET:
+        participant_locale = await get_participant_locale(session, participant.id)
+    requested_locale = (
+        participant_locale if isinstance(participant_locale, str) else None
+    ) or organization.locale
 
     template_body = collection.message_body_override
     if template_body is None and collection.message_template_id is not None:
         template = await session.get(MessageTemplate, collection.message_template_id)
         if template is not None:
             template_body = template_body_for_locale(
-                normalize_translations(template.translations_json), organization.locale
+                normalize_translations(template.translations_json),
+                requested_locale,
+                fallback_locale=organization.locale,
             )
-    body = template_body or default_template_body(organization.locale)
+    body = template_body or default_template_body(requested_locale)
 
     include_link, include_qr = _message_options(collection, organization)
     if not include_link:
