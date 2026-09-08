@@ -1,7 +1,7 @@
 "use client";
 
 import {readToken} from "@/lib/session";
-import type {PlatformAdminSummary,PlatformCustomer} from "@/lib/types";
+import type {PlatformAdminSummary,PlatformCustomer,PlatformCustomerDetail} from "@/lib/types";
 
 function base():string{
   const configured=process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/,"");
@@ -25,6 +25,7 @@ async function request<T>(path:string,init:RequestInit={}):Promise<T>{
 export const adminApi={
   summary:()=>request<PlatformAdminSummary>("/admin/summary"),
   customers:()=>request<PlatformCustomer[]>("/admin/customers"),
+  customer:(id:string)=>request<PlatformCustomerDetail>(`/admin/customers/${id}`),
   updateCustomer:(id:string,payload:{organization_name?:string;api_enabled?:boolean})=>request<PlatformCustomer>(`/admin/customers/${id}`,{method:"PATCH",body:JSON.stringify(payload)}),
   grantPro:(id:string,expires_at:string|null=null)=>request<PlatformCustomer>(`/admin/customers/${id}/grant-pro`,{method:"POST",body:JSON.stringify({expires_at})}),
   revokeAdminPro:(id:string)=>request<PlatformCustomer>(`/admin/customers/${id}/revoke-admin-pro`,{method:"POST"}),
