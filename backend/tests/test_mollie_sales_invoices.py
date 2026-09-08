@@ -1,12 +1,19 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
 import pytest
 
 from app.models.billing import BillingInvoice, BillingProfile
+from app.models.platform import StoreSubscription
 from app.services import mollie_billing
-from app.services.mollie_billing import _create_remote_invoice, _invoice_recipient
+from app.services.mollie_billing import (
+    _apply_invoice_entitlement,
+    _create_remote_invoice,
+    _invoice_create_retry_allowed,
+    _invoice_recipient,
+    _invoice_reference,
+)
 
 
 def _invoice() -> BillingInvoice:
@@ -66,6 +73,8 @@ async def test_initial_paid_period_uses_documented_manual_receipt_flow(
     assert body["vatMode"] == "inclusive"
     assert body["lines"][0]["unitPrice"] == {"currency": "EUR", "value": "29.90"}
     assert body["lines"][0]["vatRate"] == "20.00"
+    assert _invoice_reference(item) in body["memo"]
+    assert body["lines"][0]["description"] == "Zahlmeister Pro – 12 Monate"
 
 
 @pytest.mark.asyncio
@@ -92,6 +101,63 @@ async def test_renewal_invoice_uses_customer_and_mandate_for_automatic_payment(
     assert body["mandateId"] == "mdt_example"
     assert "paymentDetails" not in body
     assert captured["idempotency_key"] == f"zahlmeister-invoice-{item.idempotency_key}"
+    assert _invoice_reference(item) in body["memo"]
+
+
+def test_invoice_create_retry_stays_inside_safe_window() -> None:
+    item = _invoice()
+    now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
+    item.created_at = now - timedelta(minutes=10)
+    assert _invoice_create_retry_allowed(item, now=now) is True
+
+    item.created_at = now - timedelta(minutes=56)
+    assert _invoice_create_retry_allowed(item, now=now) is False
+
+    item.created_at = now - timedelta(seconds=10)
+    assert _invoice_create_retry_allowed(item, now=now) is False
+
+    item.created_at = now - timedelta(minutes=10)
+    item.external_id = "invoice_existing"
+    assert _invoice_create_retry_allowed(item, now=now) is False
+
+
+@pytest.mark.asyncio
+async def test_pending_renewal_keeps_pro_in_bounded_grace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    period_start = datetime.now(UTC) - timedelta(hours=1)
+    item = _invoice()
+    item.period_start = period_start
+    item.period_end = period_start.replace(year=period_start.year + 1)
+    item.status = "pending-payment"
+    item.details_json = '{"kind":"renewal"}'
+    row = StoreSubscription(
+        organization_id=item.organization_id,
+        provider="mollie",
+        product_id="zahlmeister.pro.yearly",
+        status="active",
+        external_reference="mdt_example",
+        expires_at=period_start,
+        auto_renew=True,
+    )
+
+    async def fake_row(session, organization_id, *, lock=False):
+        assert organization_id == item.organization_id
+        return row
+
+    class FakeSession:
+        async def flush(self):
+            return None
+
+    monkeypatch.setattr(mollie_billing, "_mollie_row", fake_row)
+    monkeypatch.setattr(mollie_billing, "_verification_data", lambda subscription: {})
+    monkeypatch.setattr(mollie_billing, "encrypt_config", lambda data: "{}")
+
+    await _apply_invoice_entitlement(FakeSession(), item)
+
+    assert row.status == "grace_period"
+    assert row.expires_at == period_start + timedelta(days=mollie_billing.MOLLIE_GRACE_DAYS)
+    assert row.auto_renew is True
 
 
 def test_business_invoice_recipient_requires_tax_or_organization_identifier() -> None:
