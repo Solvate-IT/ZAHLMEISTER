@@ -61,7 +61,8 @@ function ParticipantModal({listId,participant,onClose,onSaved}:{listId:string;pa
 
   async function submit(e:React.FormEvent){
     e.preventDefault();setBusy(true);setError("");
-    const payload={name:name.trim(),email:email.trim()||null,phone:phone.trim()||null,locale:messageLocale||null,channel_addresses:telegram.trim()?{telegram:telegram.trim()}:{}};
+    const channelAddresses:Record<string,string>=telegram.trim()?{telegram:telegram.trim()}:{};
+    const payload={name:name.trim(),email:email.trim()||null,phone:phone.trim()||null,locale:messageLocale||null,channel_addresses:channelAddresses};
     try{if(participant)await api.updateParticipant(listId,participant.id,payload);else await api.addParticipant(listId,payload);onSaved()}catch(e){setError(e instanceof ApiError&&e.status===409?t("contactAlreadyExists"):t("requestFailed"))}finally{setBusy(false)}
   }
 
