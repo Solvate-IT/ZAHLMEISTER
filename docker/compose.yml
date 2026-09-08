@@ -94,7 +94,7 @@ services:
       MP_SMTP_AUTH_ACCEPT_ANY: "1"
       MP_SMTP_AUTH_ALLOW_INSECURE: "1"
 
-  migrate:
+  bootstrap:
     build:
       context: ..
       dockerfile: docker/backend.Dockerfile.dev
@@ -102,7 +102,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    command: ["alembic", "upgrade", "head"]
+    command: ["python", "-m", "app.db.bootstrap"]
     volumes:
       - ../backend:/app
       - ./secrets/ponto:/run/secrets/ponto:ro
@@ -113,7 +113,7 @@ services:
       dockerfile: docker/backend.Dockerfile.dev
     environment: *backend-environment
     depends_on:
-      migrate:
+      bootstrap:
         condition: service_completed_successfully
       mailpit:
         condition: service_started
@@ -130,7 +130,7 @@ services:
       dockerfile: docker/backend.Dockerfile.dev
     environment: *backend-environment
     depends_on:
-      migrate:
+      bootstrap:
         condition: service_completed_successfully
       mailpit:
         condition: service_started

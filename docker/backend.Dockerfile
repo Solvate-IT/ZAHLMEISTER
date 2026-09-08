@@ -36,15 +36,11 @@ ENV RUFF_CACHE_DIR=/tmp/ruff-cache \
     PYTEST_ADDOPTS="-p no:cacheprovider"
 RUN pip install --no-cache-dir --prefix=/home/app/.local ".[dev]"
 COPY backend/tests ./tests
-COPY backend/alembic.ini ./
-COPY backend/alembic ./alembic
 COPY backend/locales ./locales
 USER app
 CMD ["pytest", "-q"]
 
 FROM base AS runtime
-COPY --chown=app:app backend/alembic.ini ./
-COPY --chown=app:app backend/alembic ./alembic
 COPY --chown=app:app backend/locales ./locales
 USER app
 EXPOSE 8000

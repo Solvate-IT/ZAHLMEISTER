@@ -43,9 +43,8 @@ required_files=(
   "backend/app/main.py"
   "backend/app/worker.py"
   "backend/app/core/config.py"
+  "backend/app/db/bootstrap.py"
   "backend/app/api/routes/health.py"
-  "backend/alembic.ini"
-  "backend/alembic/env.py"
   "backend/tests/test_channel_strategy.py"
   "backend/tests/test_integrations.py"
   "frontend/package.json"
@@ -85,16 +84,8 @@ echo "[2/11] Checking Git tracking and packaging inputs..."
     }
   done
 
-  while IFS= read -r migration; do
-    git ls-files --error-unmatch "$migration" >/dev/null 2>&1 || {
-      echo "Migration used by the local build is not tracked by Git: $migration"
-      git check-ignore -v "$migration" || true
-      exit 1
-    }
-  done < <(find backend/alembic/versions -maxdepth 1 -type f -name '*.py' -print | sort)
-
   runtime_paths=(
-    backend/app backend/alembic backend/locales backend/pyproject.toml
+    backend/app backend/locales backend/pyproject.toml
     frontend/src frontend/public frontend/package.json frontend/next.config.ts frontend/tsconfig.json
     mobile/assets mobile/mobile-links mobile/tool mobile/package.json mobile/capacitor.config.ts
     docker/backend.Dockerfile docker/frontend.Dockerfile docker/compose.yml docker/compose.prod.yml
@@ -134,7 +125,7 @@ docker run --rm \
   sh -c 'ruff check app tests && pytest -q'
 
 echo
-echo "[5/11] Testing Alembic migrations against PostgreSQL 17..."
+echo "[5/11] Testing fresh schema bootstrap against PostgreSQL 17..."
 docker network create "$NETWORK" >/dev/null
 docker run -d --name "$DB_CONTAINER" --network "$NETWORK" --network-alias db \
   -e POSTGRES_DB="$TEST_DB_NAME" \
@@ -155,7 +146,7 @@ docker run --rm --network "$NETWORK" \
   -e ENVIRONMENT=test \
   -e DATABASE_URL="$TEST_DATABASE_URL" \
   "$BACKEND_TEST_IMAGE" \
-  sh -c 'set -eu; heads="$(alembic heads | wc -l | tr -d " ")"; test "$heads" = "1"; alembic upgrade head; alembic check'
+  sh -c 'python -m app.db.bootstrap && python -m app.db.bootstrap'
 
 echo
 echo "[6/11] Building frontend test stage..."
@@ -209,7 +200,7 @@ docker run --rm --network "$NETWORK" \
   -e ENVIRONMENT=test \
   -e DATABASE_URL="$TEST_DATABASE_URL" \
   "$BACKEND_RUNTIME_IMAGE" \
-  sh -c 'alembic current --check-heads; alembic upgrade head'
+  python -m app.db.bootstrap
 
 echo
 echo "[9/11] Starting production runtime smoke test..."

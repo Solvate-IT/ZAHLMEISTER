@@ -107,7 +107,7 @@ services:
       - ./secrets/production/postgres_password:/run/secrets/postgres_password:ro
     logging: *default-logging
 
-  migrate:
+  bootstrap:
     user: "${APP_RUNTIME_UID:-10001}:${APP_RUNTIME_GID:-10001}"
     read_only: true
     tmpfs:
@@ -124,7 +124,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    command: ["alembic", "upgrade", "head"]
+    command: ["python", "-m", "app.db.bootstrap"]
     volumes:
       - ./secrets:/run/secrets:ro
     logging: *default-logging
@@ -145,7 +145,7 @@ services:
     restart: unless-stopped
     environment: *backend-environment
     depends_on:
-      migrate:
+      bootstrap:
         condition: service_completed_successfully
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--no-access-log"]
     healthcheck:
@@ -171,7 +171,7 @@ services:
     restart: unless-stopped
     environment: *backend-environment
     depends_on:
-      migrate:
+      bootstrap:
         condition: service_completed_successfully
     command: ["python", "-m", "app.worker"]
     volumes:

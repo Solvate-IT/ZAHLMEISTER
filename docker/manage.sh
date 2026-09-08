@@ -36,13 +36,21 @@ env_value() {
 pause() { read -r -p "Press Enter to continue..." _; }
 start_stack() { compose up -d --build; }
 stop_stack() { compose down; }
-clean_rebuild() { compose down --remove-orphans; compose build --no-cache; compose up -d; }
+clean_rebuild() {
+  if [[ "$MODE" == "development" ]]; then
+    compose down --remove-orphans --volumes
+  else
+    compose down --remove-orphans
+  fi
+  compose build --no-cache
+  compose up -d
+}
 status_stack() { compose ps; }
 show_logs() { compose logs -f --tail=200; }
 predeploy() { "$SCRIPT_DIR/predeploy.sh"; }
 backend_shell() { compose exec backend bash; }
 frontend_shell() { compose exec frontend sh; }
-migrate() { compose run --rm migrate alembic upgrade head; }
+initialize_schema() { compose run --rm bootstrap; }
 run_tests() { compose run --rm backend pytest -q; }
 remove_containers() { compose down --remove-orphans; }
 remove_all() { compose down --remove-orphans --volumes; }
@@ -73,7 +81,7 @@ while true; do
  6) Pre-deployment checks (same script as CI)
  7) Backend shell
  8) Frontend shell
- 9) Run database migrations
+ 9) Initialize fresh database schema
 10) Run backend tests
 11) Database backup
 12) List backups
@@ -98,7 +106,7 @@ EOF
     6) predeploy; pause ;;
     7) backend_shell ;;
     8) frontend_shell ;;
-    9) migrate; pause ;;
+    9) initialize_schema; pause ;;
     10) run_tests; pause ;;
     11) backup_database; pause ;;
     12) list_backups; pause ;;
