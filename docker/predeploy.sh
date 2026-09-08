@@ -297,7 +297,7 @@ echo
 echo "[10/11] Checking Capacitor source and legacy runtime references..."
 grep -q 'appId: "at.solvate.zahlmeister"' mobile/capacitor.config.ts
 grep -q 'webDir: "../frontend/out"' mobile/capacitor.config.ts
-! grep -R --exclude-dir=node_modules -nE 'flutter|dart' frontend mobile docker/frontend.Dockerfile docker/frontend.Dockerfile.dev docker/compose.yml 2>/dev/null || {
+! grep -R --exclude-dir=node_modules -niE '(^|[^[:alnum:]_])(flutter|dart)([^[:alnum:]_]|$)' frontend mobile docker/frontend.Dockerfile docker/frontend.Dockerfile.dev docker/compose.yml 2>/dev/null || {
   echo "Flutter/Dart references remain in the new frontend/mobile runtime paths." >&2
   exit 1
 }
