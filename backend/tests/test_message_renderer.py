@@ -3,8 +3,17 @@ from decimal import Decimal
 
 import pytest
 
-from app.models.entities import Collection, CollectionParticipant, CommunicationMessage, Organization, Participant
-from app.services.message_renderer import canonical_from_stored_message, render_collection_message
+from app.models.entities import (
+    Collection,
+    CollectionParticipant,
+    CommunicationMessage,
+    Organization,
+    Participant,
+)
+from app.services.message_renderer import (
+    canonical_from_stored_message,
+    render_collection_message,
+)
 
 
 @pytest.mark.asyncio
@@ -33,7 +42,7 @@ async def test_collection_message_is_channel_and_provider_independent() -> None:
     participant = Participant(name="Anna Muster")
 
     content = await render_collection_message(
-        None,  # no DB lookup is needed when no saved template is selected
+        None,
         collection=collection,
         collection_participant=cp,
         participant=participant,
@@ -68,6 +77,7 @@ def test_stored_message_rehydrates_exact_canonical_content() -> None:
     assert content.text == stored.body
     assert content.payment_qr_url == metadata["payment_qr_url"]
     assert content.payment_qr_payload == metadata["payment_qr_payload"]
+
 
 @pytest.mark.asyncio
 async def test_collection_message_applies_link_and_qr_options_once() -> None:
