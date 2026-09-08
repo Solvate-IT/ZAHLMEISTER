@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_organization
@@ -205,17 +205,18 @@ async def update_message_template(
                 current[normalize_language(language)] = body.strip()
             item.translations_json = serialize_translations(current)
         if payload.is_default is True and not item.is_default:
-            others = (
-                await session.execute(
-                    select(MessageTemplate).where(
-                        MessageTemplate.organization_id == stored_org.id,
-                        MessageTemplate.id != item.id,
-                        MessageTemplate.is_default.is_(True),
-                    )
+            await session.execute(
+                update(MessageTemplate)
+                .where(
+                    MessageTemplate.organization_id == stored_org.id,
+                    MessageTemplate.id != item.id,
+                    MessageTemplate.is_default.is_(True),
                 )
-            ).scalars().all()
-            for other in others:
-                other.is_default = False
+                .values(is_default=False)
+            )
+            # Release the previous default before setting the new row to true so the
+            # partial unique index can never observe two defaults during an ORM flush.
+            await session.flush()
             item.is_default = True
         await session.flush()
         return _read(item)
