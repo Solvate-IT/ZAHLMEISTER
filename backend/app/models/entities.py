@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -168,6 +168,12 @@ class MessageTemplate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         Index("ix_message_templates_org", "organization_id"),
         Index("ix_message_templates_org_name", "organization_id", "name"),
+        Index(
+            "uq_message_templates_org_default",
+            "organization_id",
+            unique=True,
+            postgresql_where=text("is_default"),
+        ),
     )
 
 
@@ -186,8 +192,8 @@ class Collection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     send_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="draft", index=True)
-    communication_channel: Mapped[str] = mapped_column(String(30), nullable=False, default="email")
-    communication_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="external")
+    communication_channel: Mapped[str] = mapped_column(String(30), nullable=False, default="auto")
+    communication_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="auto")
     message_template_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("message_templates.id", ondelete="SET NULL")
     )
@@ -196,7 +202,17 @@ class Collection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     message_include_payment_link: Mapped[bool | None] = mapped_column(Boolean)
     message_include_payment_qr: Mapped[bool | None] = mapped_column(Boolean)
 
-    __table_args__ = (Index("ix_collections_org_created", "organization_id", "created_at"),)
+    __table_args__ = (
+        CheckConstraint(
+            "communication_channel IN ('auto','email','whatsapp','sms','telegram')",
+            name="ck_collections_communication_channel",
+        ),
+        CheckConstraint(
+            "communication_mode = 'auto'",
+            name="ck_collections_communication_mode",
+        ),
+        Index("ix_collections_org_created", "organization_id", "created_at"),
+    )
 
 
 class CollectionParticipant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -439,7 +455,6 @@ class RuntimeHeartbeat(Base):
     name: Mapped[str] = mapped_column(String(80), primary_key=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     details_json: Mapped[str | None] = mapped_column(Text)
-
 
 
 class ScheduledJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
