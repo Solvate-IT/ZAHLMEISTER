@@ -1,8 +1,15 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import pytest
+
 from app.models.platform import StoreSubscription
-from app.services.billing import PRO_PRODUCT_ID, subscription_is_entitled
+from app.services.billing import (
+    PRO_PRODUCT_ID,
+    VerifiedSubscription,
+    subscription_is_entitled,
+    validate_verified_subscription,
+)
 
 
 def _subscription(*, status: str, expires_at=None) -> StoreSubscription:
@@ -43,3 +50,29 @@ def test_cancelled_subscription_does_not_entitle_account() -> None:
         expires_at=datetime.now(UTC) + timedelta(days=30),
     )
     assert subscription_is_entitled(subscription) is False
+
+
+def test_verified_purchase_must_be_bound_to_same_organization() -> None:
+    organization_id = uuid4()
+    verified = VerifiedSubscription(
+        provider="apple",
+        product_id=PRO_PRODUCT_ID,
+        external_reference="original-transaction-id",
+        account_token=str(uuid4()),
+        status="active",
+    )
+    with pytest.raises(ValueError, match="another Zahlmeister account"):
+        validate_verified_subscription(organization_id, verified)
+
+
+def test_verified_purchase_rejects_wrong_product() -> None:
+    organization_id = uuid4()
+    verified = VerifiedSubscription(
+        provider="google",
+        product_id="other.product",
+        external_reference="purchase-token",
+        account_token=str(organization_id),
+        status="active",
+    )
+    with pytest.raises(ValueError, match="Unexpected billing product"):
+        validate_verified_subscription(organization_id, verified)
