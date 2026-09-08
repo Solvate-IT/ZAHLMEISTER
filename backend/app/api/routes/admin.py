@@ -17,7 +17,7 @@ from app.schemas.admin import (
     PlatformCustomerUpdate,
     PlatformGrantProRequest,
 )
-from app.services.plans import PRO_PRODUCT_ID
+from app.services.billing import ENTITLED_STATUSES, PRO_PRODUCT_ID, subscription_is_entitled
 
 router = APIRouter(prefix="/admin", tags=["platform-admin"])
 
@@ -28,14 +28,46 @@ def _admin_org_ids(rows: list[tuple[UUID, str]]) -> set[UUID]:
 
 
 async def _customer_rows(session: AsyncSession) -> list[PlatformCustomerRead]:
-    organizations = (await session.execute(select(Organization).order_by(Organization.created_at.desc()))).scalars().all()
+    organizations = (
+        await session.execute(select(Organization).order_by(Organization.created_at.desc()))
+    ).scalars().all()
     users = (await session.execute(select(User).order_by(User.created_at))).scalars().all()
     admin_org_ids = _admin_org_ids([(user.organization_id, user.email) for user in users])
 
-    list_counts = dict((await session.execute(select(ParticipantList.organization_id, func.count(ParticipantList.id)).group_by(ParticipantList.organization_id))).all())
-    participant_counts = dict((await session.execute(select(ParticipantList.organization_id, func.count(Participant.id)).join(Participant, Participant.list_id == ParticipantList.id).group_by(ParticipantList.organization_id))).all())
-    collection_counts = dict((await session.execute(select(Collection.organization_id, func.count(Collection.id)).group_by(Collection.organization_id))).all())
-    subscriptions = (await session.execute(select(StoreSubscription).where(StoreSubscription.status == "active").order_by(StoreSubscription.expires_at.desc().nullsfirst()))).scalars().all()
+    list_counts = dict(
+        (
+            await session.execute(
+                select(ParticipantList.organization_id, func.count(ParticipantList.id)).group_by(
+                    ParticipantList.organization_id
+                )
+            )
+        ).all()
+    )
+    participant_counts = dict(
+        (
+            await session.execute(
+                select(ParticipantList.organization_id, func.count(Participant.id))
+                .join(Participant, Participant.list_id == ParticipantList.id)
+                .group_by(ParticipantList.organization_id)
+            )
+        ).all()
+    )
+    collection_counts = dict(
+        (
+            await session.execute(
+                select(Collection.organization_id, func.count(Collection.id)).group_by(
+                    Collection.organization_id
+                )
+            )
+        ).all()
+    )
+    subscriptions = (
+        await session.execute(
+            select(StoreSubscription)
+            .where(StoreSubscription.status.in_(ENTITLED_STATUSES))
+            .order_by(StoreSubscription.expires_at.desc().nullsfirst())
+        )
+    ).scalars().all()
 
     users_by_org: dict[UUID, list[User]] = {}
     for user in users:
@@ -43,7 +75,7 @@ async def _customer_rows(session: AsyncSession) -> list[PlatformCustomerRead]:
     subscription_by_org: dict[UUID, StoreSubscription] = {}
     now = datetime.now(UTC)
     for subscription in subscriptions:
-        if subscription.expires_at is not None and subscription.expires_at <= now:
+        if not subscription_is_entitled(subscription, now=now):
             continue
         subscription_by_org.setdefault(subscription.organization_id, subscription)
 
@@ -54,7 +86,10 @@ async def _customer_rows(session: AsyncSession) -> list[PlatformCustomerRead]:
         org_users = users_by_org.get(organization.id, [])
         subscription = subscription_by_org.get(organization.id)
         primary = org_users[0] if org_users else None
-        last_login = max((u.last_login_at for u in org_users if u.last_login_at is not None), default=None)
+        last_login = max(
+            (u.last_login_at for u in org_users if u.last_login_at is not None),
+            default=None,
+        )
         result.append(
             PlatformCustomerRead(
                 organization_id=str(organization.id),
@@ -118,10 +153,20 @@ async def update_customer(
                 changes["organization_name"] = {"from": organization.name, "to": name}
                 organization.name = name
         if payload.api_enabled is not None and payload.api_enabled != organization.api_enabled:
-            changes["api_enabled"] = {"from": organization.api_enabled, "to": payload.api_enabled}
+            changes["api_enabled"] = {
+                "from": organization.api_enabled,
+                "to": payload.api_enabled,
+            }
             organization.api_enabled = payload.api_enabled
         if changes:
-            session.add(PlatformAdminAudit(admin_user_id=admin.id, organization_id=organization.id, action="customer.update", details_json=json.dumps(changes, ensure_ascii=False)))
+            session.add(
+                PlatformAdminAudit(
+                    admin_user_id=admin.id,
+                    organization_id=organization.id,
+                    action="customer.update",
+                    details_json=json.dumps(changes, ensure_ascii=False),
+                )
+            )
     async with SessionLocal() as session:
         rows = await _customer_rows(session)
         item = next((row for row in rows if row.organization_id == str(organization_id)), None)
@@ -140,16 +185,43 @@ async def grant_pro(
         organization = await session.get(Organization, organization_id, with_for_update=True)
         if organization is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
-        subscription = await session.scalar(select(StoreSubscription).where(StoreSubscription.organization_id == organization.id, StoreSubscription.provider == "admin").with_for_update())
+        subscription = await session.scalar(
+            select(StoreSubscription)
+            .where(
+                StoreSubscription.organization_id == organization.id,
+                StoreSubscription.provider == "admin",
+            )
+            .with_for_update()
+        )
         if subscription is None:
-            subscription = StoreSubscription(organization_id=organization.id, provider="admin", product_id=PRO_PRODUCT_ID, status="active")
+            subscription = StoreSubscription(
+                organization_id=organization.id,
+                provider="admin",
+                product_id=PRO_PRODUCT_ID,
+                status="active",
+            )
             session.add(subscription)
         subscription.status = "active"
         subscription.expires_at = payload.expires_at
         subscription.cancelled_at = None
-        session.add(PlatformAdminAudit(admin_user_id=admin.id, organization_id=organization.id, action="subscription.grant_pro", details_json=json.dumps({"expires_at": payload.expires_at.isoformat() if payload.expires_at else None})))
+        subscription.auto_renew = False
+        subscription.last_verified_at = datetime.now(UTC)
+        session.add(
+            PlatformAdminAudit(
+                admin_user_id=admin.id,
+                organization_id=organization.id,
+                action="subscription.grant_pro",
+                details_json=json.dumps(
+                    {"expires_at": payload.expires_at.isoformat() if payload.expires_at else None}
+                ),
+            )
+        )
     async with SessionLocal() as session:
-        return next(row for row in await _customer_rows(session) if row.organization_id == str(organization_id))
+        return next(
+            row
+            for row in await _customer_rows(session)
+            if row.organization_id == str(organization_id)
+        )
 
 
 @router.post("/customers/{organization_id}/revoke-admin-pro", response_model=PlatformCustomerRead)
@@ -158,11 +230,27 @@ async def revoke_admin_pro(
     admin: User = Depends(require_platform_admin),
 ) -> PlatformCustomerRead:
     async with SessionLocal.begin() as session:
-        subscription = await session.scalar(select(StoreSubscription).where(StoreSubscription.organization_id == organization_id, StoreSubscription.provider == "admin").with_for_update())
+        subscription = await session.scalar(
+            select(StoreSubscription)
+            .where(
+                StoreSubscription.organization_id == organization_id,
+                StoreSubscription.provider == "admin",
+            )
+            .with_for_update()
+        )
         if subscription is not None:
             subscription.status = "cancelled"
             subscription.cancelled_at = datetime.now(UTC)
-            session.add(PlatformAdminAudit(admin_user_id=admin.id, organization_id=organization_id, action="subscription.revoke_admin_pro", details_json="{}"))
+            subscription.auto_renew = False
+            subscription.last_verified_at = datetime.now(UTC)
+            session.add(
+                PlatformAdminAudit(
+                    admin_user_id=admin.id,
+                    organization_id=organization_id,
+                    action="subscription.revoke_admin_pro",
+                    details_json="{}",
+                )
+            )
     async with SessionLocal() as session:
         rows = await _customer_rows(session)
         item = next((row for row in rows if row.organization_id == str(organization_id)), None)
