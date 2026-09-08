@@ -255,7 +255,6 @@ async def create_collection(
     async with SessionLocal.begin() as session:
         stored_org = await session.get(Organization, organization.id)
         assert stored_org is not None
-        _require_bank_account(stored_org)
 
         participant_list = await session.get(
             ParticipantList, payload.participant_list_id, with_for_update=True
@@ -312,6 +311,8 @@ async def create_collection(
                 detail="Due date must not be before the send date",
             )
         scheduled = send_at > now
+        if scheduled:
+            _require_bank_account(stored_org)
         item = Collection(
             organization_id=stored_org.id,
             participant_list_id=participant_list.id,
