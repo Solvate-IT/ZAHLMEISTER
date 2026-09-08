@@ -20,7 +20,12 @@ from app.schemas.admin import (
     PlatformGrantProRequest,
     PlatformSubscriptionRead,
 )
-from app.services.billing import ENTITLED_STATUSES, PRO_PRODUCT_ID, subscription_is_entitled
+from app.services.billing import (
+    ENTITLED_STATUSES,
+    PRO_PRODUCT_ID,
+    active_entitlement_subscription,
+    subscription_is_entitled,
+)
 
 router = APIRouter(prefix="/admin", tags=["platform-admin"])
 
@@ -265,6 +270,12 @@ async def grant_pro(
         organization = await session.get(Organization, organization_id, with_for_update=True)
         if organization is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
+        current = await active_entitlement_subscription(session, organization.id)
+        if current is not None and current.provider != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Another billing provider already grants Pro for this account",
+            )
         subscription = await session.scalar(
             select(StoreSubscription)
             .where(
@@ -310,6 +321,9 @@ async def revoke_admin_pro(
     admin: User = Depends(require_platform_admin),
 ) -> PlatformCustomerRead:
     async with SessionLocal.begin() as session:
+        organization = await session.get(Organization, organization_id, with_for_update=True)
+        if organization is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
         subscription = await session.scalar(
             select(StoreSubscription)
             .where(
@@ -319,10 +333,12 @@ async def revoke_admin_pro(
             .with_for_update()
         )
         if subscription is not None:
-            subscription.status = "cancelled"
-            subscription.cancelled_at = datetime.now(UTC)
+            now = datetime.now(UTC)
+            subscription.status = "revoked"
+            subscription.expires_at = now
+            subscription.cancelled_at = now
             subscription.auto_renew = False
-            subscription.last_verified_at = datetime.now(UTC)
+            subscription.last_verified_at = now
             session.add(
                 PlatformAdminAudit(
                     admin_user_id=admin.id,
