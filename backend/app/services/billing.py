@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.entities import Organization
 from app.models.platform import StoreSubscription
 from app.services.secrets import encrypt_config
 
@@ -63,6 +64,19 @@ def subscription_is_entitled(
     return subscription.expires_at is None or subscription.expires_at > current
 
 
+def verified_subscription_is_entitled(
+    verified: VerifiedSubscription,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    current = now or datetime.now(UTC)
+    if verified.status not in ENTITLED_STATUSES:
+        return False
+    if verified.status == "cancelled":
+        return verified.expires_at is not None and verified.expires_at > current
+    return verified.expires_at is None or verified.expires_at > current
+
+
 def validate_verified_subscription(
     organization_id: UUID,
     verified: VerifiedSubscription,
@@ -79,12 +93,50 @@ def validate_verified_subscription(
         raise ValueError("Subscription reference is missing")
 
 
+async def _lock_organization(session: AsyncSession, organization_id: UUID) -> None:
+    locked = await session.scalar(
+        select(Organization.id).where(Organization.id == organization_id).with_for_update()
+    )
+    if locked is None:
+        raise ValueError("Zahlmeister account does not exist")
+
+
+async def _conflicting_entitlement_subscription(
+    session: AsyncSession,
+    organization_id: UUID,
+    provider: str,
+) -> StoreSubscription | None:
+    rows = (
+        await session.execute(
+            select(StoreSubscription)
+            .where(
+                StoreSubscription.organization_id == organization_id,
+                StoreSubscription.provider != provider,
+                StoreSubscription.status.in_(ENTITLED_STATUSES),
+            )
+            .with_for_update()
+        )
+    ).scalars().all()
+    now = datetime.now(UTC)
+    return next((item for item in rows if subscription_is_entitled(item, now=now)), None)
+
+
 async def apply_verified_subscription(
     session: AsyncSession,
     organization_id: UUID,
     verified: VerifiedSubscription,
 ) -> StoreSubscription:
     validate_verified_subscription(organization_id, verified)
+    await _lock_organization(session, organization_id)
+
+    if verified_subscription_is_entitled(verified):
+        conflict = await _conflicting_entitlement_subscription(
+            session,
+            organization_id,
+            verified.provider,
+        )
+        if conflict is not None:
+            raise ValueError("Another billing provider already grants Pro for this account")
 
     by_reference = await session.scalar(
         select(StoreSubscription)
