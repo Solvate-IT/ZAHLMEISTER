@@ -22,3 +22,18 @@ class BillingPurchaseContextRead(BaseModel):
     existing_provider: str | None = None
     existing_status: str | None = None
     reason: str | None = None
+
+
+class MollieBillingConfigRead(BaseModel):
+    available: bool
+    product_id: str
+    amount: str
+    currency: str
+    interval: str
+    environment: Literal["test", "live"]
+
+
+class MollieBillingCheckoutRead(BaseModel):
+    checkout_url: str
+    payment_id: str
+    resumed: bool
