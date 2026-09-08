@@ -50,7 +50,7 @@ show_logs() { compose logs -f --tail=200; }
 predeploy() { "$SCRIPT_DIR/predeploy.sh"; }
 backend_shell() { compose exec backend bash; }
 frontend_shell() { compose exec frontend sh; }
-initialize_schema() { compose run --rm bootstrap; }
+apply_migrations() { compose run --rm bootstrap; }
 run_tests() { compose run --rm backend pytest -q; }
 remove_containers() { compose down --remove-orphans; }
 remove_all() { compose down --remove-orphans --volumes; }
@@ -82,7 +82,7 @@ while true; do
  6) Pre-deployment checks (same script as CI)
  7) Backend shell
  8) Frontend shell
- 9) Initialize fresh database schema
+ 9) Apply database migrations + schema check
 10) Run backend tests
 11) Database backup
 12) List backups
@@ -108,7 +108,7 @@ EOF
     6) predeploy; pause ;;
     7) backend_shell ;;
     8) frontend_shell ;;
-    9) initialize_schema; pause ;;
+    9) apply_migrations; pause ;;
     10) run_tests; pause ;;
     11) backup_database; pause ;;
     12) list_backups; pause ;;
