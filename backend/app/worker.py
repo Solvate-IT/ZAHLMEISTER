@@ -5,11 +5,12 @@ import time
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.core.config import settings
 from app.core.observability import configure_logging
 from app.db.session import SessionLocal
+from app.models.billing import BillingInvoice
 from app.models.entities import (
     BankSyncConnection,
     Collection,
@@ -21,6 +22,7 @@ from app.models.entities import (
     RuntimeHeartbeat,
     ScheduledJob,
 )
+from app.models.platform import StoreSubscription
 from app.services import microsoft365
 from app.services.bank_sync import sync_connection as sync_bank_connection
 from app.services.central_mail import (
@@ -39,6 +41,11 @@ from app.services.infobip import (
 )
 from app.services.message_dispatch import queue_collection_messages
 from app.services.message_renderer import canonical_from_stored_message
+from app.services.mollie_billing import (
+    OPEN_INVOICE_STATUSES,
+    billing_configured as mollie_billing_configured,
+    sync_subscription as sync_mollie_subscription,
+)
 from app.services.reminders import deserialize_reminder_rules, reminder_schedule
 from app.services.retry import is_retryable_exception, retry_delay_seconds
 from app.services.secrets import decrypt_config
@@ -48,6 +55,7 @@ logger = logging.getLogger("zahlmeister.worker")
 INBOX_SYNC_SECONDS = 60
 BANK_SYNC_CHECK_SECONDS = 300
 BANK_SYNC_INTERVAL = timedelta(hours=1)
+BILLING_SYNC_SECONDS = 3600
 
 
 async def claim_job() -> ScheduledJob | None:
@@ -622,6 +630,53 @@ async def sync_bank_connections() -> None:
                     connection.last_error = str(exc)[:2000]
 
 
+async def sync_mollie_billing() -> None:
+    if not mollie_billing_configured():
+        return
+    now = datetime.now(UTC)
+    async with SessionLocal() as session:
+        subscription_ids = set(
+            (
+                await session.execute(
+                    select(StoreSubscription.organization_id).where(
+                        StoreSubscription.provider == "mollie",
+                        or_(
+                            StoreSubscription.status == "pending",
+                            StoreSubscription.status == "grace_period",
+                            (
+                                StoreSubscription.auto_renew.is_(True)
+                                & StoreSubscription.expires_at.is_not(None)
+                                & (StoreSubscription.expires_at <= now)
+                            ),
+                        ),
+                    )
+                )
+            ).scalars().all()
+        )
+        invoice_ids = set(
+            (
+                await session.execute(
+                    select(BillingInvoice.organization_id).where(
+                        BillingInvoice.provider == "mollie",
+                        BillingInvoice.status.in_(OPEN_INVOICE_STATUSES),
+                    )
+                )
+            ).scalars().all()
+        )
+    for organization_id in subscription_ids | invoice_ids:
+        try:
+            async with SessionLocal.begin() as session:
+                await sync_mollie_subscription(session, organization_id)
+        except Exception:
+            logger.exception(
+                "Mollie billing sync failed",
+                extra={
+                    "event": "mollie_billing_sync_failed",
+                    "organization_id": str(organization_id),
+                },
+            )
+
+
 async def run_job(job: ScheduledJob) -> None:
     handlers = {"send_collection": send_collection, "send_reminders": send_reminders, "send_message": send_message}
     handler = handlers.get(job.job_type)
@@ -637,6 +692,7 @@ async def main() -> None:
     await update_worker_heartbeat()
     next_inbox_sync = 0.0
     next_bank_sync = 0.0
+    next_billing_sync = 0.0
     next_heartbeat = 0.0
     next_stale_recovery = 0.0
     while True:
@@ -653,6 +709,9 @@ async def main() -> None:
         if now_mono >= next_bank_sync:
             await sync_bank_connections()
             next_bank_sync = now_mono + BANK_SYNC_CHECK_SECONDS
+        if now_mono >= next_billing_sync:
+            await sync_mollie_billing()
+            next_billing_sync = now_mono + BILLING_SYNC_SECONDS
         job = await claim_job()
         if job is None:
             await asyncio.sleep(2)
