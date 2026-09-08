@@ -55,6 +55,9 @@ export interface DispatchResult { queued_internal:number; external:DispatchExter
 export interface ApiSettings { enabled: boolean; available_scopes: string[]; }
 export interface ApiCredential { id: string; name: string; token_prefix: string; scopes: string[]; created_at: string; last_used_at?: string|null; expires_at?: string|null; revoked_at?: string|null; }
 export interface ApiCredentialCreated extends ApiCredential { token: string; }
+export interface BillingEntitlement { plan:"free"|"pro"; active:boolean; provider:string|null; status:string|null; product_id:string|null; expires_at:string|null; auto_renew:boolean|null; }
+export interface MollieBillingConfig { available:boolean; product_id:string; amount:string; currency:string; interval:string; environment:"test"|"live"; }
+export interface MollieBillingCheckout { checkout_url:string; payment_id:string; resumed:boolean; }
 export interface PlatformAdminSummary { customers:number; free_customers:number; pro_customers:number; active_users:number; }
 export interface PlatformCustomer { organization_id:string; organization_name:string; created_at:string; locale:string; currency:string; api_enabled:boolean; plan:"free"|"pro"; billing_provider?:string|null; subscription_status?:string|null; subscription_expires_at?:string|null; user_count:number; active_user_count:number; primary_email?:string|null; last_login_at?:string|null; participant_lists:number; participants:number; collections:number; }
 export interface PlatformCustomerUser { id:string; email:string; display_name:string; is_active:boolean; email_verified:boolean; created_at:string; last_login_at?:string|null; }
