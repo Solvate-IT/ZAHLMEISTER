@@ -28,11 +28,14 @@ export function PlatformAdmin(){
 
   useEffect(()=>{
     let active=true;
-    api.restore().then(user=>{
+    adminApi.me().then(()=>{
       if(!active)return;
-      setAccess(user?.is_platform_admin?"authorized":user?"denied":"login");
-      if(!user||!user.is_platform_admin)setLoading(false);
-    }).catch(()=>{if(active){setAccess("login");setLoading(false)}});
+      setAccess("authorized");
+    }).catch(error=>{
+      if(!active)return;
+      setAccess(error instanceof AdminApiError&&error.status===403?"denied":"login");
+      setLoading(false);
+    });
     return()=>{active=false};
   },[]);
 
@@ -45,7 +48,7 @@ export function PlatformAdmin(){
       setSummary(s);setCustomers(c);setDetail(null);
     }catch(error){
       if(error instanceof AdminApiError&&error.status===401){
-        await api.logout().catch(()=>{});
+        await adminApi.logout().catch(()=>{});
         setAccess("login");
         setSummary(null);setCustomers([]);setDetail(null);
         return;
@@ -64,7 +67,7 @@ export function PlatformAdmin(){
 
   async function onAdminAuthenticated(user:AccountUser){
     if(!user.is_platform_admin){
-      await api.logout().catch(()=>{});
+      await adminApi.logout().catch(()=>{});
       setAccess("denied");
       return;
     }
@@ -72,7 +75,7 @@ export function PlatformAdmin(){
     setLoading(true);
   }
   async function useDifferentAccount(){
-    await api.logout().catch(()=>{});
+    await adminApi.logout().catch(()=>{});
     setSummary(null);setCustomers([]);setDetail(null);setNotice("");
     setAccess("login");
   }
@@ -114,7 +117,8 @@ export function PlatformAdmin(){
 }
 
 function AdminFrame({children}:{children:React.ReactNode}){
-  return <div className="page-bg"><header className="topbar"><Link href="/"><Brand compact/></Link><div className="top-actions"><LocaleSelect/><Link className="button secondary small" href="/">←</Link></div></header><main className="auth-wrap">{children}</main></div>;
+  const {t}=useI18n();
+  return <div className="page-bg"><header className="topbar"><Link href="/"><Brand compact/></Link><div className="top-actions"><LocaleSelect/><Link className="button secondary small" href="/">{t("backToWebsite")}</Link></div></header><main className="auth-wrap">{children}</main></div>;
 }
 
 function AdminLogin({onAuthenticated}:{onAuthenticated:(user:AccountUser)=>void}){
