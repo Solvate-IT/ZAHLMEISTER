@@ -20,6 +20,7 @@ _SECRET_FIELDS = {
     "ponto_connect_key_password": "ponto_connect_key_password_file",
     "mollie_oauth_client_secret": "mollie_oauth_client_secret_file",
     "mollie_billing_api_key": "mollie_billing_api_key_file",
+    "mollie_billing_webhook_secret": "mollie_billing_webhook_secret_file",
     "google_translate_api_key": "google_translate_api_key_file",
     "monitoring_token": "monitoring_token_file",
     "platform_admin_bootstrap_password": "platform_admin_bootstrap_password_file",
@@ -118,6 +119,8 @@ class Settings(BaseSettings):
 
     mollie_billing_api_key: str = ""
     mollie_billing_api_key_file: str = ""
+    mollie_billing_webhook_secret: str = ""
+    mollie_billing_webhook_secret_file: str = ""
     mollie_billing_environment: Literal["test", "live"] = "test"
 
     google_translate_api_key: str = ""
@@ -241,6 +244,8 @@ class Settings(BaseSettings):
                 errors.append("MOLLIE_BILLING_ENVIRONMENT must be live in production")
             if not self.mollie_billing_api_key.startswith("live_"):
                 errors.append("MOLLIE_BILLING_API_KEY must be a live key in production")
+            if len(self.mollie_billing_webhook_secret.strip()) < 32:
+                errors.append("MOLLIE_BILLING_WEBHOOK_SECRET must be configured for signed invoice webhooks")
 
         if self.google_translate_api_key.strip():
             translation_url = urlparse(self.google_translate_api_url.strip())
