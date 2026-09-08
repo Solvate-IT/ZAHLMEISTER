@@ -8,8 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.platform import StoreSubscription
-from app.services.plans import PRO_PRODUCT_ID
 
+PRO_PRODUCT_ID = "zahlmeister.pro.yearly"
 ENTITLED_STATUSES = {"active", "grace_period"}
 PURCHASE_PROVIDERS = {"apple", "google", "mollie"}
 
@@ -92,7 +92,11 @@ async def purchase_context(
     purchase_allowed = not entitlement.active
     reason = None
     if entitlement.active:
-        reason = "already_entitled_same_provider" if entitlement.provider == provider else "already_entitled_other_provider"
+        reason = (
+            "already_entitled_same_provider"
+            if entitlement.provider == provider
+            else "already_entitled_other_provider"
+        )
 
     return {
         "provider": provider,
