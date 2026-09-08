@@ -26,10 +26,12 @@ def verify_sales_invoice_signature(raw_body: bytes, signature: str | None) -> No
     secret = settings.mollie_billing_webhook_secret.strip()
     if not secret:
         raise MollieBillingWebhookError("Mollie billing webhook secret is not configured")
-    if not signature or not signature.startswith("sha256="):
+    if not signature:
         raise MollieBillingWebhookError("Mollie billing webhook signature is missing")
-    supplied = signature.removeprefix("sha256=").strip().lower()
-    if len(supplied) != 64:
+    supplied = signature.strip().lower()
+    if supplied.startswith("sha256="):
+        supplied = supplied.removeprefix("sha256=")
+    if len(supplied) != 64 or any(char not in "0123456789abcdef" for char in supplied):
         raise MollieBillingWebhookError("Mollie billing webhook signature is invalid")
     expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, supplied):
