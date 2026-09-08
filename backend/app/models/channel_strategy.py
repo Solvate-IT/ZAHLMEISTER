@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -38,6 +38,14 @@ class ParticipantChannelSetting(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
+        CheckConstraint(
+            "channel IN ('email','sms','whatsapp','telegram')",
+            name="ck_participant_channel_settings_channel",
+        ),
+        CheckConstraint(
+            "availability IN ('unknown','available','unavailable')",
+            name="ck_participant_channel_settings_availability",
+        ),
         UniqueConstraint(
             "participant_id",
             "channel",
