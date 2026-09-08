@@ -7,6 +7,7 @@ import {AdminApiError,adminApi} from "@/lib/adminApi";
 import type {AccountUser,PlatformAdminSummary,PlatformCustomer,PlatformCustomerDetail} from "@/lib/types";
 import {Brand} from "./Brand";
 import {LocaleSelect} from "./LocaleSelect";
+import {PasswordInput} from "./PasswordInput";
 import {Empty,Loading} from "./State";
 import {useI18n} from "@/lib/i18n";
 
@@ -137,7 +138,7 @@ function AdminLogin({onAuthenticated}:{onAuthenticated:(user:AccountUser)=>void}
     {error&&<div className="notice error">{error}</div>}
     <form className="form" onSubmit={submit}>
       <div className="field"><label>{t("email")}</label><input className="input" type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="username" required/></div>
-      <div className="field"><label>{t("password")}</label><input className="input" type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" required/></div>
+      <div className="field"><label>{t("password")}</label><PasswordInput value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" required/></div>
       <button className="button" disabled={busy}>{t("login")}</button>
     </form>
     <p className="muted">{t("adminLoginSecurityHint")}</p>
