@@ -65,6 +65,7 @@ restore_database() {
 }
 ops_status() { "$SCRIPT_DIR/scripts/ops-status.sh"; }
 generate_secrets() { ZM_ENV_FILE="$ENV_FILE" "$SCRIPT_DIR/scripts/generate-secrets.sh"; }
+setup_platform_admin() { compose run --rm backend python -m app.platform_admin_cli; }
 
 while true; do
   frontend_port="$(env_value FRONTEND_PORT 3003)"
@@ -90,7 +91,8 @@ while true; do
 15) Generate production secrets
 16) Remove containers
 17) Remove containers + volumes
-18) Exit
+18) Set/reset platform admin password
+19) Exit
 ------------------------------------------------------------
  Frontend: http://localhost:${frontend_port} (development) / configured APP_HOST (production)
  Backend:  /api/v1/health and /api/v1/ready
@@ -115,7 +117,8 @@ EOF
     15) generate_secrets; pause ;;
     16) remove_containers ;;
     17) remove_all ;;
-    18) exit 0 ;;
+    18) setup_platform_admin; pause ;;
+    19) exit 0 ;;
     *) echo "Invalid selection"; pause ;;
   esac
 done
