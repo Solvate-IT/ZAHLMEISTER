@@ -38,16 +38,20 @@ export function TemplateSettingsPanel(){
     <h3>{t("messageTemplates")}</h3>
     <p className="muted">{t("messageTemplateHint")}</p>
     {notice&&<div className="notice">{notice}</div>}
-    <div className="template-workspace">
-      <div className="template-list">
-        <button type="button" className={`template-list-button ${creating?"active":""}`} onClick={()=>setCreating(true)}>+ {t("newTemplate")}</button>
-        {items.map(item=><button type="button" key={item.id} className={`template-list-button ${!creating&&selectedId===item.id?"active":""}`} onClick={()=>{setCreating(false);setSelectedId(item.id)}}><span>{item.name}</span>{item.is_default&&<small>{t("defaultTemplate")}</small>}</button>)}
+    <div style={{display:"flex",alignItems:"flex-start",gap:18,flexWrap:"wrap"}}>
+      <div style={{display:"grid",gap:8,flex:"0 1 240px",minWidth:190}}>
+        <TemplateListButton active={creating} onClick={()=>setCreating(true)} label={`+ ${t("newTemplate")}`}/>
+        {items.map(item=><TemplateListButton key={item.id} active={!creating&&selectedId===item.id} onClick={()=>{setCreating(false);setSelectedId(item.id)}} label={item.name} secondary={item.is_default?t("defaultTemplate"):undefined}/>) }
       </div>
-      <div className="template-editor">
+      <div style={{flex:"1 1 420px",minWidth:"min(100%, 360px)"}}>
         {creating?<NewTemplateEditor translation={translation} languages={languages} onCreated={async item=>{setCreating(false);setSelectedId(item.id);setNotice(t("templateSaved"));await load(item.id)}}/>:selected?<TemplateEditor item={selected} translation={translation} languages={languages} onChanged={async updated=>{setSelectedId(updated.id);setNotice(t("templateSaved"));await load(updated.id)}} onDeleted={async()=>{setNotice(t("saved"));setCreating(false);await load(null)}}/>:<div className="empty">{t("noData")}</div>}
       </div>
     </div>
   </section>
+}
+
+function TemplateListButton({active,onClick,label,secondary}:{active:boolean;onClick:()=>void;label:string;secondary?:string}){
+  return <button type="button" onClick={onClick} style={{display:"grid",gap:3,textAlign:"left",border:"1px solid var(--border)",borderRadius:12,padding:"11px 12px",background:active?"#e9f2ff":"white",color:active?"var(--blue)":"var(--navy)",fontWeight:700}}><span>{label}</span>{secondary&&<small className="muted">{secondary}</small>}</button>
 }
 
 function NewTemplateEditor({translation,languages,onCreated}:{translation:TemplateTranslationStatus|null;languages:string[];onCreated:(item:MessageTemplate)=>void}){
@@ -74,7 +78,7 @@ function NewTemplateEditor({translation,languages,onCreated}:{translation:Templa
     <strong>{t("newTemplate")}</strong>
     <div className="field"><label>{t("templateName")}</label><input className="input" autoFocus value={name} onChange={event=>setName(event.target.value)}/></div>
     <div className="field"><label>{t("sourceLanguage")}</label><select className="select" value={language} onChange={event=>setLanguage(event.target.value)}>{translation?.configured&&autoTranslate&&<option value="">{t("detectLanguageAutomatically")}</option>}{languages.map(code=><option key={code} value={code}>{languageName(locale,code)}</option>)}</select></div>
-    <div className="field"><label>{t("initialTemplateText")}</label><textarea className="textarea template-textarea" value={body} onChange={event=>setBody(event.target.value)}/></div>
+    <div className="field"><label>{t("initialTemplateText")}</label><textarea className="textarea" style={{minHeight:260}} value={body} onChange={event=>setBody(event.target.value)}/></div>
     <div className="notice">{t("variables")}: {"{{first_name}} · {{name}} · {{collection_name}} · {{amount}} · {{due_date}} · {{payment_link}} · {{payment_reference}}"}</div>
     {translation?.configured?<label className="checkbox"><input type="checkbox" checked={autoTranslate} onChange={event=>{const enabled=event.target.checked;setAutoTranslate(enabled);if(!enabled&&!language)setLanguage(currentLanguage)}}/>{t("autoTranslateMissing")}</label>:<p className="muted">{t("autoTranslationUnavailable")}</p>}
     {error&&<div className="notice error">{error}</div>}
@@ -102,7 +106,7 @@ function TemplateEditor({item,translation,languages,onChanged,onDeleted}:{item:M
   return <div className="form">
     <div className="field"><label>{t("templateName")}</label><input className="input" value={name} onChange={event=>setName(event.target.value)}/></div>
     <div className="row between"><div className="field" style={{flex:1}}><label>{t("messageLanguage")}</label><select className="select" value={language} onChange={event=>changeLanguage(event.target.value)}>{languages.map(code=><option key={code} value={code}>{languageName(locale,code)}{item.translations[code]?" ✓":""}</option>)}</select></div><span className="muted">{t("translationCoverage",{current:translatedCount,total:languages.length})}</span></div>
-    <div className="field"><label>{t("message")}</label><textarea className="textarea template-textarea" value={body} placeholder={t("missingTranslationHint")} onChange={event=>setBody(event.target.value)}/></div>
+    <div className="field"><label>{t("message")}</label><textarea className="textarea" style={{minHeight:300}} value={body} placeholder={t("missingTranslationHint")} onChange={event=>setBody(event.target.value)}/></div>
     <div className="notice">{t("variables")}: {"{{first_name}} · {{name}} · {{collection_name}} · {{amount}} · {{due_date}} · {{payment_link}} · {{payment_reference}}"}</div>
     <label className="checkbox"><input type="checkbox" checked={isDefault} onChange={event=>setDefault(event.target.checked)}/>{t("makeDefaultTemplate")}</label>
     {error&&<div className="notice error">{error}</div>}
