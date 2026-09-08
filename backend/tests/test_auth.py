@@ -1,4 +1,14 @@
-from app.services.auth import hash_password, normalize_email, token_hash, verify_password
+from datetime import UTC, datetime
+
+from app.core.config import settings
+from app.services.auth import (
+    ADMIN_SESSION_HOURS,
+    hash_password,
+    is_platform_admin,
+    normalize_email,
+    token_hash,
+    verify_password,
+)
 
 
 def test_password_hash_roundtrip() -> None:
@@ -38,3 +48,29 @@ def test_auth_response_exposes_organization_name() -> None:
     response = auth_response("token", user, organization)
 
     assert response.user.organization_name == "Muster Verein"
+
+
+def test_platform_admin_requires_verified_active_allowlisted_user(monkeypatch) -> None:
+    import uuid
+
+    from app.models.entities import User
+
+    monkeypatch.setattr(settings, "platform_admin_emails_raw", "admin@example.com")
+    user = User(
+        id=uuid.uuid4(),
+        organization_id=uuid.uuid4(),
+        email="admin@example.com",
+        display_name="Admin",
+        password_hash="unused",
+        is_active=True,
+    )
+
+    assert not is_platform_admin(user)
+    user.email_verified_at = datetime.now(UTC)
+    assert is_platform_admin(user)
+    user.is_active = False
+    assert not is_platform_admin(user)
+
+
+def test_admin_sessions_are_short_lived() -> None:
+    assert ADMIN_SESSION_HOURS == 8
