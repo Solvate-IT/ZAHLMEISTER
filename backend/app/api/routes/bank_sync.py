@@ -151,6 +151,12 @@ async def finish_ponto(
             description = (error_description or error).replace("\r", " ").replace("\n", " ").strip()
             item.last_error = description[:2000] if description else "Ponto authorization failed"
             item.last_tested_at = now
+            if cancelled:
+                # The encrypted OAuth config also contains the short-lived PKCE verifier
+                # and may contain credentials from an earlier connection. A cancelled
+                # authorization must leave no usable credentials behind.
+                item.encrypted_config = None
+                item.connected_at = None
             result = "cancelled" if cancelled else "error"
         elif not code:
             item.status = "error"
