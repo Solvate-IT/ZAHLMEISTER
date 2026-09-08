@@ -22,17 +22,47 @@ New web Pro purchases use Mollie Customers, Payments, Mandates and Sales Invoice
 
 Existing installations may still contain legacy Mollie `sub_...` subscriptions created by older Zahlmeister versions. Those rows continue to be reconciled and can be cancelled. The new purchase path never creates another Mollie Subscription.
 
-## Invoice state and idempotency
+## Price stability
 
-`billing_invoices` stores one immutable billing-period record per organization/provider/product/period start. It snapshots the tariff version, amount, currency, VAT rate, VAT scheme, tax treatment and relevant recipient information used for that period.
+The first successful web purchase stores the agreed amount, currency and tariff version in the encrypted Mollie subscription verification data. Future automatic renewals use those stored commercial terms, not the then-current public catalog price.
+
+This means changing `PRO_YEARLY_TARIFF` does not silently raise the price for existing Mollie subscribers. A future price migration must be an explicit product/business process with appropriate customer communication and a deliberate update of the subscription terms. Tax treatment is intentionally recalculated for each future billing period because the billing profile, VAT validation or tax rules may legitimately change.
+
+Each `BillingInvoice` also snapshots the exact tariff version, gross amount, currency, VAT rate, VAT scheme, tax treatment and recipient data used for that period, so later changes never rewrite historical billing evidence.
+
+## Invoice state, recovery and idempotency
+
+`billing_invoices` stores one billing-period record per organization/provider/product/period start. A database unique constraint prevents duplicate local annual periods.
 
 Remote invoice creation follows a local-first/outbox-style flow: the local invoice is committed before the worker is allowed to perform the external Sales Invoice POST. This prevents a process failure after Mollie accepted the request from erasing the local recovery record.
 
-Every local invoice has a stable UUID idempotency key. Mollie's idempotency retention is time-bounded, so Zahlmeister does not rely on that key indefinitely. Automatic create retries are allowed only after a short local-first delay and for at most 55 minutes from the local invoice creation time. The billing worker runs every ten minutes so several retries are possible while the key is still within the safe window. Once that window has passed, an unbound invoice is never blindly POSTed again.
+Every local invoice has a stable UUID idempotency key, but Mollie's idempotency retention is time-bounded and therefore is only an additional safeguard. Before any unbound local invoice is POSTed, Zahlmeister first scans the Mollie Sales Invoice list for the stable `ZM:<local billing invoice UUID>` memo reference. It follows Mollie pagination and verifies the organization recipient identifier, environment, VAT scheme, recipient, currency, amount and VAT rate before binding a recovered invoice. If recovery cannot be completed safely, creation fails closed instead of risking a duplicate invoice or double charge.
 
-Every newly created Mollie invoice also carries `ZM:<local billing invoice UUID>` on its memo. If the Mollie request succeeded but its HTTP response was lost, a signed Sales Invoice webhook can therefore recover the exact local row. Zahlmeister then performs an authenticated Mollie GET and verifies the local reference, organization recipient identifier, environment, VAT scheme, recipient, amount, VAT rate and creation window before binding the remote invoice. An unsolicited or ambiguous invoice cannot grant Pro.
+This recovery is not limited by the age of the local invoice. A long worker outage therefore does not create the previous one-hour dead zone: after restart, Zahlmeister can recover a remotely created invoice before deciding whether a new POST is safe.
 
-Mollie Sales Invoice statuses are synchronized both through the signed next-generation webhook and by the worker. The worker is the recovery path when a webhook is delayed or lost.
+Mollie invoice status values are normalized internally (`payment_reversed` and `payment-reversed`, `canceled` and `cancelled`) before they affect entitlement or UI state.
+
+## Cancellation
+
+Cancellation always disables future automatic renewal in Zahlmeister first within the same database transaction.
+
+For the new Sales Invoice flow:
+
+- a staged local renewal that has not yet been created at Mollie is marked cancelled and will never be POSTed;
+- if the remote invoice is missing locally, Zahlmeister first performs the same exhaustive recovery scan before deciding that no remote invoice exists;
+- an open remote renewal invoice is refreshed from Mollie and cancelled through the Sales Invoice API when cancellation is allowed;
+- a renewal that is already paid is not undone: the customer keeps the paid Pro period, but `auto_renew` remains disabled for the following year;
+- `pending-payment` means Mollie has already initiated the asynchronous mandate payment. The UI explicitly states that cancelling at that point stops future renewals but cannot promise that an already-running annual charge will be stopped. If that payment succeeds, the paid period remains active with `auto_renew=false`. If it fails and the invoice returns to an open state, the open invoice is cancelled rather than being left as a future payable renewal.
+
+Legacy Mollie `sub_...` subscriptions continue to use Mollie's subscription cancellation endpoint and remain backward compatible.
+
+## Webhook verification
+
+The Sales Invoice webhook accepts both forms currently documented by Mollie: the direct Sales Invoice entity snapshot and the generic next-generation `event` envelope carrying a `sales-invoice.*` event and `entityId` (or embedded entity).
+
+The HMAC-SHA256 signature is verified against the raw request body using the configured Sales Invoice webhook secret. The webhook body is never trusted as authoritative billing state. After extracting the remote invoice ID, Zahlmeister performs an authenticated `GET /sales-invoices/{id}` and applies only that verified Mollie response.
+
+An unknown remote invoice may bind to a local unbound invoice only when its stable `ZM:<UUID>` reference and the financial/account identity checks match exactly. Otherwise it cannot grant Pro.
 
 ## Mollie configuration
 
@@ -61,22 +91,28 @@ The versioned policy in `backend/app/core/tax_catalog.py` currently supports EU 
 - EU consumers outside Austria: destination-country standard VAT with OSS;
 - EU businesses outside Austria: reverse charge only after the VAT number has been successfully validated through VIES.
 
-If VIES is unavailable, Zahlmeister does not silently grant reverse charge. The checkout/renewal is retried later instead of creating a potentially incorrect tax-free invoice.
+If VIES is unavailable, Zahlmeister does not silently grant reverse charge. Checkout or renewal is retried later instead of creating a potentially incorrect tax-free invoice.
 
 Non-EU billing profiles can already be stored using ISO country codes, but automatic charging is deliberately blocked until an explicit tax rule/provider covers that jurisdiction. Zahlmeister must never infer `0%` merely because a customer is outside the EU. This keeps the data model globally usable without pretending that worldwide VAT/GST/sales-tax compliance has already been implemented.
 
 Future non-EU support should extend the tax-decision abstraction or connect a suitable tax provider. It must retain the same per-invoice tax snapshot so later rule changes cannot rewrite historical billing periods.
 
-## Data model
+## Billing profile and UI transparency
 
-`BillingProfile` contains the current invoice recipient details of an organization. Changes affect future invoices only.
+Business billing profiles require a legal organization name and at least one VAT number or organization/registry number already at API validation time. EU B2B reverse charge still additionally requires a valid VIES VAT number.
 
-`BillingInvoice` is historical billing evidence. Its recipient/tax/tariff snapshots are not recalculated after creation.
+The billing UI shows the current provider/status, auto-renew setting, paid-through date, invoices, billing periods, gross amount, VAT rate and payment status. For Mollie renewal it also shows the subscriber's actual stored annual amount and next renewal date rather than blindly showing the current catalog price. The purchase and renewal copy explicitly states that the displayed annual price includes applicable VAT and that the agreed annual amount is collected automatically through the Mollie mandate until renewal is cancelled.
 
-Both tables reference the organization with cascading deletion, avoiding orphan billing records when an account is deleted.
+Billing/profile/invoice/renewal/cancellation copy is available for all 24 supported Zahlmeister UI languages. English remains the final fallback only for an unknown/unsupported locale.
+
+## Database migrations
+
+Production schema changes are managed with Alembic. `python -m app.db.bootstrap` now runs `upgrade head` and then Alembic's schema-drift check. The existing production `bootstrap` container therefore applies migrations before backend and worker startup and refuses to start the application when model metadata and the migrated schema do not match.
+
+Revision `0001_current_schema_baseline` is a one-time compatibility baseline for installations created before Alembic was introduced. It only creates missing tables/indexes from the current metadata and adopts the existing schema into Alembic. It deliberately does not attempt destructive guesses about unknown production data. The immediate drift check blocks an installation whose existing tables differ from the expected schema so it can be reconciled explicitly. Every schema change after the baseline must be implemented as a normal explicit Alembic revision.
 
 ## Worker behavior
 
 The existing PostgreSQL-backed worker performs the periodic billing recovery scan. It does not introduce Redis, a broker or a second billing service.
 
-The billing scan runs every ten minutes and selects only organizations that require action: pending first payments, grace-period subscriptions, renewals whose paid-through date has been reached, or local Mollie invoices with an open status. Failures are isolated per organization so one invalid billing profile or temporary VIES failure cannot stop unrelated renewals.
+The billing scan runs every ten minutes and selects only organizations that require action: pending first payments, grace-period subscriptions, renewals whose paid-through date has been reached, or local Mollie invoices with an open status. Failures are isolated per organization so one invalid billing profile, temporary VIES failure or Mollie outage cannot stop unrelated renewals.
