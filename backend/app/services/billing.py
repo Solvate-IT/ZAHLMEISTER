@@ -12,7 +12,7 @@ from app.models.platform import StoreSubscription
 from app.services.secrets import encrypt_config
 
 PRO_PRODUCT_ID = "zahlmeister.pro.yearly"
-ENTITLED_STATUSES = {"active", "grace_period"}
+ENTITLED_STATUSES = {"active", "grace_period", "cancelled"}
 PURCHASE_PROVIDERS = {"apple", "google", "mollie"}
 STORE_STATUSES = {
     "pending",
@@ -58,6 +58,8 @@ def subscription_is_entitled(
     current = now or datetime.now(UTC)
     if subscription.status not in ENTITLED_STATUSES:
         return False
+    if subscription.status == "cancelled":
+        return subscription.expires_at is not None and subscription.expires_at > current
     return subscription.expires_at is None or subscription.expires_at > current
 
 
