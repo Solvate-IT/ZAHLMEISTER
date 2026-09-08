@@ -40,11 +40,11 @@ def reply_address(message_id: UUID) -> str:
 
 
 def message_id_from_reply_address(value: str | None) -> UUID | None:
-    address = parseaddr(value or "")[1].strip().lower()
+    address = parseaddr(value or "")[1].strip()
     if not address or "@" not in address:
         return None
     local, domain = address.rsplit("@", 1)
-    if domain != _reply_domain() or not local.startswith("reply+"):
+    if domain.lower() != _reply_domain() or not local.lower().startswith("reply+"):
         return None
     token = local[6:]
     try:
