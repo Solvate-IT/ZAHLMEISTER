@@ -15,6 +15,7 @@ from app.services.mollie_billing import (
     _reset_finished_subscription_data,
     _stored_billing_terms,
     _verified_metadata,
+    _webhook_url,
     amount_value,
     billing_configured,
 )
@@ -90,6 +91,20 @@ def test_new_checkout_clears_finished_subscription_state_but_keeps_customer() ->
     }
     _reset_finished_subscription_data(data)
     assert data == {"mollie_customer_id": "cst_example"}
+
+
+def test_local_development_does_not_send_unreachable_mollie_webhook(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "environment", "development")
+    monkeypatch.setattr(settings, "oauth_callback_base_url", "http://localhost:8003")
+    assert _webhook_url() is None
+
+
+def test_public_callback_generates_mollie_webhook_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "oauth_callback_base_url", "https://zahlmeister.solvate.at")
+    assert _webhook_url() == "https://zahlmeister.solvate.at/api/v1/billing/mollie/webhook"
 
 
 def test_payment_metadata_binds_purchase_to_organization() -> None:
