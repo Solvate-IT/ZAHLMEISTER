@@ -150,29 +150,43 @@ async def active_entitlement_subscription(
     return next((item for item in rows if subscription_is_entitled(item, now=now)), None)
 
 
+async def latest_subscription(
+    session: AsyncSession,
+    organization_id: UUID,
+) -> StoreSubscription | None:
+    return await session.scalar(
+        select(StoreSubscription)
+        .where(StoreSubscription.organization_id == organization_id)
+        .order_by(StoreSubscription.updated_at.desc(), StoreSubscription.created_at.desc())
+        .limit(1)
+    )
+
+
 async def entitlement_for_organization(
     session: AsyncSession,
     organization_id: UUID,
 ) -> Entitlement:
     subscription = await active_entitlement_subscription(session, organization_id)
-    if subscription is None:
+    if subscription is not None:
         return Entitlement(
-            active=False,
-            plan="free",
-            provider=None,
-            status=None,
-            product_id=None,
-            expires_at=None,
-            auto_renew=None,
+            active=True,
+            plan="pro",
+            provider=subscription.provider,
+            status=subscription.status,
+            product_id=subscription.product_id,
+            expires_at=subscription.expires_at,
+            auto_renew=subscription.auto_renew,
         )
+
+    latest = await latest_subscription(session, organization_id)
     return Entitlement(
-        active=True,
-        plan="pro",
-        provider=subscription.provider,
-        status=subscription.status,
-        product_id=subscription.product_id,
-        expires_at=subscription.expires_at,
-        auto_renew=subscription.auto_renew,
+        active=False,
+        plan="free",
+        provider=latest.provider if latest else None,
+        status=latest.status if latest else None,
+        product_id=latest.product_id if latest else None,
+        expires_at=latest.expires_at if latest else None,
+        auto_renew=latest.auto_renew if latest else None,
     )
 
 
