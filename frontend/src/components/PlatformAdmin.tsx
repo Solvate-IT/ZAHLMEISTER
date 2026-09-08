@@ -3,18 +3,22 @@
 import Link from "next/link";
 import {useEffect,useMemo,useState} from "react";
 import {useRouter,useSearchParams} from "next/navigation";
-import {adminApi} from "@/lib/adminApi";
-import type {PlatformAdminSummary,PlatformCustomer,PlatformCustomerDetail} from "@/lib/types";
+import {api} from "@/lib/api";
+import {AdminApiError,adminApi} from "@/lib/adminApi";
+import type {AccountUser,PlatformAdminSummary,PlatformCustomer,PlatformCustomerDetail} from "@/lib/types";
 import {Brand} from "./Brand";
 import {LocaleSelect} from "./LocaleSelect";
 import {Empty,Loading} from "./State";
 import {useI18n} from "@/lib/i18n";
+
+type AccessState="checking"|"login"|"authorized"|"denied";
 
 export function PlatformAdmin(){
   const router=useRouter();
   const params=useSearchParams();
   const {t}=useI18n();
   const customerId=params.get("customer");
+  const [access,setAccess]=useState<AccessState>("checking");
   const [summary,setSummary]=useState<PlatformAdminSummary|null>(null);
   const [customers,setCustomers]=useState<PlatformCustomer[]>([]);
   const [detail,setDetail]=useState<PlatformCustomerDetail|null>(null);
@@ -22,20 +26,56 @@ export function PlatformAdmin(){
   const [search,setSearch]=useState("");
   const [notice,setNotice]=useState("");
 
+  useEffect(()=>{
+    let active=true;
+    api.restore().then(user=>{
+      if(!active)return;
+      setAccess(user?.is_platform_admin?"authorized":user?"denied":"login");
+      if(!user||!user.is_platform_admin)setLoading(false);
+    }).catch(()=>{if(active){setAccess("login");setLoading(false)}});
+    return()=>{active=false};
+  },[]);
+
   async function load(){
+    if(access!=="authorized")return;
     setLoading(true);setNotice("");
     try{
       if(customerId){setDetail(await adminApi.customer(customerId));return}
       const [s,c]=await Promise.all([adminApi.summary(),adminApi.customers()]);
       setSummary(s);setCustomers(c);setDetail(null);
-    }catch{
-      if(customerId){setNotice(t("adminCustomerLoadError"));setDetail(null)}else{router.replace("/app")}
+    }catch(error){
+      if(error instanceof AdminApiError&&error.status===401){
+        await api.logout().catch(()=>{});
+        setAccess("login");
+        setSummary(null);setCustomers([]);setDetail(null);
+        return;
+      }
+      if(error instanceof AdminApiError&&error.status===403){
+        setAccess("denied");
+        setSummary(null);setCustomers([]);setDetail(null);
+        return;
+      }
+      if(customerId){setNotice(t("adminCustomerLoadError"));setDetail(null)}else{setNotice(t("requestFailed"))}
     }finally{setLoading(false)}
   }
 
-  useEffect(()=>{load()},[customerId]);
+  useEffect(()=>{if(access==="authorized")load()},[access,customerId]);
   const filtered=useMemo(()=>customers.filter(c=>`${c.organization_name} ${c.primary_email??""}`.toLowerCase().includes(search.toLowerCase())),[customers,search]);
 
+  async function onAdminAuthenticated(user:AccountUser){
+    if(!user.is_platform_admin){
+      await api.logout().catch(()=>{});
+      setAccess("denied");
+      return;
+    }
+    setAccess("authorized");
+    setLoading(true);
+  }
+  async function useDifferentAccount(){
+    await api.logout().catch(()=>{});
+    setSummary(null);setCustomers([]);setDetail(null);setNotice("");
+    setAccess("login");
+  }
   async function rename(customer:PlatformCustomer){
     const value=window.prompt(t("adminRenameCustomer"),customer.organization_name)?.trim();
     if(!value||value===customer.organization_name)return;
@@ -55,7 +95,10 @@ export function PlatformAdmin(){
   }
   function openCustomer(id:string){router.push(`/admin?customer=${encodeURIComponent(id)}`)}
 
-  if(loading)return <div className="auth-wrap"><Loading/></div>;
+  if(access==="checking"||(access==="authorized"&&loading))return <AdminFrame><Loading/></AdminFrame>;
+  if(access==="login")return <AdminFrame><AdminLogin onAuthenticated={onAdminAuthenticated}/></AdminFrame>;
+  if(access==="denied")return <AdminFrame><div className="auth-card"><h1>{t("adminAccessDenied")}</h1><p className="muted">{t("adminAccessDeniedHint")}</p><div className="actions"><Link className="button secondary" href="/app">{t("backToApp")}</Link><button className="button" onClick={useDifferentAccount}>{t("adminUseDifferentAccount")}</button></div></div></AdminFrame>;
+
   return <div className="page-bg">
     <header className="topbar"><Link href="/app"><Brand compact/></Link><div className="top-actions"><LocaleSelect/><Link className="button secondary small" href="/app">{t("backToApp")}</Link></div></header>
     <main className="container section">
@@ -67,6 +110,41 @@ export function PlatformAdmin(){
         {filtered.length===0?<Empty text={t("adminNoCustomers")}/>:<div className="table-wrap"><table className="table"><thead><tr><th>{t("name")}</th><th>{t("email")}</th><th>{t("adminPlan")}</th><th>{t("participants")}</th><th>{t("collections")}</th><th>{t("lastLogin")}</th><th>{t("actions")}</th></tr></thead><tbody>{filtered.map(c=><tr key={c.organization_id}><td><button className="button ghost small" onClick={()=>openCustomer(c.organization_id)}><strong>{c.organization_name}</strong></button><div className="muted">{c.locale} · {c.currency}</div></td><td>{c.primary_email??"—"}<div className="muted">{c.active_user_count}/{c.user_count} {t("active")}</div></td><td><span className={`status-pill ${c.plan==="pro"?"paid":""}`}>{c.plan.toUpperCase()}</span><div className="muted">{c.billing_provider??"—"}{c.subscription_expires_at?` · ${new Date(c.subscription_expires_at).toLocaleDateString()}`:""}</div></td><td>{c.participants}<div className="muted">{c.participant_lists} {t("participantLists")}</div></td><td>{c.collections}</td><td>{c.last_login_at?new Date(c.last_login_at).toLocaleString():"—"}</td><td><div className="actions"><button className="button secondary small" onClick={()=>openCustomer(c.organization_id)}>{t("view")}</button><button className="button secondary small" onClick={()=>rename(c)}>{t("edit")}</button><button className="button secondary small" onClick={()=>toggleApi(c)}>{c.api_enabled?t("adminDisableApi"):t("adminEnableApi")}</button>{c.plan==="free"?<button className="button small" onClick={()=>grantPro(c)}>{t("adminGrantPro")}</button>:c.billing_provider==="admin"?<button className="button ghost small danger-text" onClick={()=>revokePro(c)}>{t("adminRevokePro")}</button>:null}</div></td></tr>)}</tbody></table></div>}
       </>}
     </main>
+  </div>;
+}
+
+function AdminFrame({children}:{children:React.ReactNode}){
+  return <div className="page-bg"><header className="topbar"><Link href="/"><Brand compact/></Link><div className="top-actions"><LocaleSelect/><Link className="button secondary small" href="/">←</Link></div></header><main className="auth-wrap">{children}</main></div>;
+}
+
+function AdminLogin({onAuthenticated}:{onAuthenticated:(user:AccountUser)=>void}){
+  const {t}=useI18n();
+  const [email,setEmail]=useState("");
+  const [password,setPassword]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState("");
+  const [info,setInfo]=useState("");
+  async function submit(event:React.FormEvent){
+    event.preventDefault();setBusy(true);setError("");setInfo("");
+    try{onAuthenticated(await adminApi.login(email.trim(),password))}catch{setError(t("adminInvalidCredentials"))}finally{setBusy(false)}
+  }
+  async function forgot(){
+    if(!email.trim())return;
+    setBusy(true);setError("");setInfo("");
+    try{await api.forgotPassword(email.trim());setInfo(t("resetLinkSent"))}catch{setError(t("requestFailed"))}finally{setBusy(false)}
+  }
+  return <div className="auth-card">
+    <div className="brand"><Brand compact/></div>
+    <h1>{t("adminLoginTitle")}</h1>
+    <p className="muted">{t("adminLoginHint")}</p>
+    {error&&<div className="notice error">{error}</div>}{info&&<div className="notice success">{info}</div>}
+    <form className="form" onSubmit={submit}>
+      <div className="field"><label>{t("email")}</label><input className="input" type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="username" required/></div>
+      <div className="field"><label>{t("password")}</label><input className="input" type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" required/></div>
+      <button className="button" disabled={busy}>{t("login")}</button>
+    </form>
+    <button className="button ghost" onClick={forgot} disabled={busy||!email.trim()}>{t("forgotPassword")}</button>
+    <p className="muted">{t("adminLoginSecurityHint")}</p>
   </div>;
 }
 
