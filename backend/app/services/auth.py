@@ -11,7 +11,9 @@ from app.models.entities import AuthSession, Organization, User
 from app.schemas.auth import AuthResponse, UserRead
 
 _password_hasher = PasswordHasher()
+_DUMMY_PASSWORD_HASH = _password_hasher.hash(secrets.token_urlsafe(32))
 SESSION_DAYS = 30
+ADMIN_SESSION_HOURS = 8
 
 
 def normalize_email(email: str) -> str:
@@ -31,16 +33,34 @@ def verify_password(password_hash: str | None, password: str) -> bool:
         return False
 
 
+def verify_missing_user_password(password: str) -> None:
+    """Spend roughly the same Argon2 work for unknown users to reduce timing leaks."""
+    verify_password(_DUMMY_PASSWORD_HASH, password)
+
+
+def is_platform_admin(user: User) -> bool:
+    return (
+        user.is_active
+        and user.email_verified_at is not None
+        and user.email.casefold() in settings.platform_admin_emails
+    )
+
+
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-async def create_auth_session(session: AsyncSession, user: User) -> str:
+async def create_auth_session(
+    session: AsyncSession,
+    user: User,
+    *,
+    ttl: timedelta | None = None,
+) -> str:
     token = secrets.token_urlsafe(32)
     auth_session = AuthSession(
         user_id=user.id,
         token_hash=_hash_token(token),
-        expires_at=datetime.now(UTC) + timedelta(days=SESSION_DAYS),
+        expires_at=datetime.now(UTC) + (ttl or timedelta(days=SESSION_DAYS)),
     )
     session.add(auth_session)
     await session.flush()
@@ -61,7 +81,7 @@ def user_read(user: User, organization: Organization) -> UserRead:
         locale=organization.locale,
         currency=organization.currency,
         email_verified=user.email_verified_at is not None,
-        is_platform_admin=user.email.casefold() in settings.platform_admin_emails,
+        is_platform_admin=is_platform_admin(user),
     )
 
 
