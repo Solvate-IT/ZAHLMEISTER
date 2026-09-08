@@ -7,10 +7,10 @@ from app.services.imports import parse_import
 
 def test_csv_import_preview() -> None:
     data = (
-        "Name;E-Mail;Telefon\n"
-        "Anna Muster;anna@example.at;+43 660 1234567\n"
-        "Max Beispiel;max@example.at;+43 664 7654321\n"
-    ).encode()
+        b"Name;E-Mail;Telefon\n"
+        b"Anna Muster;anna@example.at;+43 660 1234567\n"
+        b"Max Beispiel;max@example.at;+43 664 7654321\n"
+    )
     preview = parse_import("teilnehmer.csv", "text/csv", data)
     assert preview.source_type == "text"
     assert [row.name for row in preview.participants] == ["Anna Muster", "Max Beispiel"]
