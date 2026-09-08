@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urlparse
@@ -27,7 +27,9 @@ logger = logging.getLogger(__name__)
 MOLLIE_PROVIDER = "mollie"
 MOLLIE_INTERVAL = "12 months"
 MOLLIE_PURPOSE = "zahlmeister_pro_subscription"
+MOLLIE_GRACE_DAYS = 7
 OPEN_PAYMENT_STATUSES = {"open", "pending"}
+FAILED_PAYMENT_STATUSES = {"failed", "canceled", "expired"}
 USABLE_MANDATE_STATUSES = {"pending", "valid"}
 
 
@@ -193,6 +195,26 @@ def _verified_metadata(payment: dict[str, Any]) -> UUID:
         raise MollieBillingVerificationError("Mollie payment account binding is invalid") from exc
 
 
+def _grace_expiry(
+    data: dict[str, Any],
+    paid_through: datetime | None,
+    *,
+    now: datetime | None = None,
+) -> datetime:
+    existing = _parse_datetime(data.get("grace_until"))
+    if existing is not None:
+        return existing
+    current = now or datetime.now(UTC)
+    base = paid_through or current
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=UTC)
+    else:
+        base = base.astimezone(UTC)
+    grace_until = base + timedelta(days=MOLLIE_GRACE_DAYS)
+    data["grace_until"] = grace_until.isoformat()
+    return grace_until
+
+
 async def _request_json(
     method: str,
     path: str,
@@ -320,8 +342,34 @@ def _reset_finished_subscription_data(data: dict[str, Any]) -> None:
         "last_payment_status",
         "billing_amount",
         "billing_currency",
+        "grace_until",
     ):
         data.pop(key, None)
+
+
+async def _apply_failed_renewal(
+    session: AsyncSession,
+    row: StoreSubscription,
+    data: dict[str, Any],
+    remote_status: str,
+) -> None:
+    now = datetime.now(UTC)
+    grace_until = _grace_expiry(data, row.expires_at, now=now)
+    row.expires_at = grace_until
+    row.last_verified_at = now
+    if grace_until <= now:
+        row.status = "expired"
+        row.auto_renew = False
+        row.cancelled_at = row.cancelled_at or now
+    elif remote_status == "canceled":
+        row.status = "cancelled"
+        row.auto_renew = False
+        row.cancelled_at = row.cancelled_at or now
+    else:
+        row.status = "grace_period"
+        row.auto_renew = remote_status in {"active", "pending"}
+    row.verification_data_encrypted = encrypt_config(data)
+    await session.flush()
 
 
 async def start_checkout(
@@ -536,6 +584,7 @@ async def _process_first_payment(
             "subscription_status": str(subscription.get("status", "active")),
         }
     )
+    data.pop("grace_until", None)
     await apply_verified_subscription(
         session,
         row.organization_id,
@@ -575,6 +624,7 @@ async def _process_recurring_payment(
         paid_at = _parse_datetime(payment.get("paidAt")) or datetime.now(UTC)
         next_payment = _parse_date(subscription.get("nextPaymentDate")) or _add_year(paid_at.date())
         mapped_status = "active" if remote_status == "active" else _map_subscription_status(remote_status)
+        data.pop("grace_until", None)
         await apply_verified_subscription(
             session,
             row.organization_id,
@@ -593,6 +643,9 @@ async def _process_recurring_payment(
         )
         return
 
+    if payment_status in FAILED_PAYMENT_STATUSES and remote_status in {"active", "pending", "canceled"}:
+        await _apply_failed_renewal(session, row, data, remote_status)
+        return
     if remote_status in {"canceled", "completed", "suspended"}:
         await _apply_remote_subscription_status(session, row, data, subscription)
     else:
@@ -639,29 +692,62 @@ async def _reconcile_subscription(
     if not isinstance(customer_id, str) or not isinstance(subscription_id, str):
         return
     subscription = await _get_subscription(customer_id, subscription_id)
+    remote_status = str(subscription.get("status", ""))
     payments = await _latest_subscription_payments(customer_id, subscription_id)
-    latest_paid = next((item for item in payments if item.get("status") == "paid"), None)
-    if latest_paid is not None:
-        metadata_org = _verified_metadata(latest_paid)
-        if metadata_org != row.organization_id:
-            raise MollieBillingVerificationError("Mollie subscription payment account binding is invalid")
-        payment_subscription_id = latest_paid.get("subscriptionId")
-        if payment_subscription_id not in {None, subscription_id}:
-            raise MollieBillingVerificationError("Mollie subscription payment binding is invalid")
-        billing_amount, billing_currency = _stored_billing_terms(data)
-        if not _payment_amount_matches(latest_paid, billing_amount, billing_currency):
-            raise MollieBillingVerificationError("Mollie subscription payment amount is invalid")
-        data.update(
-            {
-                "last_payment_id": latest_paid.get("id"),
-                "last_payment_status": "paid",
-                "subscription_status": str(subscription.get("status", "")),
-            }
+    latest = payments[0] if payments else None
+    if latest is None:
+        await _apply_remote_subscription_status(session, row, data, subscription)
+        return
+
+    metadata_org = _verified_metadata(latest)
+    if metadata_org != row.organization_id:
+        raise MollieBillingVerificationError("Mollie subscription payment account binding is invalid")
+    payment_subscription_id = latest.get("subscriptionId")
+    if payment_subscription_id not in {None, subscription_id}:
+        raise MollieBillingVerificationError("Mollie subscription payment binding is invalid")
+    billing_amount, billing_currency = _stored_billing_terms(data)
+    if not _payment_amount_matches(latest, billing_amount, billing_currency):
+        raise MollieBillingVerificationError("Mollie subscription payment amount is invalid")
+
+    payment_status = str(latest.get("status", ""))
+    data.update(
+        {
+            "last_payment_id": latest.get("id"),
+            "last_payment_status": payment_status,
+            "subscription_status": remote_status,
+        }
+    )
+    if payment_status == "paid":
+        paid_at = _parse_datetime(latest.get("paidAt")) or datetime.now(UTC)
+        next_payment = _parse_date(subscription.get("nextPaymentDate")) or _add_year(paid_at.date())
+        mapped_status = "active" if remote_status == "active" else _map_subscription_status(remote_status)
+        data.pop("grace_until", None)
+        await apply_verified_subscription(
+            session,
+            row.organization_id,
+            VerifiedSubscription(
+                provider=MOLLIE_PROVIDER,
+                product_id=PRO_PRODUCT_ID,
+                external_reference=subscription_id,
+                account_token=str(row.organization_id),
+                status=mapped_status,
+                purchased_at=row.purchased_at or paid_at,
+                expires_at=_end_of_date(next_payment),
+                auto_renew=remote_status == "active",
+                environment=settings.mollie_billing_environment,
+                verification_data=data,
+            ),
         )
-        next_payment = _parse_date(subscription.get("nextPaymentDate"))
-        if next_payment is not None:
-            row.expires_at = _end_of_date(next_payment)
-    await _apply_remote_subscription_status(session, row, data, subscription)
+        return
+    if payment_status in FAILED_PAYMENT_STATUSES and remote_status in {"active", "pending", "canceled"}:
+        await _apply_failed_renewal(session, row, data, remote_status)
+        return
+    if remote_status in {"canceled", "completed", "suspended"}:
+        await _apply_remote_subscription_status(session, row, data, subscription)
+        return
+    row.last_verified_at = datetime.now(UTC)
+    row.verification_data_encrypted = encrypt_config(data)
+    await session.flush()
 
 
 async def sync_subscription(session: AsyncSession, organization_id: UUID) -> None:
