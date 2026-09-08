@@ -1,10 +1,10 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.models.entities import Organization, User
+from app.models.entities import AuthSession, Organization, User
 from app.services.auth import hash_password, normalize_email
 
 
@@ -36,3 +36,39 @@ async def bootstrap_platform_admin() -> None:
                 email_verified_at=datetime.now(UTC),
             )
         )
+
+
+async def set_platform_admin_password(email: str, password: str) -> None:
+    normalized = normalize_email(email)
+    if normalized not in settings.platform_admin_emails:
+        raise RuntimeError("Platform admin email must be listed in PLATFORM_ADMIN_EMAILS")
+    if len(password) < 16:
+        raise ValueError("Platform admin password must be at least 16 characters")
+
+    async with SessionLocal.begin() as session:
+        user = await session.scalar(select(User).where(User.email == normalized).with_for_update())
+        if user is None:
+            organization = Organization(
+                name=settings.platform_admin_bootstrap_name or "Zahlmeister Administration",
+                locale="de-AT",
+                currency="EUR",
+            )
+            session.add(organization)
+            await session.flush()
+            user = User(
+                organization_id=organization.id,
+                email=normalized,
+                display_name=settings.platform_admin_bootstrap_name or "Zahlmeister Administration",
+                password_hash=hash_password(password),
+                email_verified_at=datetime.now(UTC),
+                is_active=True,
+            )
+            session.add(user)
+            await session.flush()
+        else:
+            user.password_hash = hash_password(password)
+            user.is_active = True
+            if user.email_verified_at is None:
+                user.email_verified_at = datetime.now(UTC)
+
+        await session.execute(delete(AuthSession).where(AuthSession.user_id == user.id))
