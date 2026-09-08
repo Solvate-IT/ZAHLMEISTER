@@ -5,11 +5,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.entities import ApiCredential, AuthSession, Organization, User
 from app.services.api_access import credential_is_active, decode_scopes
-from app.services.auth import token_hash
+from app.services.auth import ADMIN_SESSION_HOURS, is_platform_admin, token_hash
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -50,10 +49,16 @@ async def get_current_user(
 
 
 async def require_platform_admin(
+    auth_session: AuthSession = Depends(get_current_auth_session),
     user: User = Depends(get_current_user),
 ) -> User:
-    if user.email.casefold() not in settings.platform_admin_emails:
+    if not is_platform_admin(user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Platform admin required")
+    if auth_session.created_at is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin session expired")
+    maximum_ttl = timedelta(hours=ADMIN_SESSION_HOURS, minutes=1)
+    if auth_session.expires_at - auth_session.created_at > maximum_ttl:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin session required")
     return user
 
 
