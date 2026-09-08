@@ -3,11 +3,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_organization, get_session
 from app.db.session import SessionLocal
-from app.models.entities import Organization, Participant, ParticipantList
+from app.models.entities import CollectionParticipant, Organization, Participant, ParticipantList
 from app.schemas.workflow import (
     ParticipantChannelRead,
     ParticipantChannelUpdate,
@@ -345,6 +346,26 @@ async def delete_participant(
         stored_org = await session.get(Organization, organization.id)
         assert stored_org is not None
         _item, participant = await _owned_participant(
-            session, stored_org, list_id, participant_id
+            session, stored_org, list_id, participant_id, for_update=True
         )
-        await session.delete(participant)
+        historical_reference = await session.scalar(
+            select(CollectionParticipant.id)
+            .where(CollectionParticipant.participant_id == participant.id)
+            .limit(1)
+        )
+        if historical_reference is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Participant is used by a collection and cannot be deleted",
+            )
+        try:
+            await session.delete(participant)
+            await session.flush()
+        except IntegrityError as exc:
+            # The FK also protects against a concurrent collection creation between the
+            # explicit check above and the delete. Convert that integrity guard into a
+            # stable API conflict instead of leaking a database error.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Participant is used by a collection and cannot be deleted",
+            ) from exc
