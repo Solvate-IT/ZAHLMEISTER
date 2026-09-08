@@ -11,8 +11,7 @@ from app.services.mollie_billing_webhooks import (
 
 
 def _signature(secret: str, body: bytes) -> str:
-    digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
-    return f"sha256={digest}"
+    return hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
 
 
 def test_valid_sales_invoice_webhook_signature(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -22,7 +21,14 @@ def test_valid_sales_invoice_webhook_signature(monkeypatch: pytest.MonkeyPatch) 
     verify_sales_invoice_signature(body, _signature(secret, body))
 
 
-@pytest.mark.parametrize("signature", [None, "", "invalid", "sha256=1234"])
+def test_optional_sha256_prefix_is_tolerated(monkeypatch: pytest.MonkeyPatch) -> None:
+    secret = "a" * 64
+    body = b'{"resource":"sales-invoice","id":"invoice_example","status":"paid"}'
+    monkeypatch.setattr(settings, "mollie_billing_webhook_secret", secret)
+    verify_sales_invoice_signature(body, f"sha256={_signature(secret, body)}")
+
+
+@pytest.mark.parametrize("signature", [None, "", "invalid", "sha256=1234", "z" * 64])
 def test_invalid_sales_invoice_webhook_signature_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
     signature: str | None,
