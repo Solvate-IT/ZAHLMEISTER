@@ -8,11 +8,10 @@ import pytest
 
 from app.core.config import settings
 from app.models.billing import BillingInvoice
-from app.services.mollie_billing import _invoice_reference
+from app.services.mollie_billing import _invoice_reference, _reference_invoice_id, _remote_invoice_matches_local
 from app.services.mollie_billing_webhooks import (
     MollieBillingWebhookError,
-    _reference_invoice_id,
-    _remote_invoice_matches_local,
+    _invoice_id_from_webhook_payload,
     verify_sales_invoice_signature,
 )
 
@@ -56,7 +55,7 @@ def _remote(item: BillingInvoice) -> dict:
         "recipientIdentifier": f"zahlmeister-{item.organization_id}",
         "recipient": {"type": "consumer", "country": "AT"},
         "memo": _invoice_reference(item),
-        "createdAt": (item.created_at + timedelta(minutes=10)).isoformat(),
+        "createdAt": (item.created_at + timedelta(hours=3)).isoformat(),
         "lines": [
             {
                 "quantity": 1,
@@ -74,9 +73,9 @@ def test_valid_sales_invoice_webhook_signature(monkeypatch: pytest.MonkeyPatch) 
     verify_sales_invoice_signature(body, _signature(secret, body))
 
 
-def test_optional_sha256_prefix_is_tolerated(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_documented_sha256_prefix_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
     secret = "a" * 64
-    body = b'{"resource":"sales-invoice","id":"invoice_example","status":"paid"}'
+    body = b'{"resource":"event","type":"sales-invoice.paid","entityId":"invoice_example"}'
     monkeypatch.setattr(settings, "mollie_billing_webhook_secret", secret)
     verify_sales_invoice_signature(body, f"sha256={_signature(secret, body)}")
 
@@ -100,7 +99,40 @@ def test_modified_webhook_body_is_rejected(monkeypatch: pytest.MonkeyPatch) -> N
         verify_sales_invoice_signature(modified, _signature(secret, original))
 
 
-def test_remote_invoice_reference_recovers_exact_local_invoice() -> None:
+def test_direct_sales_invoice_snapshot_extracts_invoice_id() -> None:
+    assert _invoice_id_from_webhook_payload(
+        {"resource": "sales-invoice", "id": "invoice_example"}
+    ) == "invoice_example"
+
+
+def test_next_gen_event_envelope_extracts_entity_id() -> None:
+    assert _invoice_id_from_webhook_payload(
+        {
+            "resource": "event",
+            "type": "sales-invoice.paid",
+            "entityId": "invoice_example",
+        }
+    ) == "invoice_example"
+
+
+def test_full_next_gen_event_can_use_embedded_entity_id() -> None:
+    assert _invoice_id_from_webhook_payload(
+        {
+            "resource": "event",
+            "type": "sales-invoice.issued",
+            "_embedded": {"entity": {"id": "invoice_example"}},
+        }
+    ) == "invoice_example"
+
+
+def test_unrelated_event_is_rejected() -> None:
+    with pytest.raises(MollieBillingWebhookError):
+        _invoice_id_from_webhook_payload(
+            {"resource": "event", "type": "payment-link.paid", "entityId": "invoice_example"}
+        )
+
+
+def test_remote_invoice_reference_recovers_exact_local_invoice_even_after_long_delay() -> None:
     item = _invoice()
     payload = _remote(item)
     assert _reference_invoice_id(payload) == item.id
@@ -118,11 +150,4 @@ def test_remote_invoice_recovery_rejects_wrong_local_reference() -> None:
     item = _invoice()
     payload = _remote(item)
     payload["memo"] = f"ZM:{uuid4()}"
-    assert _remote_invoice_matches_local(item, payload) is False
-
-
-def test_remote_invoice_recovery_rejects_creation_outside_retry_window() -> None:
-    item = _invoice()
-    payload = _remote(item)
-    payload["createdAt"] = (item.created_at + timedelta(hours=2)).isoformat()
     assert _remote_invoice_matches_local(item, payload) is False
