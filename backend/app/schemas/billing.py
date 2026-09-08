@@ -102,8 +102,11 @@ class BillingProfileWrite(BaseModel):
         if self.customer_type == "consumer":
             if not self.given_name or not self.family_name:
                 raise ValueError("Consumer billing requires given name and family name")
-        elif not self.organization_name:
-            raise ValueError("Business billing requires organization name")
+        else:
+            if not self.organization_name:
+                raise ValueError("Business billing requires organization name")
+            if not self.vat_number and not self.organization_number:
+                raise ValueError("Business billing requires a VAT number or organization number")
         return self
 
 
