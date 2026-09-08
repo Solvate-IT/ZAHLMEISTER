@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,9 +21,21 @@ class StoreSubscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     purchased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    auto_renew: Mapped[bool | None] = mapped_column(Boolean)
+    environment: Mapped[str | None] = mapped_column(String(20))
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    verification_data_encrypted: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
         UniqueConstraint("organization_id", "provider", name="uq_store_subscription_org_provider"),
+        CheckConstraint(
+            "provider IN ('admin','apple','google','mollie')",
+            name="ck_store_subscriptions_provider",
+        ),
+        CheckConstraint(
+            "status IN ('pending','active','grace_period','cancelled','expired','revoked','on_hold')",
+            name="ck_store_subscriptions_status",
+        ),
         Index("ix_store_subscriptions_org_status", "organization_id", "status"),
     )
 
