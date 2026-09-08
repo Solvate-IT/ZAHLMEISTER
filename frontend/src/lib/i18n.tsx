@@ -5,6 +5,7 @@ import de from "@/locales/de.json";
 import en from "@/locales/en.json";
 import {adminMessages} from "@/locales/admin";
 import {billingMessages} from "@/locales/billing";
+import {billingProfileMessages} from "@/locales/billingProfile";
 import {integrationMessages} from "@/locales/integrations";
 import {settingsMessages} from "@/locales/settings";
 
@@ -22,8 +23,7 @@ const loaders: Record<string, () => Promise<{default: Messages}>> = {
   lt: () => import("@/locales/lt.json"), lv: () => import("@/locales/lv.json"),
   mt: () => import("@/locales/mt.json"), nl: () => import("@/locales/nl.json"),
   pl: () => import("@/locales/pl.json"), pt: () => import("@/locales/pt.json"),
-  ro: () => import("@/locales/ro.json"), sk: () => import("@/locales/sk.json"),
-  sl: () => import("@/locales/sl.json"), sv: () => import("@/locales/sv.json"),
+  ro: () => import("@/locales/ro.json"), sk: () => import("@/locales/sk.json"), sl: () => import("@/locales/sl.json"), sv: () => import("@/locales/sv.json"),
 };
 
 interface I18nValue {
@@ -67,10 +67,13 @@ export function I18nProvider({children}: {children: React.ReactNode}) {
 
   const t = useCallback((key: string, params: Params = {}) => {
     const billingForLocale = billingMessages[locale] ?? billingMessages.en;
+    const billingProfileForLocale = billingProfileMessages[locale] ?? billingProfileMessages.en;
     const adminForLocale = adminMessages[locale] ?? adminMessages.en;
     const integrationsForLocale = integrationMessages[locale] ?? integrationMessages.en;
     const settingsForLocale = settingsMessages[locale] ?? settingsMessages.en;
-    const fallback = billingForLocale[key]
+    const fallback = billingProfileForLocale[key]
+      ?? billingProfileMessages.en[key]
+      ?? billingForLocale[key]
       ?? billingMessages.en[key]
       ?? settingsForLocale[key]
       ?? settingsMessages.en[key]
@@ -81,7 +84,7 @@ export function I18nProvider({children}: {children: React.ReactNode}) {
       ?? (de as Messages)[key]
       ?? (en as Messages)[key]
       ?? key;
-    let value = billingForLocale[key] ?? settingsForLocale[key] ?? messages[key] ?? fallback;
+    let value = billingProfileForLocale[key] ?? billingForLocale[key] ?? settingsForLocale[key] ?? messages[key] ?? fallback;
     for (const [name, replacement] of Object.entries(params)) {
       value = value.replaceAll(`{${name}}`, String(replacement));
     }
