@@ -1,8 +1,9 @@
-from app.db.alembic_runtime import upgrade_schema
+from app.db.alembic_runtime import check_schema, upgrade_schema
 
 
 def main() -> None:
     upgrade_schema()
+    check_schema()
 
 
 if __name__ == "__main__":
