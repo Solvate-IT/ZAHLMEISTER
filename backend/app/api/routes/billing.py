@@ -2,7 +2,7 @@ import logging
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Form, Header, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,6 +35,10 @@ from app.services.mollie_billing import (
     process_payment,
     start_checkout,
     sync_subscription,
+)
+from app.services.mollie_billing_webhooks import (
+    MollieBillingWebhookError,
+    process_sales_invoice_webhook,
 )
 
 logger = logging.getLogger(__name__)
@@ -219,7 +223,7 @@ async def mollie_sync(user: User = Depends(get_current_user)) -> BillingEntitlem
             status_code=status.HTTP_409_CONFLICT,
             detail="The Mollie billing state could not be verified",
         ) from exc
-    except (BillingTaxInvalidVatNumber, BillingTaxUnsupportedJurisdiction) as exc:
+    except (MollieBillingProfileRequired, BillingTaxInvalidVatNumber, BillingTaxUnsupportedJurisdiction) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     except (BillingTaxValidationUnavailable, MollieBillingUnavailable) as exc:
         raise HTTPException(
@@ -255,8 +259,33 @@ async def mollie_webhook(payment_id: str = Form(alias="id")) -> None:
         async with SessionLocal.begin() as session:
             await process_payment(session, payment_id)
     except MollieBillingVerificationError:
-        logger.warning("Rejected unverifiable Mollie billing webhook")
+        logger.warning("Rejected unverifiable Mollie billing payment webhook")
         return
+    except MollieBillingUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Billing verification temporarily unavailable",
+        ) from exc
+
+
+@router.post(
+    "/mollie/invoice-webhook",
+    status_code=status.HTTP_204_NO_CONTENT,
+    include_in_schema=False,
+)
+async def mollie_invoice_webhook(
+    request: Request,
+    signature: str | None = Header(default=None, alias="X-Mollie-Signature"),
+) -> None:
+    raw_body = await request.body()
+    try:
+        async with SessionLocal.begin() as session:
+            organization_id = await process_sales_invoice_webhook(session, raw_body, signature)
+            if organization_id is None:
+                logger.info("Ignored unknown Mollie sales invoice webhook")
+    except MollieBillingWebhookError as exc:
+        logger.warning("Rejected invalid Mollie sales invoice webhook")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook") from exc
     except MollieBillingUnavailable as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
