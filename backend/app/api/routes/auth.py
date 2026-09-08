@@ -1,7 +1,9 @@
+import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +11,7 @@ from app.api.deps import get_current_auth_session, get_current_user, get_session
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.entities import AuthSession, Organization, User
+from app.models.platform import PlatformAdminAudit
 from app.schemas.account import ForgotPasswordRequest, ResetPasswordRequest, TokenRequest
 from app.schemas.auth import AuthResponse, LoginRequest, RegisterRequest, UserRead
 from app.services.account import (
@@ -20,21 +23,32 @@ from app.services.account import (
 )
 from app.services.account_mail import password_reset_mail, verification_mail
 from app.services.auth import (
+    ADMIN_SESSION_HOURS,
     auth_response,
     create_auth_session,
     hash_password,
+    is_platform_admin,
     normalize_email,
     user_read,
+    verify_missing_user_password,
     verify_password,
 )
 from app.services.platform_mail import send_platform_mail
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+ADMIN_LOGIN_FAILURE_LIMIT = 5
+ADMIN_LOGIN_WINDOW_MINUTES = 15
+
 
 def _action_url(action: str, token: str) -> str:
     base = settings.public_app_url.rstrip("/")
     return f"{base}/?action={action}&token={token}"
+
+
+def _admin_attempt_details(email: str) -> str:
+    email_hash = hashlib.sha256(email.encode("utf-8")).hexdigest()
+    return json.dumps({"email_hash": email_hash}, separators=(",", ":"))
 
 
 async def _send_verification(email: str, token: str, locale: str) -> None:
@@ -96,13 +110,27 @@ async def register(payload: RegisterRequest, background_tasks: BackgroundTasks) 
 @router.post("/login", response_model=AuthResponse)
 async def login(payload: LoginRequest) -> AuthResponse:
     email = normalize_email(str(payload.email))
+    if email in settings.platform_admin_emails:
+        async with SessionLocal() as session:
+            user = await session.scalar(select(User).where(User.email == email))
+            if user is None:
+                verify_missing_user_password(payload.password)
+            else:
+                verify_password(user.password_hash, payload.password)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+
     async with SessionLocal.begin() as session:
         user = await session.scalar(select(User).where(User.email == email))
-        if (
-            user is None
-            or not user.is_active
-            or not verify_password(user.password_hash, payload.password)
-        ):
+        if user is None:
+            verify_missing_user_password(payload.password)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password",
+            )
+        if not user.is_active or not verify_password(user.password_hash, payload.password):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password",
@@ -115,6 +143,80 @@ async def login(payload: LoginRequest) -> AuthResponse:
         user.last_login_at = datetime.now(UTC)
         token = await create_auth_session(session, user)
         return auth_response(token, user, organization)
+
+
+@router.post("/admin-login", response_model=AuthResponse)
+async def admin_login(payload: LoginRequest) -> AuthResponse:
+    email = normalize_email(str(payload.email))
+    now = datetime.now(UTC)
+    details = _admin_attempt_details(email)
+    response: AuthResponse | None = None
+    denied = False
+
+    async with SessionLocal.begin() as session:
+        recent_failures = int(
+            await session.scalar(
+                select(func.count())
+                .select_from(PlatformAdminAudit)
+                .where(
+                    PlatformAdminAudit.action == "auth.admin_login_failed",
+                    PlatformAdminAudit.details_json == details,
+                    PlatformAdminAudit.created_at
+                    > now - timedelta(minutes=ADMIN_LOGIN_WINDOW_MINUTES),
+                )
+            )
+            or 0
+        )
+        throttled = recent_failures >= ADMIN_LOGIN_FAILURE_LIMIT
+        user = await session.scalar(select(User).where(User.email == email))
+        if user is None:
+            verify_missing_user_password(payload.password)
+            valid = False
+        else:
+            valid = is_platform_admin(user) and verify_password(user.password_hash, payload.password)
+
+        if throttled or not valid or user is None:
+            denied = True
+            if not throttled:
+                session.add(
+                    PlatformAdminAudit(
+                        action="auth.admin_login_failed",
+                        details_json=details,
+                    )
+                )
+        else:
+            organization = await session.get(Organization, user.organization_id)
+            if organization is None:
+                denied = True
+                session.add(
+                    PlatformAdminAudit(
+                        action="auth.admin_login_failed",
+                        details_json=details,
+                    )
+                )
+            else:
+                user.last_login_at = now
+                token = await create_auth_session(
+                    session,
+                    user,
+                    ttl=timedelta(hours=ADMIN_SESSION_HOURS),
+                )
+                session.add(
+                    PlatformAdminAudit(
+                        admin_user_id=user.id,
+                        organization_id=user.organization_id,
+                        action="auth.admin_login_success",
+                        details_json="{}",
+                    )
+                )
+                response = auth_response(token, user, organization)
+
+    if denied or response is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+    return response
 
 
 @router.get("/me", response_model=UserRead)
