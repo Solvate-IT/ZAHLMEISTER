@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from uuid import UUID, uuid4
 
 import httpx
@@ -35,11 +35,18 @@ MOLLIE_INTERVAL = PRO_YEARLY_TARIFF.interval
 MOLLIE_PURPOSE = "zahlmeister_pro_subscription"
 MOLLIE_GRACE_DAYS = 7
 INVOICE_CREATE_MIN_AGE = timedelta(seconds=30)
-INVOICE_CREATE_RETRY_WINDOW = timedelta(minutes=55)
+MAX_INVOICE_RECOVERY_PAGES = 100
 OPEN_PAYMENT_STATUSES = {"open", "pending"}
 FAILED_PAYMENT_STATUSES = {"failed", "canceled", "expired"}
 USABLE_MANDATE_STATUSES = {"valid"}
-OPEN_INVOICE_STATUSES = {"creating", "pending-payment", "issued", "overdue", "payment-reversed"}
+OPEN_INVOICE_STATUSES = {
+    "creating",
+    "pending-payment",
+    "issued",
+    "overdue",
+    "payment-reversed",
+    "payment_reversed",
+}
 RENEWAL_GRACE_INVOICE_STATUSES = {
     "creating",
     "pending-payment",
@@ -191,20 +198,44 @@ def _normalize_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
+def _normalize_sales_invoice_status(value: Any) -> str:
+    status = str(value or "creating").strip().lower()
+    if status == "payment_reversed":
+        return "payment-reversed"
+    if status == "canceled":
+        return "cancelled"
+    return status
+
+
 def _invoice_create_retry_allowed(
     item: BillingInvoice,
     *,
     now: datetime | None = None,
 ) -> bool:
-    if item.external_id or item.created_at is None:
+    if item.external_id or item.status == "cancelled" or item.created_at is None:
         return False
-    current = now or datetime.now(UTC)
-    age = _normalize_utc(current) - _normalize_utc(item.created_at)
-    return INVOICE_CREATE_MIN_AGE <= age < INVOICE_CREATE_RETRY_WINDOW
+    current = _normalize_utc(now or datetime.now(UTC))
+    age = current - _normalize_utc(item.created_at)
+    return age >= INVOICE_CREATE_MIN_AGE
 
 
 def _invoice_reference(item: BillingInvoice) -> str:
     return f"ZM:{item.id}"
+
+
+def _reference_invoice_id(payload: dict[str, Any]) -> UUID | None:
+    memo = payload.get("memo")
+    if not isinstance(memo, str):
+        return None
+    for line in memo.splitlines():
+        value = line.strip()
+        if not value.startswith("ZM:"):
+            continue
+        try:
+            return UUID(value.removeprefix("ZM:").strip())
+        except ValueError:
+            return None
+    return None
 
 
 def _payment_amount_matches(
@@ -609,6 +640,95 @@ def _invoice_details(item: BillingInvoice) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _remote_invoice_matches_local(item: BillingInvoice, payload: dict[str, Any]) -> bool:
+    if payload.get("recipientIdentifier") != f"zahlmeister-{item.organization_id}":
+        return False
+    if _reference_invoice_id(payload) != item.id:
+        return False
+    mode = payload.get("mode")
+    if mode is not None and str(mode) != settings.mollie_billing_environment:
+        return False
+    if payload.get("vatScheme") not in {None, item.vat_scheme}:
+        return False
+    if payload.get("currency") not in {None, item.currency}:
+        return False
+    recipient = payload.get("recipient")
+    if isinstance(recipient, dict):
+        if recipient.get("type") not in {None, item.recipient_type}:
+            return False
+        if recipient.get("country") not in {None, item.recipient_country}:
+            return False
+    lines = payload.get("lines")
+    if not isinstance(lines, list) or len(lines) != 1 or not isinstance(lines[0], dict):
+        return False
+    line = lines[0]
+    if line.get("quantity") not in {1, "1", "1.0"}:
+        return False
+    try:
+        remote_vat_rate = Decimal(str(line.get("vatRate", "")))
+    except InvalidOperation:
+        return False
+    if remote_vat_rate != Decimal(item.vat_rate):
+        return False
+    unit_price = line.get("unitPrice")
+    if not isinstance(unit_price, dict):
+        return False
+    if str(unit_price.get("currency", "")).upper() != item.currency.upper():
+        return False
+    try:
+        remote_amount = Decimal(str(unit_price.get("value", "")))
+    except InvalidOperation:
+        return False
+    return remote_amount == Decimal(item.gross_amount)
+
+
+def _sales_invoice_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    embedded = payload.get("_embedded")
+    if not isinstance(embedded, dict):
+        raise MollieBillingUnavailable("Mollie sales invoice list is invalid")
+    for key in ("salesInvoices", "sales-invoices", "sales_invoices", "invoices"):
+        rows = embedded.get(key)
+        if isinstance(rows, list):
+            return [item for item in rows if isinstance(item, dict)]
+    raise MollieBillingUnavailable("Mollie sales invoice list is invalid")
+
+
+def _next_sales_invoice_cursor(payload: dict[str, Any]) -> str | None:
+    links = payload.get("_links")
+    next_link = links.get("next") if isinstance(links, dict) else None
+    href = next_link.get("href") if isinstance(next_link, dict) else None
+    if not isinstance(href, str) or not href:
+        return None
+    values = parse_qs(urlparse(href).query).get("from")
+    return values[0] if values and values[0] else None
+
+
+async def _find_remote_invoice(item: BillingInvoice) -> dict[str, Any] | None:
+    cursor: str | None = None
+    seen: set[str] = set()
+    for _ in range(MAX_INVOICE_RECOVERY_PAGES):
+        params: dict[str, Any] = {"limit": 250}
+        if cursor:
+            params["from"] = cursor
+        payload = await _request_json("GET", "sales-invoices", params=params)
+        for remote in _sales_invoice_rows(payload):
+            if _reference_invoice_id(remote) != item.id:
+                continue
+            if not _remote_invoice_matches_local(item, remote):
+                raise MollieBillingVerificationError(
+                    "Mollie sales invoice with local reference does not match local billing data"
+                )
+            return remote
+        next_cursor = _next_sales_invoice_cursor(payload)
+        if next_cursor is None:
+            return None
+        if next_cursor in seen:
+            raise MollieBillingUnavailable("Mollie sales invoice pagination did not advance")
+        seen.add(next_cursor)
+        cursor = next_cursor
+    raise MollieBillingUnavailable("Mollie sales invoice recovery scan is incomplete")
+
+
 async def _create_remote_invoice(
     item: BillingInvoice,
     *,
@@ -674,7 +794,7 @@ async def _apply_invoice_payload(
         raise MollieBillingVerificationError("Mollie sales invoice local reference is invalid")
     item.external_id = remote_id
     item.invoice_number = str(payload.get("invoiceNumber")) if payload.get("invoiceNumber") else None
-    item.status = str(payload.get("status", "creating"))
+    item.status = _normalize_sales_invoice_status(payload.get("status"))
     item.payment_url = _invoice_payment_url(payload)
     item.last_synced_at = datetime.now(UTC)
     if item.status == "paid":
@@ -723,6 +843,7 @@ async def _apply_invoice_entitlement(session: AsyncSession, item: BillingInvoice
         row.verification_data_encrypted = encrypt_config(data)
         await session.flush()
     elif item.status == "cancelled":
+        data.pop("grace_until", None)
         row.auto_renew = False
         row.status = "cancelled" if paid_through > now else "expired"
         row.expires_at = paid_through
@@ -1008,7 +1129,7 @@ async def _create_due_renewal(
     profile = await _load_profile(session, row.organization_id)
     decision = await _prepare_profile_tax(profile)
     recipient = _invoice_recipient(profile)
-    amount, currency = _current_billing_terms()
+    amount, currency = _stored_billing_terms(data)
     period_start = paid_through
     period_end = _add_year_datetime(period_start)
     item = await _invoice_record(
@@ -1018,7 +1139,7 @@ async def _create_due_renewal(
         period_end=period_end,
         amount=amount,
         currency=currency,
-        tariff_version=PRO_YEARLY_TARIFF.version,
+        tariff_version=str(data.get("billing_tariff_version") or PRO_YEARLY_TARIFF.version),
         recipient=recipient,
         vat_rate=decision.rate,
         vat_scheme=decision.vat_scheme,
@@ -1029,13 +1150,19 @@ async def _create_due_renewal(
     if item.external_id:
         await _sync_invoice_item(session, item)
         return item
-    await _apply_invoice_entitlement(session, item)
+    if item.status != "cancelled":
+        await _apply_invoice_entitlement(session, item)
     return item
 
 
 async def _retry_local_invoice(session: AsyncSession, item: BillingInvoice) -> None:
     if not _invoice_create_retry_allowed(item):
         return
+    remote = await _find_remote_invoice(item)
+    if remote is not None:
+        await _apply_invoice_payload(session, item, remote)
+        return
+
     details = _invoice_details(item)
     kind = details.get("kind")
     row = await _mollie_row(session, item.organization_id, lock=True)
@@ -1047,6 +1174,12 @@ async def _retry_local_invoice(session: AsyncSession, item: BillingInvoice) -> N
     if kind == "initial":
         payload = await _create_remote_invoice(item, customer_id=None, mandate_id=None, locale=locale)
     elif kind == "renewal":
+        if not row.auto_renew:
+            item.status = "cancelled"
+            item.payment_url = None
+            item.last_synced_at = datetime.now(UTC)
+            await session.flush()
+            return
         customer_id = data.get("mollie_customer_id")
         mandate_id = data.get("mandate_id")
         if not isinstance(customer_id, str) or not isinstance(mandate_id, str):
@@ -1075,6 +1208,7 @@ async def sync_sales_invoices(session: AsyncSession, organization_id: UUID | Non
     rows = (await session.execute(statement.order_by(BillingInvoice.created_at).limit(100))).scalars().all()
     processed = 0
     for item in rows:
+        await _mollie_row(session, item.organization_id, lock=True)
         locked = await session.get(BillingInvoice, item.id, with_for_update=True)
         if locked is None:
             continue
@@ -1135,6 +1269,50 @@ async def sync_subscription(session: AsyncSession, organization_id: UUID) -> Non
         await _create_due_renewal(session, row, _verification_data(row))
 
 
+async def _cancel_renewal_invoices(
+    session: AsyncSession,
+    organization_id: UUID,
+) -> None:
+    rows = (
+        await session.execute(
+            select(BillingInvoice)
+            .where(
+                BillingInvoice.organization_id == organization_id,
+                BillingInvoice.provider == MOLLIE_PROVIDER,
+                BillingInvoice.status.in_(OPEN_INVOICE_STATUSES),
+            )
+            .order_by(BillingInvoice.period_start)
+        )
+    ).scalars().all()
+    for detached in rows:
+        item = await session.get(BillingInvoice, detached.id, with_for_update=True)
+        if item is None or _invoice_details(item).get("kind") != "renewal":
+            continue
+        if not item.external_id:
+            remote = await _find_remote_invoice(item)
+            if remote is not None:
+                await _apply_invoice_payload(session, item, remote)
+        if item.status == "paid":
+            continue
+        if item.external_id:
+            latest = await _get_sales_invoice(item.external_id)
+            await _apply_invoice_payload(session, item, latest)
+            if item.status == "paid":
+                continue
+            if item.status != "cancelled":
+                cancelled = await _request_json(
+                    "PATCH",
+                    f"sales-invoices/{item.external_id}",
+                    json_body={"status": "cancelled"},
+                )
+                await _apply_invoice_payload(session, item, cancelled)
+        else:
+            item.status = "cancelled"
+            item.payment_url = None
+            item.last_synced_at = datetime.now(UTC)
+            await session.flush()
+
+
 async def cancel_subscription(session: AsyncSession, organization_id: UUID) -> None:
     _require_configured()
     row = await _mollie_row(session, organization_id, lock=True)
@@ -1147,10 +1325,17 @@ async def cancel_subscription(session: AsyncSession, organization_id: UUID) -> N
         await _request_json("DELETE", f"customers/{customer_id}/subscriptions/{subscription_id}")
         data.pop("subscription_id", None)
         data.pop("subscription_status", None)
+    else:
+        await _cancel_renewal_invoices(session, organization_id)
+        data = _verification_data(row)
+
     now = datetime.now(UTC)
+    paid_through = _paid_through(row, data)
+    data.pop("grace_until", None)
     row.auto_renew = False
     row.cancelled_at = now
-    row.status = "cancelled" if row.expires_at and row.expires_at > now else "expired"
+    row.expires_at = paid_through
+    row.status = "cancelled" if paid_through and paid_through > now else "expired"
     row.last_verified_at = now
     row.verification_data_encrypted = encrypt_config(data)
     await session.flush()
