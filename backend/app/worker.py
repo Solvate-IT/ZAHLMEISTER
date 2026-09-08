@@ -55,7 +55,7 @@ logger = logging.getLogger("zahlmeister.worker")
 INBOX_SYNC_SECONDS = 60
 BANK_SYNC_CHECK_SECONDS = 300
 BANK_SYNC_INTERVAL = timedelta(hours=1)
-BILLING_SYNC_SECONDS = 3600
+BILLING_SYNC_SECONDS = 600
 
 
 async def claim_job() -> ScheduledJob | None:
