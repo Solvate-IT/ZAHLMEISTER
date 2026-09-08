@@ -1,3 +1,4 @@
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, status
@@ -24,6 +25,7 @@ from app.services.mollie_billing import (
     sync_subscription,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/billing", tags=["billing"])
 
 
@@ -143,6 +145,7 @@ async def mollie_webhook(payment_id: str = Form(alias="id")) -> None:
         async with SessionLocal.begin() as session:
             await process_payment(session, payment_id)
     except MollieBillingVerificationError:
+        logger.warning("Rejected unverifiable Mollie billing webhook")
         # A forged or stale payment reference must never grant an entitlement.
         return
     except MollieBillingUnavailable as exc:
