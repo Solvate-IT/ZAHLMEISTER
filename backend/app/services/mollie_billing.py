@@ -24,6 +24,7 @@ from app.services.billing import (
     apply_verified_subscription,
     purchase_context,
 )
+from app.services.billing_invoice_copy import billing_invoice_copy
 from app.services.billing_tax import TaxDecision, tax_decision
 from app.services.secrets import decrypt_config, encrypt_config
 
@@ -33,10 +34,19 @@ MOLLIE_PROVIDER = "mollie"
 MOLLIE_INTERVAL = PRO_YEARLY_TARIFF.interval
 MOLLIE_PURPOSE = "zahlmeister_pro_subscription"
 MOLLIE_GRACE_DAYS = 7
+INVOICE_CREATE_MIN_AGE = timedelta(seconds=30)
+INVOICE_CREATE_RETRY_WINDOW = timedelta(minutes=55)
 OPEN_PAYMENT_STATUSES = {"open", "pending"}
 FAILED_PAYMENT_STATUSES = {"failed", "canceled", "expired"}
 USABLE_MANDATE_STATUSES = {"valid"}
 OPEN_INVOICE_STATUSES = {"creating", "pending-payment", "issued", "overdue", "payment-reversed"}
+RENEWAL_GRACE_INVOICE_STATUSES = {
+    "creating",
+    "pending-payment",
+    "issued",
+    "overdue",
+    "payment-reversed",
+}
 
 
 class MollieBillingError(RuntimeError):
@@ -173,6 +183,28 @@ def _parse_date(value: Any) -> date | None:
         return date.fromisoformat(value)
     except ValueError:
         return None
+
+
+def _normalize_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _invoice_create_retry_allowed(
+    item: BillingInvoice,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if item.external_id or item.created_at is None:
+        return False
+    current = now or datetime.now(UTC)
+    age = _normalize_utc(current) - _normalize_utc(item.created_at)
+    return INVOICE_CREATE_MIN_AGE <= age < INVOICE_CREATE_RETRY_WINDOW
+
+
+def _invoice_reference(item: BillingInvoice) -> str:
+    return f"ZM:{item.id}"
 
 
 def _payment_amount_matches(
@@ -510,24 +542,6 @@ def _stored_tax(data: dict[str, Any]) -> tuple[Decimal, str, str, str] | None:
     return rate, scheme, treatment, version
 
 
-def _invoice_email(locale: str) -> tuple[str, str]:
-    if locale.lower().startswith("de"):
-        return (
-            "Ihre Zahlmeister Pro Rechnung",
-            "Vielen Dank. Im Anhang finden Sie Ihre Zahlmeister Pro Rechnung.",
-        )
-    return (
-        "Your Zahlmeister Pro invoice",
-        "Thank you. Your Zahlmeister Pro invoice is attached.",
-    )
-
-
-def _invoice_memo(treatment: str) -> str | None:
-    if treatment == "eu_reverse_charge":
-        return "Reverse charge - tax liability transfers to the recipient."
-    return None
-
-
 async def _invoice_record(
     session: AsyncSession,
     organization_id: UUID,
@@ -606,27 +620,29 @@ async def _create_remote_invoice(
     recipient = details.get("recipient")
     if not isinstance(recipient, dict):
         raise MollieBillingVerificationError("Billing invoice recipient snapshot is missing")
-    subject, body = _invoice_email(locale)
+    copy = billing_invoice_copy(locale)
+    memo_parts = []
+    if item.tax_treatment == "eu_reverse_charge":
+        memo_parts.append(copy.reverse_charge_memo)
+    memo_parts.append(_invoice_reference(item))
     payload: dict[str, Any] = {
         "status": "paid",
         "vatScheme": item.vat_scheme,
         "vatMode": "inclusive",
+        "memo": "\n".join(memo_parts),
         "paymentTerm": "7 days",
         "recipientIdentifier": f"zahlmeister-{item.organization_id}",
         "recipient": recipient,
         "lines": [
             {
-                "description": "Zahlmeister Pro - 12 months",
+                "description": copy.line_description,
                 "quantity": 1,
                 "vatRate": _vat_rate_value(item.vat_rate),
                 "unitPrice": {"currency": item.currency, "value": _decimal_amount(item.gross_amount)},
             }
         ],
-        "emailDetails": {"subject": subject, "body": body},
+        "emailDetails": {"subject": copy.email_subject, "body": copy.email_body},
     }
-    memo = _invoice_memo(item.tax_treatment)
-    if memo:
-        payload["memo"] = memo
     if customer_id and mandate_id:
         payload["customerId"] = customer_id
         payload["mandateId"] = mandate_id
@@ -653,6 +669,9 @@ async def _apply_invoice_payload(
     recipient_identifier = payload.get("recipientIdentifier")
     if recipient_identifier not in {None, f"zahlmeister-{item.organization_id}"}:
         raise MollieBillingVerificationError("Mollie sales invoice belongs to another account")
+    memo = payload.get("memo")
+    if isinstance(memo, str) and "ZM:" in memo and _invoice_reference(item) not in memo:
+        raise MollieBillingVerificationError("Mollie sales invoice local reference is invalid")
     item.external_id = remote_id
     item.invoice_number = str(payload.get("invoiceNumber")) if payload.get("invoiceNumber") else None
     item.status = str(payload.get("status", "creating"))
@@ -696,7 +715,7 @@ async def _apply_invoice_entitlement(session: AsyncSession, item: BillingInvoice
         return
     paid_through = item.period_start
     now = datetime.now(UTC)
-    if item.status in {"issued", "overdue", "payment-reversed"}:
+    if item.status in RENEWAL_GRACE_INVOICE_STATUSES:
         grace_until = _grace_expiry(data, paid_through, now=now)
         row.expires_at = grace_until
         row.status = "grace_period" if grace_until > now else "expired"
@@ -736,7 +755,7 @@ async def _create_initial_receipt(
         stored_tax = (decision.rate, decision.vat_scheme, decision.treatment, decision.rule_version)
     rate, scheme, treatment, tax_rule_version = stored_tax
     amount, currency = _stored_billing_terms(data)
-    item = await _invoice_record(
+    return await _invoice_record(
         session,
         row.organization_id,
         period_start=paid_at,
@@ -752,20 +771,6 @@ async def _create_initial_receipt(
         kind="initial",
         source_payment_id=payment_id,
     )
-    if not item.external_id:
-        organization = await session.get(Organization, row.organization_id)
-        locale = organization.locale if organization else "en"
-        try:
-            payload = await _create_remote_invoice(
-                item,
-                customer_id=None,
-                mandate_id=None,
-                locale=locale,
-            )
-            await _apply_invoice_payload(session, item, payload)
-        except MollieBillingUnavailable:
-            logger.exception("Initial Mollie sales invoice creation will be retried")
-    return item
 
 
 async def start_checkout(
@@ -1024,29 +1029,13 @@ async def _create_due_renewal(
     if item.external_id:
         await _sync_invoice_item(session, item)
         return item
-    customer_id = data.get("mollie_customer_id")
-    mandate_id = data.get("mandate_id")
-    if not isinstance(customer_id, str) or not isinstance(mandate_id, str):
-        raise MollieBillingVerificationError("Stored Mollie mandate binding is incomplete")
-    mandate = await _request_json("GET", f"customers/{customer_id}/mandates/{mandate_id}")
-    if mandate.get("status") != "valid":
-        raise MollieBillingConflict("Mollie mandate is no longer valid")
-    organization = await session.get(Organization, row.organization_id)
-    locale = organization.locale if organization else "en"
-    payload = await _create_remote_invoice(
-        item,
-        customer_id=customer_id,
-        mandate_id=mandate_id,
-        locale=locale,
-    )
-    await _apply_invoice_payload(session, item, payload)
-    data["latest_invoice_id"] = item.external_id or str(item.id)
-    row.verification_data_encrypted = encrypt_config(data)
-    await session.flush()
+    await _apply_invoice_entitlement(session, item)
     return item
 
 
 async def _retry_local_invoice(session: AsyncSession, item: BillingInvoice) -> None:
+    if not _invoice_create_retry_allowed(item):
+        return
     details = _invoice_details(item)
     kind = details.get("kind")
     row = await _mollie_row(session, item.organization_id, lock=True)
@@ -1062,6 +1051,9 @@ async def _retry_local_invoice(session: AsyncSession, item: BillingInvoice) -> N
         mandate_id = data.get("mandate_id")
         if not isinstance(customer_id, str) or not isinstance(mandate_id, str):
             raise MollieBillingVerificationError("Stored Mollie mandate binding is incomplete")
+        mandate = await _request_json("GET", f"customers/{customer_id}/mandates/{mandate_id}")
+        if mandate.get("status") != "valid":
+            raise MollieBillingConflict("Mollie mandate is no longer valid")
         payload = await _create_remote_invoice(
             item,
             customer_id=customer_id,
@@ -1088,9 +1080,10 @@ async def sync_sales_invoices(session: AsyncSession, organization_id: UUID | Non
             continue
         if locked.external_id:
             await _sync_invoice_item(session, locked)
-        else:
+            processed += 1
+        elif _invoice_create_retry_allowed(locked):
             await _retry_local_invoice(session, locked)
-        processed += 1
+            processed += 1
     return processed
 
 
