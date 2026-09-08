@@ -1,4 +1,3 @@
-from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -6,6 +5,8 @@ from urllib.parse import urlparse
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.core.billing_catalog import PRO_YEARLY_TARIFF
 
 
 _SECRET_FIELDS = {
@@ -118,8 +119,6 @@ class Settings(BaseSettings):
     mollie_billing_api_key: str = ""
     mollie_billing_api_key_file: str = ""
     mollie_billing_environment: Literal["test", "live"] = "test"
-    mollie_billing_pro_yearly_amount: Decimal = Decimal("0")
-    mollie_billing_currency: str = "EUR"
 
     google_translate_api_key: str = ""
     google_translate_api_key_file: str = ""
@@ -161,12 +160,16 @@ class Settings(BaseSettings):
         return {item.strip().casefold() for item in self.platform_admin_emails_raw.split(",") if item.strip()}
 
     @property
+    def mollie_billing_pro_yearly_amount(self):
+        return PRO_YEARLY_TARIFF.amount
+
+    @property
+    def mollie_billing_currency(self) -> str:
+        return PRO_YEARLY_TARIFF.currency
+
+    @property
     def mollie_billing_configured(self) -> bool:
-        return bool(
-            self.mollie_billing_api_key.strip()
-            and self.mollie_billing_pro_yearly_amount > 0
-            and len(self.mollie_billing_currency.strip()) == 3
-        )
+        return bool(self.mollie_billing_api_key.strip())
 
     def production_security_errors(self) -> list[str]:
         if self.environment != "production":
@@ -233,18 +236,11 @@ class Settings(BaseSettings):
         if ponto_configured and "sandbox-authorization.myponto.com" in self.ponto_authorization_url:
             errors.append("Ponto sandbox authorization URL must not be used in production")
 
-        billing_requested = bool(
-            self.mollie_billing_api_key.strip() or self.mollie_billing_pro_yearly_amount > 0
-        )
-        if billing_requested and not self.mollie_billing_configured:
-            errors.append("Mollie SaaS billing configuration is incomplete")
         if self.mollie_billing_configured:
             if self.mollie_billing_environment != "live":
                 errors.append("MOLLIE_BILLING_ENVIRONMENT must be live in production")
             if not self.mollie_billing_api_key.startswith("live_"):
                 errors.append("MOLLIE_BILLING_API_KEY must be a live key in production")
-            if self.mollie_billing_currency.strip().upper() != self.mollie_billing_currency.strip():
-                errors.append("MOLLIE_BILLING_CURRENCY must be uppercase")
 
         if self.google_translate_api_key.strip():
             translation_url = urlparse(self.google_translate_api_url.strip())

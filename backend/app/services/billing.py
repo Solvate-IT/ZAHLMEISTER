@@ -8,11 +8,12 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.billing_catalog import PRO_YEARLY_TARIFF
 from app.models.entities import Organization
 from app.models.platform import StoreSubscription
 from app.services.secrets import encrypt_config
 
-PRO_PRODUCT_ID = "zahlmeister.pro.yearly"
+PRO_PRODUCT_ID = PRO_YEARLY_TARIFF.product_id
 ENTITLED_STATUSES = {"active", "grace_period", "cancelled"}
 PURCHASE_PROVIDERS = {"apple", "google", "mollie"}
 STORE_STATUSES = {

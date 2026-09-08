@@ -4,6 +4,8 @@ from uuid import uuid4
 
 import pytest
 
+import app.core.config as config_module
+from app.core.billing_catalog import BillingTariff, PRO_YEARLY_TARIFF
 from app.core.config import settings
 from app.services.billing import PRO_PRODUCT_ID
 from app.services.mollie_billing import (
@@ -19,6 +21,7 @@ from app.services.mollie_billing import (
     _verified_metadata,
     _webhook_url,
     amount_value,
+    billing_config,
     billing_configured,
 )
 
@@ -26,8 +29,6 @@ from app.services.mollie_billing import (
 def _configure_test_billing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "mollie_billing_api_key", "test_example")
     monkeypatch.setattr(settings, "mollie_billing_environment", "test")
-    monkeypatch.setattr(settings, "mollie_billing_pro_yearly_amount", Decimal("99.90"))
-    monkeypatch.setattr(settings, "mollie_billing_currency", "EUR")
 
 
 def test_test_billing_requires_test_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -45,35 +46,49 @@ def test_live_billing_requires_live_key(monkeypatch: pytest.MonkeyPatch) -> None
     assert billing_configured() is True
 
 
-def test_billing_is_disabled_without_positive_server_price(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_tariff_is_versioned_in_code() -> None:
+    assert PRO_YEARLY_TARIFF.version == "2026-09-08"
+    assert PRO_YEARLY_TARIFF.product_id == PRO_PRODUCT_ID
+    assert PRO_YEARLY_TARIFF.amount == Decimal("29.90")
+    assert PRO_YEARLY_TARIFF.currency == "EUR"
+    assert PRO_YEARLY_TARIFF.interval == "12 months"
+
+
+def test_billing_config_uses_versioned_tariff(monkeypatch: pytest.MonkeyPatch) -> None:
     _configure_test_billing(monkeypatch)
-    monkeypatch.setattr(settings, "mollie_billing_pro_yearly_amount", Decimal("0"))
-    assert billing_configured() is False
+    config = billing_config()
+    assert config["amount"] == "29.90"
+    assert config["currency"] == "EUR"
+    assert config["interval"] == "12 months"
 
 
-def test_amount_is_server_controlled_and_normalized(monkeypatch: pytest.MonkeyPatch) -> None:
-    _configure_test_billing(monkeypatch)
-    monkeypatch.setattr(settings, "mollie_billing_pro_yearly_amount", Decimal("99.9"))
-    assert amount_value() == "99.90"
-
-
-def test_payment_must_match_exact_configured_amount_and_currency(
+def test_payment_must_match_exact_catalog_amount_and_currency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_test_billing(monkeypatch)
-    assert _payment_amount_matches({"amount": {"value": "99.90", "currency": "EUR"}}) is True
-    assert _payment_amount_matches({"amount": {"value": "99.89", "currency": "EUR"}}) is False
-    assert _payment_amount_matches({"amount": {"value": "99.90", "currency": "USD"}}) is False
+    assert _payment_amount_matches({"amount": {"value": "29.90", "currency": "EUR"}}) is True
+    assert _payment_amount_matches({"amount": {"value": "29.89", "currency": "EUR"}}) is False
+    assert _payment_amount_matches({"amount": {"value": "29.90", "currency": "USD"}}) is False
 
 
-def test_existing_subscription_keeps_its_original_price_after_price_change(
+def test_existing_subscription_keeps_its_original_price_after_catalog_change(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _configure_test_billing(monkeypatch)
     stored = {"billing_amount": "29.90", "billing_currency": "EUR"}
-    monkeypatch.setattr(settings, "mollie_billing_pro_yearly_amount", Decimal("39.90"))
+    monkeypatch.setattr(
+        config_module,
+        "PRO_YEARLY_TARIFF",
+        BillingTariff(
+            version="future",
+            product_id=PRO_PRODUCT_ID,
+            amount=Decimal("39.90"),
+            currency="EUR",
+            interval="12 months",
+        ),
+    )
     amount, currency = _stored_billing_terms(stored)
     assert (amount, currency) == ("29.90", "EUR")
+    assert amount_value() == "39.90"
     assert _payment_amount_matches(
         {"amount": {"value": "29.90", "currency": "EUR"}},
         amount,
