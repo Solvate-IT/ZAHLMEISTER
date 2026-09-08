@@ -60,12 +60,14 @@ write_secret() {
 postgres_password="$(openssl rand -hex 32)"
 app_secret="$(openssl rand -hex 48)"
 monitoring_token="$(openssl rand -hex 32)"
+mollie_billing_webhook_secret="$(openssl rand -hex 32)"
 database_url="postgresql+asyncpg://${POSTGRES_USER}:${postgres_password}@db:5432/${POSTGRES_DB}"
 
 write_secret "$TARGET_DIR/postgres_password" "$postgres_password"
 write_secret "$TARGET_DIR/database_url" "$database_url"
 write_secret "$TARGET_DIR/app_secret" "$app_secret"
 write_secret "$TARGET_DIR/monitoring_token" "$monitoring_token"
+write_secret "$TARGET_DIR/mollie_billing_webhook_secret" "$mollie_billing_webhook_secret"
 
 if [[ "$(id -u)" == "0" ]]; then
   chown -R "$APP_RUNTIME_UID:$APP_RUNTIME_GID" "$TARGET_DIR"
@@ -75,4 +77,5 @@ find "$TARGET_DIR" -maxdepth 1 -type f ! -name '.gitkeep' -exec chmod 640 {} +
 
 echo "Production secrets created in $TARGET_DIR"
 echo "Runtime owner: ${APP_RUNTIME_UID}:${APP_RUNTIME_GID}"
-echo "Create platform_smtp_password there as well if platform SMTP is enabled."
+echo "Create platform_smtp_password and mollie_billing_api_key there when those integrations are enabled."
+echo "Configure Mollie's Sales Invoice webhook with the generated mollie_billing_webhook_secret."
