@@ -4,6 +4,7 @@ import {createContext, useCallback, useContext, useEffect, useMemo, useState} fr
 import de from "@/locales/de.json";
 import en from "@/locales/en.json";
 import {adminMessages} from "@/locales/admin";
+import {billingMessages} from "@/locales/billing";
 import {integrationMessages} from "@/locales/integrations";
 import {settingsMessages} from "@/locales/settings";
 
@@ -65,10 +66,13 @@ export function I18nProvider({children}: {children: React.ReactNode}) {
   }, []);
 
   const t = useCallback((key: string, params: Params = {}) => {
+    const billingForLocale = billingMessages[locale] ?? billingMessages.en;
     const adminForLocale = adminMessages[locale] ?? adminMessages.en;
     const integrationsForLocale = integrationMessages[locale] ?? integrationMessages.en;
     const settingsForLocale = settingsMessages[locale] ?? settingsMessages.en;
-    const fallback = settingsForLocale[key]
+    const fallback = billingForLocale[key]
+      ?? billingMessages.en[key]
+      ?? settingsForLocale[key]
       ?? settingsMessages.en[key]
       ?? integrationsForLocale[key]
       ?? integrationMessages.en[key]
@@ -77,7 +81,7 @@ export function I18nProvider({children}: {children: React.ReactNode}) {
       ?? (de as Messages)[key]
       ?? (en as Messages)[key]
       ?? key;
-    let value = settingsForLocale[key] ?? messages[key] ?? fallback;
+    let value = billingForLocale[key] ?? settingsForLocale[key] ?? messages[key] ?? fallback;
     for (const [name, replacement] of Object.entries(params)) {
       value = value.replaceAll(`{${name}}`, String(replacement));
     }
