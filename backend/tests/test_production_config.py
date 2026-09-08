@@ -57,19 +57,38 @@ def test_production_security_accepts_safe_configuration() -> None:
         app_secret="x" * 48,
         database_url="postgresql+asyncpg://zahlmeister:secure-password@db:5432/zahlmeister",
         public_app_url="https://app.example.com",
+        oauth_callback_base_url="https://app.example.com",
         CORS_ORIGINS="https://app.example.com",
         mail_delivery_mode="smtp",
         smtp_host="smtp.example.com",
         mail_from_address="noreply@example.com",
         smtp_starttls=True,
+        platform_imap_host="imap.example.com",
+        platform_imap_username="reply@example.com",
+        platform_imap_password="secret",
         contact_recipient="support@example.com",
     )
     assert settings.production_security_errors() == []
 
 
 def test_production_config_accepts_capacitor_local_origins() -> None:
-    settings = production_settings(
-        CORS_ORIGINS="https://app.example.com,capacitor://localhost,https://localhost"
+    settings = Settings(
+        _env_file=None,
+        environment="production",
+        app_secret="x" * 48,
+        database_url="postgresql+asyncpg://zahlmeister:secure-password@db:5432/zahlmeister",
+        public_app_url="https://app.example.com",
+        oauth_callback_base_url="https://app.example.com",
+        CORS_ORIGINS="https://app.example.com,capacitor://localhost,https://localhost",
+        mail_delivery_mode="smtp",
+        smtp_host="smtp.example.com",
+        mail_from_address="noreply@example.com",
+        platform_imap_host="imap.example.com",
+        platform_imap_username="reply@example.com",
+        platform_imap_password="secret",
+        contact_recipient="support@example.com",
     )
-    errors = settings.production_errors()
-    assert not any(error.startswith("CORS origin is not a valid HTTPS origin") for error in errors)
+    errors = settings.production_security_errors()
+    assert not any(
+        error.startswith("CORS origin is not a valid HTTPS origin") for error in errors
+    )
