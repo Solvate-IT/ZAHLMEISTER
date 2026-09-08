@@ -20,7 +20,7 @@ export function BillingPage(){
   const [busy,setBusy]=useState(false);
   const [notice,setNotice]=useState("");
   const [error,setError]=useState("");
-  const [native,setNative]=useState(false);
+  const [native,setNative]=useState<boolean|null>(null);
   const [cancelOpen,setCancelOpen]=useState(false);
 
   async function load(){
@@ -59,6 +59,22 @@ export function BillingPage(){
     load().finally(()=>{if(billingResult==="cancelled")clearBillingResult()});
   },[billingResult]);
 
+  async function refresh(){
+    if(!config?.available||native){await load();return}
+    setBusy(true);
+    setError("");
+    try{
+      const [next,nextConfig]=await Promise.all([api.mollieBillingSync(),api.mollieBillingConfig()]);
+      setEntitlement(next);
+      setConfig(nextConfig);
+      if(next.active)setNotice(t("billingActivated"));
+    }catch{
+      setError(t("billingError"));
+    }finally{
+      setBusy(false);
+    }
+  }
+
   async function startCheckout(){
     setBusy(true);
     setError("");
@@ -88,14 +104,14 @@ export function BillingPage(){
     }
   }
 
-  if(loading||!entitlement||!config)return <Loading/>;
+  if(loading||native===null||!entitlement||!config)return <Loading/>;
   const active=entitlement.active;
   const price=config.amount?new Intl.NumberFormat(locale,{style:"currency",currency:config.currency}).format(Number(config.amount)):"";
   const provider=providerLabel(entitlement.provider,t);
   const status=statusLabel(entitlement.status,t);
 
   return <>
-    <div className="page-title"><div><h1>{t("billingTitle")}</h1><div className="muted">{t("billingSubtitle")}</div></div><button className="button secondary" onClick={load} disabled={busy}>{t("billingRefresh")}</button></div>
+    <div className="page-title"><div><h1>{t("billingTitle")}</h1><div className="muted">{t("billingSubtitle")}</div></div><button className="button secondary" onClick={refresh} disabled={busy}>{t("billingRefresh")}</button></div>
     {error&&<div className="notice error">{error}</div>}
     {notice&&<div className="notice success">{notice}</div>}
     <div className="split">
