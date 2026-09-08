@@ -1,7 +1,13 @@
-from sqlalchemy import CheckConstraint
+from sqlalchemy import CheckConstraint, UniqueConstraint
 
 from app.models.channel_strategy import ParticipantChannelSetting
-from app.models.entities import Collection, MessageTemplate
+from app.models.entities import (
+    ApiCredential,
+    BankTransaction,
+    Collection,
+    CommunicationChannelSetting,
+    MessageTemplate,
+)
 
 
 def _check_names(model) -> set[str]:
@@ -9,6 +15,18 @@ def _check_names(model) -> set[str]:
         constraint.name
         for constraint in model.__table__.constraints
         if isinstance(constraint, CheckConstraint) and constraint.name
+    }
+
+
+def _index_names(model) -> set[str]:
+    return {index.name for index in model.__table__.indexes if index.name}
+
+
+def _unique_constraint_names(model) -> set[str]:
+    return {
+        constraint.name
+        for constraint in model.__table__.constraints
+        if isinstance(constraint, UniqueConstraint) and constraint.name
     }
 
 
@@ -37,3 +55,10 @@ def test_message_template_default_is_unique_per_organization() -> None:
     assert index.unique is True
     assert [column.name for column in index.columns] == ["organization_id"]
     assert index.dialect_options["postgresql"]["where"] is not None
+
+
+def test_orm_metadata_preserves_migrated_schema_objects() -> None:
+    assert "uq_api_credentials_token_hash" in _unique_constraint_names(ApiCredential)
+    assert "ix_bank_transactions_sync_account" in _index_names(BankTransaction)
+    assert "ix_collections_message_template_id" in _index_names(Collection)
+    assert "ix_comm_channel_settings_connection" in _index_names(CommunicationChannelSetting)
