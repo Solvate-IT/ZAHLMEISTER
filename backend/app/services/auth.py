@@ -14,6 +14,8 @@ _password_hasher = PasswordHasher()
 _DUMMY_PASSWORD_HASH = _password_hasher.hash(secrets.token_urlsafe(32))
 SESSION_DAYS = 30
 ADMIN_SESSION_HOURS = 8
+ADMIN_SESSION_COOKIE = "zahlmeister_admin_session"
+ADMIN_REQUEST_HEADER = "X-Admin-Request"
 
 
 def normalize_email(email: str) -> str:
