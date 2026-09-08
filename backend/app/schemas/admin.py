@@ -30,6 +30,37 @@ class PlatformCustomerRead(BaseModel):
     collections: int
 
 
+class PlatformCustomerUserRead(BaseModel):
+    id: str
+    email: str
+    display_name: str
+    is_active: bool
+    email_verified: bool
+    created_at: datetime
+    last_login_at: datetime | None = None
+
+
+class PlatformSubscriptionRead(BaseModel):
+    id: str
+    provider: str
+    product_id: str
+    status: str
+    external_reference: str | None = None
+    purchased_at: datetime | None = None
+    expires_at: datetime | None = None
+    cancelled_at: datetime | None = None
+    auto_renew: bool | None = None
+    environment: str | None = None
+    last_verified_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class PlatformCustomerDetailRead(PlatformCustomerRead):
+    users: list[PlatformCustomerUserRead]
+    subscriptions: list[PlatformSubscriptionRead]
+
+
 class PlatformCustomerUpdate(BaseModel):
     organization_name: str | None = Field(default=None, min_length=1, max_length=200)
     api_enabled: bool | None = None
