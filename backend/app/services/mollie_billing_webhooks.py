@@ -83,7 +83,11 @@ def _remote_invoice_matches_local(item: BillingInvoice, payload: dict) -> bool:
     line = lines[0]
     if line.get("quantity") not in {1, "1", "1.0"}:
         return False
-    if str(line.get("vatRate", "")) != f"{Decimal(item.vat_rate):.2f}":
+    try:
+        remote_vat_rate = Decimal(str(line.get("vatRate", "")))
+    except InvalidOperation:
+        return False
+    if remote_vat_rate != Decimal(item.vat_rate):
         return False
     unit_price = line.get("unitPrice")
     if not isinstance(unit_price, dict):
@@ -101,7 +105,9 @@ def _remote_invoice_matches_local(item: BillingInvoice, payload: dict) -> bool:
     if remote_created is not None and item.created_at is not None:
         local_created = _normalize_utc(item.created_at)
         delta = remote_created - local_created
-        if delta < timedelta(0) or delta > INVOICE_CREATE_RETRY_WINDOW + timedelta(minutes=5):
+        if delta < -timedelta(minutes=5):
+            return False
+        if delta > INVOICE_CREATE_RETRY_WINDOW + timedelta(minutes=5):
             return False
     return True
 
