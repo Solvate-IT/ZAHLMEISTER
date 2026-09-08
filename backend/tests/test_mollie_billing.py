@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -7,9 +7,11 @@ import pytest
 from app.core.config import settings
 from app.services.billing import PRO_PRODUCT_ID
 from app.services.mollie_billing import (
+    MOLLIE_GRACE_DAYS,
     MOLLIE_PURPOSE,
     MollieBillingVerificationError,
     _add_year,
+    _grace_expiry,
     _metadata,
     _payment_amount_matches,
     _reset_finished_subscription_data,
@@ -79,6 +81,15 @@ def test_existing_subscription_keeps_its_original_price_after_price_change(
     ) is True
 
 
+def test_renewal_grace_period_is_anchored_and_does_not_roll_forward() -> None:
+    paid_through = datetime(2026, 9, 8, 23, 59, tzinfo=UTC)
+    data: dict[str, str] = {}
+    first = _grace_expiry(data, paid_through, now=paid_through)
+    second = _grace_expiry(data, first, now=paid_through + timedelta(days=5))
+    assert first == paid_through + timedelta(days=MOLLIE_GRACE_DAYS)
+    assert second == first
+
+
 def test_new_checkout_clears_finished_subscription_state_but_keeps_customer() -> None:
     data = {
         "mollie_customer_id": "cst_example",
@@ -88,6 +99,7 @@ def test_new_checkout_clears_finished_subscription_state_but_keeps_customer() ->
         "initial_payment_id": "tr_old",
         "billing_amount": "29.90",
         "billing_currency": "EUR",
+        "grace_until": "2026-09-15T23:59:00+00:00",
     }
     _reset_finished_subscription_data(data)
     assert data == {"mollie_customer_id": "cst_example"}
