@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.entities import Participant
 from app.models.platform import StoreSubscription
-from app.services.billing import PRO_PRODUCT_ID, active_entitlement_subscription
+from app.services.billing import active_entitlement_subscription
 
 FREE_PARTICIPANTS_PER_LIST = 10
 
