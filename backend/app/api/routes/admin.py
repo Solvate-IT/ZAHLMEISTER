@@ -13,9 +13,12 @@ from app.models.entities import Collection, Organization, Participant, Participa
 from app.models.platform import PlatformAdminAudit, StoreSubscription
 from app.schemas.admin import (
     PlatformAdminSummary,
+    PlatformCustomerDetailRead,
     PlatformCustomerRead,
     PlatformCustomerUpdate,
+    PlatformCustomerUserRead,
     PlatformGrantProRequest,
+    PlatformSubscriptionRead,
 )
 from app.services.billing import ENTITLED_STATUSES, PRO_PRODUCT_ID, subscription_is_entitled
 
@@ -114,6 +117,71 @@ async def _customer_rows(session: AsyncSession) -> list[PlatformCustomerRead]:
     return result
 
 
+async def _customer_detail(
+    session: AsyncSession,
+    organization_id: UUID,
+) -> PlatformCustomerDetailRead | None:
+    summary_row = next(
+        (
+            item
+            for item in await _customer_rows(session)
+            if item.organization_id == str(organization_id)
+        ),
+        None,
+    )
+    if summary_row is None:
+        return None
+
+    users = (
+        await session.execute(
+            select(User)
+            .where(User.organization_id == organization_id)
+            .order_by(User.created_at)
+        )
+    ).scalars().all()
+    subscriptions = (
+        await session.execute(
+            select(StoreSubscription)
+            .where(StoreSubscription.organization_id == organization_id)
+            .order_by(StoreSubscription.created_at.desc())
+        )
+    ).scalars().all()
+
+    return PlatformCustomerDetailRead(
+        **summary_row.model_dump(),
+        users=[
+            PlatformCustomerUserRead(
+                id=str(user.id),
+                email=user.email,
+                display_name=user.display_name,
+                is_active=user.is_active,
+                email_verified=user.email_verified_at is not None,
+                created_at=user.created_at,
+                last_login_at=user.last_login_at,
+            )
+            for user in users
+        ],
+        subscriptions=[
+            PlatformSubscriptionRead(
+                id=str(subscription.id),
+                provider=subscription.provider,
+                product_id=subscription.product_id,
+                status=subscription.status,
+                external_reference=subscription.external_reference,
+                purchased_at=subscription.purchased_at,
+                expires_at=subscription.expires_at,
+                cancelled_at=subscription.cancelled_at,
+                auto_renew=subscription.auto_renew,
+                environment=subscription.environment,
+                last_verified_at=subscription.last_verified_at,
+                created_at=subscription.created_at,
+                updated_at=subscription.updated_at,
+            )
+            for subscription in subscriptions
+        ],
+    )
+
+
 @router.get("/summary", response_model=PlatformAdminSummary)
 async def summary(
     _: User = Depends(require_platform_admin),
@@ -134,6 +202,18 @@ async def customers(
     session: AsyncSession = Depends(get_session),
 ) -> list[PlatformCustomerRead]:
     return await _customer_rows(session)
+
+
+@router.get("/customers/{organization_id}", response_model=PlatformCustomerDetailRead)
+async def customer_detail(
+    organization_id: UUID,
+    _: User = Depends(require_platform_admin),
+    session: AsyncSession = Depends(get_session),
+) -> PlatformCustomerDetailRead:
+    item = await _customer_detail(session, organization_id)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
+    return item
 
 
 @router.patch("/customers/{organization_id}", response_model=PlatformCustomerRead)
