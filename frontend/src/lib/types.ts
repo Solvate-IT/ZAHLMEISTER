@@ -56,6 +56,10 @@ export interface ApiSettings { enabled: boolean; available_scopes: string[]; }
 export interface ApiCredential { id: string; name: string; token_prefix: string; scopes: string[]; created_at: string; last_used_at?: string|null; expires_at?: string|null; revoked_at?: string|null; }
 export interface ApiCredentialCreated extends ApiCredential { token: string; }
 export interface BillingEntitlement { plan:"free"|"pro"; active:boolean; provider:string|null; status:string|null; product_id:string|null; expires_at:string|null; auto_renew:boolean|null; }
+export type BillingCustomerType = "consumer"|"business";
+export interface BillingProfileWrite { customer_type:BillingCustomerType; given_name:string|null; family_name:string|null; organization_name:string|null; billing_email:string; street_and_number:string; postal_code:string; city:string; region:string|null; country:string; vat_number:string|null; organization_number:string|null; }
+export interface BillingProfile extends BillingProfileWrite { vat_validation_status:string; vat_validated_at:string|null; }
+export interface BillingInvoice { id:string; provider:string; product_id:string; tariff_version:string; period_start:string; period_end:string; gross_amount:string; currency:string; vat_rate:string; vat_scheme:string; tax_treatment:string; invoice_number:string|null; status:string; payment_url:string|null; paid_at:string|null; }
 export interface MollieBillingConfig { available:boolean; product_id:string; amount:string; currency:string; interval:string; environment:"test"|"live"; }
 export interface MollieBillingCheckout { checkout_url:string; payment_id:string; resumed:boolean; }
 export interface PlatformAdminSummary { customers:number; free_customers:number; pro_customers:number; active_users:number; }
