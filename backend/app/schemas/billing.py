@@ -76,9 +76,17 @@ class BillingProfileWrite(BaseModel):
             raise ValueError("Invalid billing email")
         return value
 
-    @field_validator("street_and_number", "postal_code", "city")
+    @field_validator("street_and_number", "city")
     @classmethod
     def clean_required(cls, value: str) -> str:
+        value = " ".join(value.split()).strip()
+        if not value:
+            raise ValueError("Billing field must not be empty")
+        return value
+
+    @field_validator("postal_code")
+    @classmethod
+    def clean_postal_code(cls, value: str) -> str:
         return " ".join(value.split()).strip()
 
     @field_validator("country")
