@@ -312,6 +312,8 @@ async def forgot_password(
     background_tasks: BackgroundTasks,
 ) -> None:
     email = normalize_email(payload.email)
+    if email in settings.platform_admin_emails:
+        return
     token: str | None = None
     locale = "en"
     async with SessionLocal.begin() as session:
@@ -329,12 +331,18 @@ async def forgot_password(
 
 @router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
 async def reset_password(payload: ResetPasswordRequest) -> None:
+    admin_reset_denied = False
     async with SessionLocal.begin() as session:
         user = await consume_action_token(session, payload.token, RESET_PURPOSE)
         if user is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired token")
-        user.password_hash = hash_password(payload.new_password)
-        await invalidate_user_sessions(session, user.id)
+        if user.email.casefold() in settings.platform_admin_emails:
+            admin_reset_denied = True
+        else:
+            user.password_hash = hash_password(payload.new_password)
+            await invalidate_user_sessions(session, user.id)
+    if admin_reset_denied:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired token")
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
