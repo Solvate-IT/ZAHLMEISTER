@@ -64,7 +64,9 @@ async def get_connection(
 ) -> OnlinePaymentConnectionRead | None:
     async with SessionLocal() as session:
         connection = await _get_connection(session, organization.id)
-        return _read(connection) if connection else None
+        if connection is None or connection.status == "disconnected":
+            return None
+        return _read(connection)
 
 
 @router.get("/mollie/oauth/start", response_model=OnlinePaymentOAuthStartRead)
@@ -149,7 +151,7 @@ async def list_profiles(
 ) -> list[OnlinePaymentProfileRead]:
     async with SessionLocal.begin() as session:
         connection = await _get_connection(session, organization.id, for_update=True)
-        if connection is None:
+        if connection is None or connection.status == "disconnected":
             raise HTTPException(status_code=404, detail="Online payment connection not found")
         try:
             _, profiles = await get_account_details(session, connection)
@@ -176,7 +178,7 @@ async def select_profile(
 ) -> OnlinePaymentConnectionRead:
     async with SessionLocal.begin() as session:
         connection = await _get_connection(session, organization.id, for_update=True)
-        if connection is None:
+        if connection is None or connection.status == "disconnected":
             raise HTTPException(status_code=404, detail="Online payment connection not found")
         try:
             _, profiles = await get_account_details(session, connection)
@@ -199,7 +201,7 @@ async def set_enabled(
 ) -> OnlinePaymentConnectionRead:
     async with SessionLocal.begin() as session:
         connection = await _get_connection(session, organization.id, for_update=True)
-        if connection is None:
+        if connection is None or connection.status == "disconnected":
             raise HTTPException(status_code=404, detail="Online payment connection not found")
         connection.enabled = payload.enabled
         await session.flush()
@@ -214,7 +216,7 @@ async def test_connection(
     tested_at = datetime.now(UTC)
     async with SessionLocal.begin() as session:
         connection = await _get_connection(session, organization.id, for_update=True)
-        if connection is None:
+        if connection is None or connection.status == "disconnected":
             raise HTTPException(status_code=404, detail="Online payment connection not found")
         try:
             await mollie_provider.test_connection(session, connection)
@@ -242,7 +244,17 @@ async def disconnect(
 ) -> None:
     async with SessionLocal.begin() as session:
         connection = await _get_connection(session, organization.id, for_update=True)
-        if connection is None:
+        if connection is None or connection.status == "disconnected":
             return
         await revoke_connection(connection)
-        await session.delete(connection)
+        # Keep the row because historical OnlinePaymentAttempt records reference it.
+        # Only credentials and active configuration are removed. Reconnecting reuses the
+        # same connection record and therefore preserves the financial audit trail.
+        connection.status = "disconnected"
+        connection.enabled = False
+        connection.encrypted_config = None
+        connection.profile_id = None
+        connection.account_label = None
+        connection.connected_at = None
+        connection.last_tested_at = None
+        connection.last_error = None
