@@ -44,15 +44,15 @@ Mollie invoice status values are normalized internally (`payment_reversed` and `
 
 ## Cancellation
 
-Cancellation always disables future automatic renewal in Zahlmeister first within the same database transaction.
+A cancellation is committed only after Zahlmeister has reconciled the relevant Mollie renewal state. If Mollie refuses or cannot verify a required remote cancellation, the request fails safely and no successful cancellation is shown to the customer.
 
 For the new Sales Invoice flow:
 
 - a staged local renewal that has not yet been created at Mollie is marked cancelled and will never be POSTed;
 - if the remote invoice is missing locally, Zahlmeister first performs the same exhaustive recovery scan before deciding that no remote invoice exists;
-- an open remote renewal invoice is refreshed from Mollie and cancelled through the Sales Invoice API when cancellation is allowed;
-- a renewal that is already paid is not undone: the customer keeps the paid Pro period, but `auto_renew` remains disabled for the following year;
-- `pending-payment` means Mollie has already initiated the asynchronous mandate payment. The UI explicitly states that cancelling at that point stops future renewals but cannot promise that an already-running annual charge will be stopped. If that payment succeeds, the paid period remains active with `auto_renew=false`. If it fails and the invoice returns to an open state, the open invoice is cancelled rather than being left as a future payable renewal.
+- a remote renewal invoice is refreshed from Mollie and, while it is still cancelable, cancelled through the Sales Invoice API;
+- a renewal that is already paid is not undone: the customer keeps the paid Pro period and future automatic renewal is disabled;
+- `pending-payment` means Mollie has already initiated the asynchronous mandate payment. Zahlmeister attempts the documented Sales Invoice cancellation transition, but does not claim success if Mollie no longer permits cancellation of the in-flight state. The UI explicitly warns that an already-processing annual payment may still complete. After successful cancellation, no later worker is allowed to create another renewal because `auto_renew` is false.
 
 Legacy Mollie `sub_...` subscriptions continue to use Mollie's subscription cancellation endpoint and remain backward compatible.
 
