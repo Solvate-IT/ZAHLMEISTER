@@ -9,6 +9,7 @@ from app.services.billing import (
     VerifiedSubscription,
     subscription_is_entitled,
     validate_verified_subscription,
+    verified_subscription_is_entitled,
 )
 
 
@@ -63,6 +64,31 @@ def test_cancelled_subscription_stops_entitlement_after_paid_period() -> None:
 def test_cancelled_subscription_without_expiry_never_entitles_account() -> None:
     subscription = _subscription(status="cancelled")
     assert subscription_is_entitled(subscription) is False
+
+
+def test_verified_active_purchase_is_entitled() -> None:
+    organization_id = uuid4()
+    verified = VerifiedSubscription(
+        provider="google",
+        product_id=PRO_PRODUCT_ID,
+        external_reference="purchase-token",
+        account_token=str(organization_id),
+        status="active",
+    )
+    assert verified_subscription_is_entitled(verified) is True
+
+
+def test_verified_cancelled_purchase_is_only_entitled_until_expiry() -> None:
+    organization_id = uuid4()
+    verified = VerifiedSubscription(
+        provider="apple",
+        product_id=PRO_PRODUCT_ID,
+        external_reference="original-transaction-id",
+        account_token=str(organization_id),
+        status="cancelled",
+        expires_at=datetime.now(UTC) - timedelta(seconds=1),
+    )
+    assert verified_subscription_is_entitled(verified) is False
 
 
 def test_verified_purchase_must_be_bound_to_same_organization() -> None:
