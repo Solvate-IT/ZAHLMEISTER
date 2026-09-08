@@ -181,7 +181,7 @@ docker run --rm \
     ! command -v ruff >/dev/null
   '
 
-docker run --rm --entrypoint sh "$FRONTEND_RUNTIME_IMAGE" -c '
+docker run --rm --add-host backend:127.0.0.1 --entrypoint sh "$FRONTEND_RUNTIME_IMAGE" -c '
     nginx -t &&
     test -f /usr/share/nginx/html/index.html &&
     test -f /usr/share/nginx/html/app/index.html &&
