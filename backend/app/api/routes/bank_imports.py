@@ -268,6 +268,10 @@ async def import_bank_statement(
             if row.fingerprint in existing_fingerprints:
                 item.duplicate_count += 1
                 continue
+            # Include rows accepted earlier in this same upload. Without this, a duplicate
+            # transaction repeated inside one statement reaches the database unique
+            # constraint and aborts the whole import instead of being counted as duplicate.
+            existing_fingerprints.add(row.fingerprint)
 
             candidates = [
                 target
