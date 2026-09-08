@@ -66,7 +66,9 @@ async def get_connection(organization: Organization = Depends(get_organization))
                 BankSyncConnection.provider == "ponto",
             )
         )
-        return _connection_read(item) if item else None
+        if item is None or item.status == "disconnected":
+            return None
+        return _connection_read(item)
 
 
 @router.get("/ponto/configuration", response_model=PontoConfigurationRead)
@@ -98,6 +100,7 @@ async def start_ponto(organization: Organization = Depends(get_organization)) ->
             session.add(item)
             await session.flush()
         item.status = "connecting"
+        item.account_label = item.account_label or "Ponto"
         item.last_error = None
         try:
             language = (organization.locale or "en").split("-", 1)[0]
@@ -179,7 +182,7 @@ async def test_connection(organization: Organization = Depends(get_organization)
                 BankSyncConnection.provider == "ponto",
             )
         )
-        if item is None:
+        if item is None or item.status == "disconnected":
             raise HTTPException(status_code=404, detail="BankSync is not connected")
         try:
             await get_bank_sync_provider(item.provider).test_connection(item)
@@ -247,10 +250,20 @@ async def sync_now(organization: Organization = Depends(get_organization)) -> Ba
 async def disconnect(organization: Organization = Depends(get_organization)) -> None:
     async with SessionLocal.begin() as session:
         item = await session.scalar(
-            select(BankSyncConnection).where(
+            select(BankSyncConnection)
+            .where(
                 BankSyncConnection.organization_id == organization.id,
                 BankSyncConnection.provider == "ponto",
             )
+            .with_for_update()
         )
-        if item is not None:
-            await session.delete(item)
+        if item is None or item.status == "disconnected":
+            return
+        # Keep connection/account rows because historical BankTransaction records point
+        # to those accounts. Removing only the credentials stops access while retaining
+        # the financial audit trail and the user's previous account enable/disable choices.
+        item.status = "disconnected"
+        item.encrypted_config = None
+        item.connected_at = None
+        item.last_tested_at = None
+        item.last_error = None
