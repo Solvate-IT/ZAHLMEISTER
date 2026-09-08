@@ -3,7 +3,13 @@ from decimal import Decimal
 
 import pytest
 
-from app.services.reports import CollectionReportData, CollectionReportRow, collection_csv, collection_pdf, collection_xlsx
+from app.services.reports import (
+    CollectionReportData,
+    CollectionReportRow,
+    collection_csv,
+    collection_pdf,
+    collection_xlsx,
+)
 
 
 def _data() -> CollectionReportData:
