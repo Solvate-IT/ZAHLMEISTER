@@ -12,6 +12,8 @@ from app.services.mollie_billing import (
     _add_year,
     _metadata,
     _payment_amount_matches,
+    _reset_finished_subscription_data,
+    _stored_billing_terms,
     _verified_metadata,
     amount_value,
     billing_configured,
@@ -59,6 +61,35 @@ def test_payment_must_match_exact_configured_amount_and_currency(
     assert _payment_amount_matches({"amount": {"value": "99.90", "currency": "EUR"}}) is True
     assert _payment_amount_matches({"amount": {"value": "99.89", "currency": "EUR"}}) is False
     assert _payment_amount_matches({"amount": {"value": "99.90", "currency": "USD"}}) is False
+
+
+def test_existing_subscription_keeps_its_original_price_after_price_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_test_billing(monkeypatch)
+    stored = {"billing_amount": "29.90", "billing_currency": "EUR"}
+    monkeypatch.setattr(settings, "mollie_billing_pro_yearly_amount", Decimal("39.90"))
+    amount, currency = _stored_billing_terms(stored)
+    assert (amount, currency) == ("29.90", "EUR")
+    assert _payment_amount_matches(
+        {"amount": {"value": "29.90", "currency": "EUR"}},
+        amount,
+        currency,
+    ) is True
+
+
+def test_new_checkout_clears_finished_subscription_state_but_keeps_customer() -> None:
+    data = {
+        "mollie_customer_id": "cst_example",
+        "subscription_id": "sub_old",
+        "mandate_id": "mdt_old",
+        "subscription_status": "canceled",
+        "initial_payment_id": "tr_old",
+        "billing_amount": "29.90",
+        "billing_currency": "EUR",
+    }
+    _reset_finished_subscription_data(data)
+    assert data == {"mollie_customer_id": "cst_example"}
 
 
 def test_payment_metadata_binds_purchase_to_organization() -> None:
