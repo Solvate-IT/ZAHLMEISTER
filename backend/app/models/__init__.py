@@ -1,3 +1,4 @@
+from app.models.billing import BillingInvoice, BillingProfile  # noqa: F401
 from app.models.channel_strategy import (  # noqa: F401
     CommunicationPreference,
     ParticipantChannelSetting,
