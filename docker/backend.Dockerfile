@@ -32,6 +32,8 @@ COPY backend/app ./app
 RUN pip install --no-cache-dir --prefix=/home/app/.local .
 
 FROM base AS test
+ENV RUFF_CACHE_DIR=/tmp/ruff-cache \
+    PYTEST_ADDOPTS="-p no:cacheprovider"
 RUN pip install --no-cache-dir --prefix=/home/app/.local ".[dev]"
 COPY backend/tests ./tests
 COPY backend/alembic.ini ./
