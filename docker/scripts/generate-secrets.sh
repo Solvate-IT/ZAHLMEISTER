@@ -50,8 +50,8 @@ write_secret() {
   local path="$1"
   local value="$2"
   if [[ -e "$path" && "$FORCE" != "--force" ]]; then
-    echo "Refusing to overwrite $path (use --force)" >&2
-    exit 2
+    echo "Keeping existing secret: $path"
+    return
   fi
   printf '%s\n' "$value" > "$path"
   chmod 640 "$path"
@@ -75,7 +75,8 @@ fi
 chmod 750 "$TARGET_DIR"
 find "$TARGET_DIR" -maxdepth 1 -type f ! -name '.gitkeep' -exec chmod 640 {} +
 
-echo "Production secrets created in $TARGET_DIR"
+echo "Production secrets are available in $TARGET_DIR"
 echo "Runtime owner: ${APP_RUNTIME_UID}:${APP_RUNTIME_GID}"
+echo "Existing secrets were preserved unless --force was specified."
 echo "Create platform_smtp_password and mollie_billing_api_key there when those integrations are enabled."
-echo "Configure Mollie's Sales Invoice webhook with the generated mollie_billing_webhook_secret."
+echo "Configure Mollie's Sales Invoice webhook with mollie_billing_webhook_secret."
