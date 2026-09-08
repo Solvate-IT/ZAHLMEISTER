@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,7 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import SessionLocal
 from app.models.entities import ApiCredential, AuthSession, Organization, User
 from app.services.api_access import credential_is_active, decode_scopes
-from app.services.auth import ADMIN_SESSION_HOURS, is_platform_admin, token_hash
+from app.services.auth import (
+    ADMIN_REQUEST_HEADER,
+    ADMIN_SESSION_COOKIE,
+    ADMIN_SESSION_HOURS,
+    is_platform_admin,
+    token_hash,
+)
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -38,6 +44,24 @@ async def get_current_auth_session(
     return auth_session
 
 
+async def get_current_admin_auth_session(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> AuthSession:
+    token = request.cookies.get(ADMIN_SESSION_COOKIE)
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin authentication required")
+    auth_session = await session.scalar(
+        select(AuthSession).where(
+            AuthSession.token_hash == token_hash(token),
+            AuthSession.expires_at > datetime.now(UTC),
+        )
+    )
+    if auth_session is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin session expired")
+    return auth_session
+
+
 async def get_current_user(
     auth_session: AuthSession = Depends(get_current_auth_session),
     session: AsyncSession = Depends(get_session),
@@ -49,10 +73,14 @@ async def get_current_user(
 
 
 async def require_platform_admin(
-    auth_session: AuthSession = Depends(get_current_auth_session),
-    user: User = Depends(get_current_user),
+    request: Request,
+    auth_session: AuthSession = Depends(get_current_admin_auth_session),
+    session: AsyncSession = Depends(get_session),
 ) -> User:
-    if not is_platform_admin(user):
+    if request.headers.get(ADMIN_REQUEST_HEADER) != "1":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid admin request")
+    user = await session.get(User, auth_session.user_id)
+    if user is None or not is_platform_admin(user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Platform admin required")
     if auth_session.created_at is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin session expired")
