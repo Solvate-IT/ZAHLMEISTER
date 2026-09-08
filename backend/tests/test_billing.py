@@ -44,11 +44,24 @@ def test_expired_subscription_does_not_entitle_account() -> None:
     assert subscription_is_entitled(subscription) is False
 
 
-def test_cancelled_subscription_does_not_entitle_account() -> None:
+def test_cancelled_subscription_stays_entitled_until_paid_period_ends() -> None:
     subscription = _subscription(
         status="cancelled",
         expires_at=datetime.now(UTC) + timedelta(days=30),
     )
+    assert subscription_is_entitled(subscription) is True
+
+
+def test_cancelled_subscription_stops_entitlement_after_paid_period() -> None:
+    subscription = _subscription(
+        status="cancelled",
+        expires_at=datetime.now(UTC) - timedelta(seconds=1),
+    )
+    assert subscription_is_entitled(subscription) is False
+
+
+def test_cancelled_subscription_without_expiry_never_entitles_account() -> None:
+    subscription = _subscription(status="cancelled")
     assert subscription_is_entitled(subscription) is False
 
 
