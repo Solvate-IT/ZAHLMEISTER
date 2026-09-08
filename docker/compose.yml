@@ -72,6 +72,7 @@ x-backend-environment: &backend-environment
 services:
   db:
     image: postgres:17-alpine
+    restart: "no"
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -86,7 +87,7 @@ services:
 
   mailpit:
     image: axllent/mailpit:v1.30.0
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "127.0.0.1:${MAILPIT_PORT:-8028}:8025"
     environment:
@@ -98,6 +99,7 @@ services:
     build:
       context: ..
       dockerfile: docker/backend.Dockerfile.dev
+    restart: "no"
     environment: *backend-environment
     depends_on:
       db:
@@ -111,6 +113,7 @@ services:
     build:
       context: ..
       dockerfile: docker/backend.Dockerfile.dev
+    restart: "no"
     environment: *backend-environment
     depends_on:
       bootstrap:
@@ -128,6 +131,7 @@ services:
     build:
       context: ..
       dockerfile: docker/backend.Dockerfile.dev
+    restart: "no"
     environment: *backend-environment
     depends_on:
       bootstrap:
@@ -143,6 +147,7 @@ services:
     build:
       context: ..
       dockerfile: docker/frontend.Dockerfile.dev
+    restart: "no"
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:${BACKEND_PORT}/api/v1
     command: ["sh", "-c", "if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi && npm run dev"]
