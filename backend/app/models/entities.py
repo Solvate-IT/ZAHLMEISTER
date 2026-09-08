@@ -64,6 +64,7 @@ class ApiCredential(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
     __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_api_credentials_token_hash"),
         Index("ix_api_credentials_org_created", "organization_id", "created_at"),
     )
 
@@ -152,6 +153,7 @@ class CommunicationChannelSetting(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("organization_id", "channel", name="uq_comm_channel_org_channel"),
         Index("ix_comm_channel_settings_org", "organization_id"),
+        Index("ix_comm_channel_settings_connection", "connection_id"),
     )
 
 
@@ -212,6 +214,7 @@ class Collection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="ck_collections_communication_mode",
         ),
         Index("ix_collections_org_created", "organization_id", "created_at"),
+        Index("ix_collections_message_template_id", "message_template_id"),
     )
 
 
@@ -446,6 +449,7 @@ class BankTransaction(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("organization_id", "fingerprint", name="uq_bank_transaction_org_fingerprint"),
         Index("ix_bank_transactions_import_status", "import_id", "status"),
+        Index("ix_bank_transactions_sync_account", "bank_sync_account_id"),
     )
 
 
