@@ -4,6 +4,10 @@ import { AppLauncher } from "@capacitor/app-launcher";
 import { Capacitor } from "@capacitor/core";
 import type {CommunicationChannel} from "@/lib/types";
 
+export function isNativeApp(): boolean {
+  return typeof window !== "undefined" && Capacitor.isNativePlatform();
+}
+
 export function externalChannelCapabilities(): CommunicationChannel[] {
   if (typeof window === "undefined") return ["email","whatsapp","telegram"];
   const mobileBrowser = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
