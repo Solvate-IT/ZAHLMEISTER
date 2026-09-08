@@ -22,7 +22,7 @@ export function FileDropZone({accept,disabled=false,file,label,hint,selectLabel,
       onClick={choose}
       onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();choose()}}}
       onDragEnter={event=>{event.preventDefault();if(!disabled)setDragging(true)}}
-      onDragOver={event=>{event.preventDefault();if(!disabled){event.dataTransfer.dropEffect="copy";setDragging(true)}}
+      onDragOver={event=>{event.preventDefault();if(!disabled){event.dataTransfer.dropEffect="copy";setDragging(true)}}}
       onDragLeave={event=>{event.preventDefault();setDragging(false)}}
       onDrop={event=>{event.preventDefault();setDragging(false);picked(event.dataTransfer.files?.[0])}}
     >
