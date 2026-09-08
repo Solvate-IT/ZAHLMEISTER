@@ -46,10 +46,20 @@ mkdir -p "$TARGET_DIR"
 chmod 750 "$TARGET_DIR"
 umask 077
 
+read_existing_secret() {
+  local path="$1"
+  [[ -f "$path" ]] || { echo "Existing secret is not a regular file: $path" >&2; exit 1; }
+  local value
+  value="$(tr -d '\r\n' < "$path")"
+  [[ -n "$value" ]] || { echo "Existing secret is empty: $path" >&2; exit 1; }
+  printf '%s' "$value"
+}
+
 write_secret() {
   local path="$1"
   local value="$2"
   if [[ -e "$path" && "$FORCE" != "--force" ]]; then
+    [[ -f "$path" ]] || { echo "Existing secret is not a regular file: $path" >&2; exit 1; }
     echo "Keeping existing secret: $path"
     return
   fi
@@ -57,7 +67,11 @@ write_secret() {
   chmod 640 "$path"
 }
 
-postgres_password="$(openssl rand -hex 32)"
+if [[ -e "$TARGET_DIR/postgres_password" && "$FORCE" != "--force" ]]; then
+  postgres_password="$(read_existing_secret "$TARGET_DIR/postgres_password")"
+else
+  postgres_password="$(openssl rand -hex 32)"
+fi
 app_secret="$(openssl rand -hex 48)"
 monitoring_token="$(openssl rand -hex 32)"
 mollie_billing_webhook_secret="$(openssl rand -hex 32)"
@@ -78,5 +92,6 @@ find "$TARGET_DIR" -maxdepth 1 -type f ! -name '.gitkeep' -exec chmod 640 {} +
 echo "Production secrets are available in $TARGET_DIR"
 echo "Runtime owner: ${APP_RUNTIME_UID}:${APP_RUNTIME_GID}"
 echo "Existing secrets were preserved unless --force was specified."
+echo "A newly created database_url always uses the actual preserved or rotated postgres_password."
 echo "Create platform_smtp_password and mollie_billing_api_key there when those integrations are enabled."
 echo "Configure Mollie's Sales Invoice webhook with mollie_billing_webhook_secret."
