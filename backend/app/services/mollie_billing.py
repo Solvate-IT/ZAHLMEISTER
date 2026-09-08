@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 import httpx
@@ -106,8 +107,16 @@ def _metadata(organization_id: UUID) -> dict[str, str]:
     }
 
 
-def _webhook_url() -> str:
-    return f"{settings.oauth_callback_base}/api/v1/billing/mollie/webhook"
+def _webhook_url() -> str | None:
+    base = settings.oauth_callback_base
+    parsed = urlparse(base)
+    if parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
+        return None
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    if settings.environment == "production" and parsed.scheme != "https":
+        return None
+    return f"{base}/api/v1/billing/mollie/webhook"
 
 
 def _return_url(result: str) -> str:
@@ -355,18 +364,21 @@ async def start_checkout(
     _reset_finished_subscription_data(data)
     billing_amount, billing_currency = _current_billing_terms()
     checkout_attempt = str(uuid4())
+    payment_payload: dict[str, Any] = {
+        "amount": {"currency": billing_currency, "value": billing_amount},
+        "description": "Zahlmeister Pro",
+        "sequenceType": "first",
+        "redirectUrl": _return_url("return"),
+        "cancelUrl": _return_url("cancelled"),
+        "metadata": _metadata(organization_id),
+    }
+    webhook_url = _webhook_url()
+    if webhook_url:
+        payment_payload["webhookUrl"] = webhook_url
     payment = await _request_json(
         "POST",
         f"customers/{customer_id}/payments",
-        json_body={
-            "amount": {"currency": billing_currency, "value": billing_amount},
-            "description": "Zahlmeister Pro",
-            "sequenceType": "first",
-            "redirectUrl": _return_url("return"),
-            "cancelUrl": _return_url("cancelled"),
-            "webhookUrl": _webhook_url(),
-            "metadata": _metadata(organization_id),
-        },
+        json_body=payment_payload,
         idempotency_key=f"zahlmeister-first-{organization_id}-{checkout_attempt}",
     )
     payment_id = payment.get("id")
@@ -493,18 +505,21 @@ async def _process_first_payment(
     paid_at = _parse_datetime(payment.get("paidAt")) or datetime.now(UTC)
     first_renewal_date = _add_year(paid_at.date())
     billing_amount, billing_currency = _stored_billing_terms(data)
+    subscription_payload: dict[str, Any] = {
+        "amount": {"currency": billing_currency, "value": billing_amount},
+        "interval": MOLLIE_INTERVAL,
+        "startDate": first_renewal_date.isoformat(),
+        "description": _subscription_description(row.organization_id),
+        "mandateId": mandate_id,
+        "metadata": _metadata(row.organization_id),
+    }
+    webhook_url = _webhook_url()
+    if webhook_url:
+        subscription_payload["webhookUrl"] = webhook_url
     subscription = await _request_json(
         "POST",
         f"customers/{remote_customer_id}/subscriptions",
-        json_body={
-            "amount": {"currency": billing_currency, "value": billing_amount},
-            "interval": MOLLIE_INTERVAL,
-            "startDate": first_renewal_date.isoformat(),
-            "description": _subscription_description(row.organization_id),
-            "webhookUrl": _webhook_url(),
-            "mandateId": mandate_id,
-            "metadata": _metadata(row.organization_id),
-        },
+        json_body=subscription_payload,
         idempotency_key=f"zahlmeister-subscription-{payment_id}",
     )
     subscription_id = subscription.get("id")
