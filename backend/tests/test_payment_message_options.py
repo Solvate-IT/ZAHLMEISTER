@@ -1,5 +1,5 @@
-from pydantic import ValidationError
 import pytest
+from pydantic import ValidationError
 
 from app.schemas.payments import PaymentSettingsUpdate
 from app.schemas.workflow import CollectionCreate
