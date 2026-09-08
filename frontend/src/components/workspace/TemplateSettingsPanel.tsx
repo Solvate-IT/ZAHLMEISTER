@@ -11,64 +11,75 @@ function languageName(uiLocale:string,language:string):string{
 }
 
 export function TemplateSettingsPanel(){
-  const {t,locale}=useI18n();
-  const currentLanguage=locale.split("-")[0];
+  const {t}=useI18n();
   const [items,setItems]=useState<MessageTemplate[]>([]);
-  const [selected,setSelected]=useState<MessageTemplate|null>(null);
+  const [selectedId,setSelectedId]=useState<string|null>(null);
+  const [creating,setCreating]=useState(false);
   const [translation,setTranslation]=useState<TemplateTranslationStatus|null>(null);
   const [notice,setNotice]=useState("");
-  const [newName,setNewName]=useState("");
-  const [newBody,setNewBody]=useState("");
-  const [newLanguage,setNewLanguage]=useState("");
-  const [autoTranslate,setAutoTranslate]=useState(true);
-  const [busy,setBusy]=useState(false);
 
-  async function load(){
+  async function load(preferredId?:string|null){
     try{
       const [templates,status]=await Promise.all([api.templates(),api.templateTranslationStatus()]);
       setItems(templates);
       setTranslation(status);
-      setAutoTranslate(current=>status.configured?current:false);
-      if(!status.configured)setNewLanguage(current=>current||currentLanguage);
-      if(selected)setSelected(templates.find(item=>item.id===selected.id)??null);
+      const preferred=preferredId??selectedId;
+      const next=templates.find(item=>item.id===preferred)??templates.find(item=>item.is_default)??templates[0]??null;
+      setSelectedId(next?.id??null);
+      if(!templates.length)setCreating(true);
     }catch{setNotice(t("loadError"))}
   }
   useEffect(()=>{void load()},[]);
 
-  async function create(){
-    if(!newName.trim()||!newBody.trim()||busy)return;
-    setBusy(true);setNotice("");
-    try{
-      const item=await api.createTemplate({
-        name:newName.trim(),
-        body:newBody.trim(),
-        source_language:newLanguage||undefined,
-        auto_translate:Boolean(translation?.configured&&autoTranslate),
-      });
-      setNewName("");setNewBody("");setNewLanguage(translation?.configured?"":currentLanguage);setSelected(item);await load();setNotice(t("templateSaved"));
-    }catch(error){setNotice(error instanceof ApiError&&error.status===502?t("translationFailed"):t("requestFailed"))}
-    finally{setBusy(false)}
-  }
-
+  const selected=items.find(item=>item.id===selectedId)??null;
   const languages=translation?.supported_languages?.length?translation.supported_languages:[...supportedLocales];
+
   return <section className="card">
     <h3>{t("messageTemplates")}</h3>
     <p className="muted">{t("messageTemplateHint")}</p>
     {notice&&<div className="notice">{notice}</div>}
-    <div className="card form">
-      <strong>{t("newTemplate")}</strong>
-      <div className="field"><label>{t("templateName")}</label><input className="input" value={newName} onChange={event=>setNewName(event.target.value)}/></div>
-      <div className="field"><label>{t("sourceLanguage")}</label><select className="select" value={newLanguage} onChange={event=>setNewLanguage(event.target.value)}>{translation?.configured&&autoTranslate&&<option value="">{t("detectLanguageAutomatically")}</option>}{languages.map(language=><option key={language} value={language}>{languageName(locale,language)}</option>)}</select></div>
-      <div className="field"><label>{t("initialTemplateText")}</label><textarea className="textarea" style={{minHeight:180}} value={newBody} onChange={event=>setNewBody(event.target.value)}/></div>
-      <div className="notice">{t("variables")}: {"{{first_name}} · {{name}} · {{collection_name}} · {{amount}} · {{due_date}} · {{payment_link}} · {{payment_reference}}"}</div>
-      {translation?.configured?<label className="checkbox"><input type="checkbox" checked={autoTranslate} onChange={event=>{const enabled=event.target.checked;setAutoTranslate(enabled);if(!enabled&&!newLanguage)setNewLanguage(currentLanguage)}}/>{t("autoTranslateMissing")}</label>:<p className="muted">{t("autoTranslationUnavailable")}</p>}
-      <button className="button" onClick={create} disabled={busy||!newName.trim()||!newBody.trim()}>{t("create")}</button>
-    </div>
-    <div className="split">
-      <div className="stack">{items.map(item=><button key={item.id} className={`button ${selected?.id===item.id?"":"secondary"}`} onClick={()=>setSelected(item)}>{item.name}{item.is_default?` · ${t("defaultTemplate")}`:""}</button>)}</div>
-      {selected&&<TemplateEditor item={selected} translation={translation} languages={languages} onChanged={async updated=>{setSelected(updated);setNotice(t("templateSaved"));await load()}} onDeleted={async()=>{setSelected(null);setNotice(t("saved"));await load()}}/>}
+    <div className="template-workspace">
+      <div className="template-list">
+        <button type="button" className={`template-list-button ${creating?"active":""}`} onClick={()=>setCreating(true)}>+ {t("newTemplate")}</button>
+        {items.map(item=><button type="button" key={item.id} className={`template-list-button ${!creating&&selectedId===item.id?"active":""}`} onClick={()=>{setCreating(false);setSelectedId(item.id)}}><span>{item.name}</span>{item.is_default&&<small>{t("defaultTemplate")}</small>}</button>)}
+      </div>
+      <div className="template-editor">
+        {creating?<NewTemplateEditor translation={translation} languages={languages} onCreated={async item=>{setCreating(false);setSelectedId(item.id);setNotice(t("templateSaved"));await load(item.id)}}/>:selected?<TemplateEditor item={selected} translation={translation} languages={languages} onChanged={async updated=>{setSelectedId(updated.id);setNotice(t("templateSaved"));await load(updated.id)}} onDeleted={async()=>{setNotice(t("saved"));setCreating(false);await load(null)}}/>:<div className="empty">{t("noData")}</div>}
+      </div>
     </div>
   </section>
+}
+
+function NewTemplateEditor({translation,languages,onCreated}:{translation:TemplateTranslationStatus|null;languages:string[];onCreated:(item:MessageTemplate)=>void}){
+  const {t,locale}=useI18n();
+  const currentLanguage=locale.split("-")[0];
+  const [name,setName]=useState("");
+  const [body,setBody]=useState("");
+  const [language,setLanguage]=useState(translation?.configured?"":currentLanguage);
+  const [autoTranslate,setAutoTranslate]=useState(Boolean(translation?.configured));
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState("");
+
+  async function create(){
+    if(!name.trim()||!body.trim()||busy)return;
+    setBusy(true);setError("");
+    try{
+      const item=await api.createTemplate({name:name.trim(),body:body.trim(),source_language:language||undefined,auto_translate:Boolean(translation?.configured&&autoTranslate)});
+      onCreated(item);
+    }catch(err){setError(err instanceof ApiError&&err.status===502?t("translationFailed"):t("requestFailed"))}
+    finally{setBusy(false)}
+  }
+
+  return <div className="form">
+    <strong>{t("newTemplate")}</strong>
+    <div className="field"><label>{t("templateName")}</label><input className="input" autoFocus value={name} onChange={event=>setName(event.target.value)}/></div>
+    <div className="field"><label>{t("sourceLanguage")}</label><select className="select" value={language} onChange={event=>setLanguage(event.target.value)}>{translation?.configured&&autoTranslate&&<option value="">{t("detectLanguageAutomatically")}</option>}{languages.map(code=><option key={code} value={code}>{languageName(locale,code)}</option>)}</select></div>
+    <div className="field"><label>{t("initialTemplateText")}</label><textarea className="textarea template-textarea" value={body} onChange={event=>setBody(event.target.value)}/></div>
+    <div className="notice">{t("variables")}: {"{{first_name}} · {{name}} · {{collection_name}} · {{amount}} · {{due_date}} · {{payment_link}} · {{payment_reference}}"}</div>
+    {translation?.configured?<label className="checkbox"><input type="checkbox" checked={autoTranslate} onChange={event=>{const enabled=event.target.checked;setAutoTranslate(enabled);if(!enabled&&!language)setLanguage(currentLanguage)}}/>{t("autoTranslateMissing")}</label>:<p className="muted">{t("autoTranslationUnavailable")}</p>}
+    {error&&<div className="notice error">{error}</div>}
+    <div className="actions"><button type="button" className="button" onClick={create} disabled={busy||!name.trim()||!body.trim()}>{t("create")}</button></div>
+  </div>
 }
 
 function TemplateEditor({item,translation,languages,onChanged,onDeleted}:{item:MessageTemplate;translation:TemplateTranslationStatus|null;languages:string[];onChanged:(item:MessageTemplate)=>void;onDeleted:()=>void}){
@@ -84,17 +95,17 @@ function TemplateEditor({item,translation,languages,onChanged,onDeleted}:{item:M
   useEffect(()=>{const next=item.translations[language]!==undefined?language:(Object.keys(item.translations)[0]??locale.split("-")[0]);setName(item.name);setLanguage(next);setBody(item.translations[next]??"");setDefault(item.is_default)},[item]);
   function changeLanguage(next:string){setLanguage(next);setBody(item.translations[next]??"");setError("")}
   async function save(){if(!body.trim()||busy)return;setBusy(true);setError("");try{const updated=await api.updateTemplate(item.id,{name,translations:{[language]:body},is_default:isDefault});onChanged(updated)}catch{setError(t("requestFailed"))}finally{setBusy(false)}}
-  async function translateMissing(){if(!translation?.configured||!body.trim()||busy)return;setBusy(true);setError("");try{let updated=await api.updateTemplate(item.id,{name,translations:{[language]:body},is_default:isDefault});updated=await api.translateMissingTemplate(item.id,language);onChanged(updated)}catch(error){setError(error instanceof ApiError&&error.status===502?t("translationFailed"):t("requestFailed"))}finally{setBusy(false)}}
+  async function translateMissing(){if(!translation?.configured||!body.trim()||busy)return;setBusy(true);setError("");try{let updated=await api.updateTemplate(item.id,{name,translations:{[language]:body},is_default:isDefault});updated=await api.translateMissingTemplate(item.id,language);onChanged(updated)}catch(err){setError(err instanceof ApiError&&err.status===502?t("translationFailed"):t("requestFailed"))}finally{setBusy(false)}}
   async function remove(){if(item.is_default||busy||!confirm(t("confirmDelete")))return;setBusy(true);try{await api.deleteTemplate(item.id);onDeleted()}catch{setError(t("requestFailed"))}finally{setBusy(false)}}
 
   const translatedCount=Object.keys(item.translations).length;
   return <div className="form">
     <div className="field"><label>{t("templateName")}</label><input className="input" value={name} onChange={event=>setName(event.target.value)}/></div>
     <div className="row between"><div className="field" style={{flex:1}}><label>{t("messageLanguage")}</label><select className="select" value={language} onChange={event=>changeLanguage(event.target.value)}>{languages.map(code=><option key={code} value={code}>{languageName(locale,code)}{item.translations[code]?" ✓":""}</option>)}</select></div><span className="muted">{t("translationCoverage",{current:translatedCount,total:languages.length})}</span></div>
-    <div className="field"><label>{t("message")}</label><textarea className="textarea" style={{minHeight:240}} value={body} placeholder={t("missingTranslationHint")} onChange={event=>setBody(event.target.value)}/></div>
+    <div className="field"><label>{t("message")}</label><textarea className="textarea template-textarea" value={body} placeholder={t("missingTranslationHint")} onChange={event=>setBody(event.target.value)}/></div>
     <div className="notice">{t("variables")}: {"{{first_name}} · {{name}} · {{collection_name}} · {{amount}} · {{due_date}} · {{payment_link}} · {{payment_reference}}"}</div>
     <label className="checkbox"><input type="checkbox" checked={isDefault} onChange={event=>setDefault(event.target.checked)}/>{t("makeDefaultTemplate")}</label>
     {error&&<div className="notice error">{error}</div>}
-    <div className="actions"><button className="button" onClick={save} disabled={busy||!body.trim()}>{t("save")}</button>{translation?.configured&&translatedCount<languages.length&&<button className="button secondary" onClick={translateMissing} disabled={busy||!body.trim()}>{t("translateMissingLanguages")}</button>}{!item.is_default&&<button className="button danger" onClick={remove} disabled={busy}>{t("delete")}</button>}</div>
+    <div className="actions"><button type="button" className="button" onClick={save} disabled={busy||!body.trim()}>{t("save")}</button>{translation?.configured&&translatedCount<languages.length&&<button type="button" className="button secondary" onClick={translateMissing} disabled={busy||!body.trim()}>{t("translateMissingLanguages")}</button>}{!item.is_default&&<button type="button" className="button danger" onClick={remove} disabled={busy}>{t("delete")}</button>}</div>
   </div>
 }
