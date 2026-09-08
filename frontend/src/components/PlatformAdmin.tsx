@@ -3,7 +3,6 @@
 import Link from "next/link";
 import {useEffect,useMemo,useState} from "react";
 import {useRouter,useSearchParams} from "next/navigation";
-import {api} from "@/lib/api";
 import {AdminApiError,adminApi} from "@/lib/adminApi";
 import type {AccountUser,PlatformAdminSummary,PlatformCustomer,PlatformCustomerDetail} from "@/lib/types";
 import {Brand} from "./Brand";
@@ -127,27 +126,20 @@ function AdminLogin({onAuthenticated}:{onAuthenticated:(user:AccountUser)=>void}
   const [password,setPassword]=useState("");
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
-  const [info,setInfo]=useState("");
   async function submit(event:React.FormEvent){
-    event.preventDefault();setBusy(true);setError("");setInfo("");
+    event.preventDefault();setBusy(true);setError("");
     try{onAuthenticated(await adminApi.login(email.trim(),password))}catch{setError(t("adminInvalidCredentials"))}finally{setBusy(false)}
-  }
-  async function forgot(){
-    if(!email.trim())return;
-    setBusy(true);setError("");setInfo("");
-    try{await api.forgotPassword(email.trim());setInfo(t("resetLinkSent"))}catch{setError(t("requestFailed"))}finally{setBusy(false)}
   }
   return <div className="auth-card">
     <div className="brand"><Brand compact/></div>
     <h1>{t("adminLoginTitle")}</h1>
     <p className="muted">{t("adminLoginHint")}</p>
-    {error&&<div className="notice error">{error}</div>}{info&&<div className="notice success">{info}</div>}
+    {error&&<div className="notice error">{error}</div>}
     <form className="form" onSubmit={submit}>
       <div className="field"><label>{t("email")}</label><input className="input" type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="username" required/></div>
       <div className="field"><label>{t("password")}</label><input className="input" type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" required/></div>
       <button className="button" disabled={busy}>{t("login")}</button>
     </form>
-    <button className="button ghost" onClick={forgot} disabled={busy||!email.trim()}>{t("forgotPassword")}</button>
     <p className="muted">{t("adminLoginSecurityHint")}</p>
   </div>;
 }
