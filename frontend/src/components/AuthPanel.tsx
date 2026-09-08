@@ -3,6 +3,7 @@
 import {useState} from "react";
 import {api, ApiError} from "@/lib/api";
 import {useI18n} from "@/lib/i18n";
+import {PasswordInput} from "./PasswordInput";
 
 export function AuthPanel({registerMode,onAuthenticated,onBack}:{registerMode:boolean;onAuthenticated:()=>void;onBack?:()=>void}){
   const {t,locale}=useI18n(); const [register,setRegister]=useState(registerMode); const [forgotMode,setForgotMode]=useState(false); const [busy,setBusy]=useState(false); const [error,setError]=useState(""); const [info,setInfo]=useState("");
@@ -16,7 +17,7 @@ export function AuthPanel({registerMode,onAuthenticated,onBack}:{registerMode:bo
     <form className="form" onSubmit={submit}>
       {register&&!forgotMode&&<div className="field"><label>{t("displayName")}</label><input className="input" value={name} onChange={e=>setName(e.target.value)} autoComplete="name"/></div>}
       <div className="field"><label>{t("email")}</label><input className="input" type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email" required/></div>
-      {!forgotMode&&<div className="field"><label>{t("password")}</label><input className="input" type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete={register?"new-password":"current-password"} minLength={register?8:1} required/></div>}
+      {!forgotMode&&<div className="field"><label>{t("password")}</label><PasswordInput value={password} onChange={e=>setPassword(e.target.value)} autoComplete={register?"new-password":"current-password"} minLength={register?8:1} required/></div>}
       <button className="button" disabled={busy}>{forgotMode?t("continueLabel"):register?t("register"):t("login")}</button>
     </form>
     {!register&&!forgotMode&&<button className="button ghost" onClick={()=>{setForgotMode(true);setError("");setInfo("");setPassword("")}} disabled={busy}>{t("forgotPassword")}</button>}
