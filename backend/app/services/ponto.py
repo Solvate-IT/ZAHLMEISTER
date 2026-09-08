@@ -13,7 +13,6 @@ from typing import Any
 from urllib.parse import urlencode, urlparse
 
 import httpx
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.entities import BankSyncConnection
