@@ -41,7 +41,7 @@ def verify_missing_user_password(password: str) -> None:
 
 
 def is_platform_admin(user: User) -> bool:
-    return (
+    return bool(
         user.is_active
         and user.email_verified_at is not None
         and user.email.casefold() in settings.platform_admin_emails
