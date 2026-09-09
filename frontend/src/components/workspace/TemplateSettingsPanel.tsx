@@ -10,7 +10,7 @@ function languageName(uiLocale:string,language:string):string{
   try{return new Intl.DisplayNames([uiLocale],{type:"language"}).of(language)??language.toUpperCase()}catch{return language.toUpperCase()}
 }
 
-function TemplateVariablesHelp(){const {t}=useI18n();const variables:[[string,string],...Array<[string,string]>]=[["variableFirstName","{{first_name}}"],["name","{{name}}"],["variableCollectionName","{{collection_name}}"],["amount","{{amount}}"],["dueDate","{{due_date}}"],["paymentLink","{{payment_link}}"],["paymentReference","{{payment_reference}}"]];return <details className="variable-help"><summary>{t("variableHelp")}</summary><div className="variable-help-list">{variables.map(([label,token])=><div className="row between" key={token}><span>{t(label)}</span><code>{token}</code></div>)}</div></details>}
+function TemplateVariablesHelp(){const {t}=useI18n();const variables:[[string,string],...Array<[string,string]>]=[["variableAccountName","{{name}}"],["variableContact","{{contact}}"],["variableOrganisation","{{organisation}}"],["variableCollectionName","{{collection_name}}"],["amount","{{amount}}"],["dueDate","{{due_date}}"],["paymentLink","{{payment_link}}"],["paymentReference","{{payment_reference}}"]];return <details className="variable-help"><summary>{t("variableHelp")}</summary><div className="variable-help-list">{variables.map(([label,token])=><div className="row between" key={token}><span>{t(label)}</span><code>{token}</code></div>)}</div></details>}
 
 export function TemplateSettingsPanel(){
   const {t}=useI18n();
