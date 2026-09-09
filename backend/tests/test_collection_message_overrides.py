@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.schemas.workflow import CollectionCreate
 from app.services import translation
 from app.services.collection_message_overrides import (
     deserialize_collection_message_overrides,
@@ -29,6 +30,21 @@ def test_localized_collection_overrides_roundtrip() -> None:
     )
     assert legacy is False
     assert translations == {
+        "de": "Hallo {{contact}}",
+        "fr": "Bonjour {{contact}}",
+    }
+
+
+def test_collection_create_accepts_localized_overrides() -> None:
+    payload = CollectionCreate(
+        participant_list_id="00000000-0000-0000-0000-000000000001",
+        amount="12.00",
+        message_body_overrides={
+            "de-AT": "Hallo {{contact}}",
+            "fr": "Bonjour {{contact}}",
+        },
+    )
+    assert payload.message_body_overrides == {
         "de": "Hallo {{contact}}",
         "fr": "Bonjour {{contact}}",
     }
@@ -70,6 +86,44 @@ async def test_localized_override_uses_participant_language() -> None:
         participant_locale="fr",
     )
     assert rendered.text == "Bonjour Jean Dupont"
+
+
+@pytest.mark.asyncio
+async def test_localized_override_rejects_missing_participant_language() -> None:
+    collection = SimpleNamespace(
+        message_body_override=serialize_collection_message_overrides(
+            {"de": "Hallo {{contact}}"}
+        ),
+        message_template_id=None,
+        message_include_payment_link=False,
+        message_include_payment_qr=False,
+        name="Ausflug",
+        amount="12.00",
+        currency="EUR",
+        due_at=None,
+    )
+    organization = SimpleNamespace(
+        id="org",
+        name="Schule",
+        locale="de",
+        message_include_payment_link=False,
+        message_include_payment_qr=False,
+        bank_account_name=None,
+        bank_iban=None,
+        bank_bic=None,
+    )
+    participant = SimpleNamespace(id="participant", name="Jean Dupont")
+    collection_participant = SimpleNamespace(public_token="token", payment_reference="ZM-1")
+
+    with pytest.raises(ValueError, match="Missing collection message translation for language: fr"):
+        await render_collection_message(
+            None,
+            collection=collection,
+            collection_participant=collection_participant,
+            participant=participant,
+            organization=organization,
+            participant_locale="fr",
+        )
 
 
 @pytest.mark.asyncio
