@@ -48,7 +48,9 @@ compose exec -T db sh -ec '
   exec pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --no-privileges --exit-on-error
 ' < "$BACKUP_FILE"
 
-compose run --rm migrate alembic upgrade head
+# The bootstrap is idempotent and only creates schema objects that are absent.
+# Running it after restore verifies that the restored database matches the current ORM model.
+compose run --rm bootstrap
 compose up -d backend worker frontend
 restore_failed=0
 trap - EXIT
