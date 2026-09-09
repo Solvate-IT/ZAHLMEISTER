@@ -13,6 +13,8 @@ SUPPORTED_LANGUAGES = (
 )
 
 DEFAULT_TEMPLATE_NAME_MSGID = "Payment request"
+# Keep the historical gettext msgid so existing compiled translations remain usable.
+# The obsolete first_name token is converted to contact after translation.
 DEFAULT_TEMPLATE_BODY_MSGID = (
     "Hello {{first_name}},\n\n"
     "Please pay {{amount}} for {{collection_name}}.\n\n"
@@ -47,8 +49,8 @@ DEFAULT_TEMPLATE_SIGNOFFS = {
 }
 
 TEMPLATE_VARIABLES = (
-    "first_name",
     "name",
+    "contact",
     "collection_name",
     "amount",
     "due_date",
@@ -58,6 +60,7 @@ TEMPLATE_VARIABLES = (
 
 _LOCALE_DIR = Path(__file__).resolve().parents[2] / "locales"
 _TOKEN_RE = re.compile(r"{{\s*([a-z_]+)\s*}}")
+_LEGACY_FIRST_NAME_RE = re.compile(r"{{\s*first_name\s*}}")
 
 
 def normalize_language(value: str | None, *, fallback: str = "en") -> str:
@@ -83,10 +86,24 @@ def legacy_default_template_body(language: str = "en") -> str:
     return _translation(normalized).gettext(DEFAULT_TEMPLATE_BODY_MSGID)
 
 
-def default_template_body(language: str = "en") -> str:
+def _replace_legacy_first_name(body: str) -> str:
+    return _LEGACY_FIRST_NAME_RE.sub("{{contact}}", body)
+
+
+def previous_default_template_body(language: str = "en") -> str:
     normalized = normalize_language(language)
     return (
         f"{legacy_default_template_body(normalized)}\n\n"
+        f"{DEFAULT_TEMPLATE_SIGNOFFS.get(normalized, DEFAULT_TEMPLATE_SIGNOFFS['en'])}\n"
+        "{{name}}"
+    )
+
+
+def default_template_body(language: str = "en") -> str:
+    normalized = normalize_language(language)
+    translated_body = _replace_legacy_first_name(legacy_default_template_body(normalized))
+    return (
+        f"{translated_body}\n\n"
         f"{DEFAULT_TEMPLATE_SIGNOFFS.get(normalized, DEFAULT_TEMPLATE_SIGNOFFS['en'])}\n"
         "{{name}}"
     )
@@ -109,8 +126,13 @@ def normalize_translations(value: str | dict[str, str]) -> dict[str, str]:
         language = str(key).split("-", 1)[0].lower()
         if language in SUPPORTED_LANGUAGES and isinstance(text, str) and text.strip():
             normalized_text = text.strip()
-            if normalized_text == legacy_default_template_body(language).strip():
+            if normalized_text in {
+                legacy_default_template_body(language).strip(),
+                previous_default_template_body(language).strip(),
+            }:
                 normalized_text = default_template_body(language)
+            else:
+                normalized_text = _replace_legacy_first_name(normalized_text)
             result[language] = normalized_text
     return result
 
@@ -152,6 +174,9 @@ def validate_same_template_variables(source: str, translated: str) -> None:
 
 
 def render_template(body: str, values: dict[str, Any]) -> str:
+    # Stored collection overrides may predate the removal of first_name. They render
+    # as the full contact name but new/edited templates no longer accept that token.
+    body = _replace_legacy_first_name(body)
     validate_template_body(body)
 
     def replace(match: re.Match[str]) -> str:
@@ -163,6 +188,7 @@ def render_template(body: str, values: dict[str, Any]) -> str:
 
 def message_values(
     *,
+    sender_name: str,
     participant_name: str,
     collection_name: str,
     amount: Decimal | str,
@@ -171,16 +197,16 @@ def message_values(
     payment_reference: str,
     due_at: datetime | None,
 ) -> dict[str, str]:
-    name = " ".join(participant_name.split()).strip()
-    first_name = name.split(" ", 1)[0] if name else ""
+    sender = " ".join(sender_name.split()).strip()
+    contact = " ".join(participant_name.split()).strip()
     amount_text = (
         f"{Decimal(amount):.2f} {currency}"
         if not isinstance(amount, str)
         else f"{amount} {currency}"
     )
     return {
-        "first_name": first_name,
-        "name": name,
+        "name": sender,
+        "contact": contact,
         "collection_name": collection_name,
         "amount": amount_text,
         "due_date": due_at.date().isoformat() if due_at else "",
