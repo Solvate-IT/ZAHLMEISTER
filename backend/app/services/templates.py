@@ -183,7 +183,6 @@ def message_values(
         "name": name,
         "collection_name": collection_name,
         "amount": amount_text,
-        "currency": currency,
         "due_date": due_at.date().isoformat() if due_at else "",
         "payment_link": payment_url,
         "payment_reference": payment_reference,
