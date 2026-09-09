@@ -17,6 +17,10 @@ The production server runs PostgreSQL, FastAPI/worker and an Nginx container con
 Secret files are mounted read-only under `/run/secrets`. Never commit real files under `secrets/`.
 The database backup does not include the application secret or provider certificates; back them up separately in an encrypted secret store. Without the original `APP_SECRET`, encrypted customer provider configurations cannot be decrypted after restore.
 
+## Database schema
+
+Zahlmeister currently uses a fresh-schema model. SQLAlchemy metadata is the single schema source of truth; `app.db.bootstrap` creates missing schema objects idempotently. There is no Alembic revision history in this pre-production baseline. Schema evolution for an existing production database must be introduced deliberately before the first production upgrade that changes persisted structures.
+
 ## Production build checks
 
 `./predeploy.sh` builds the actual production Dockerfiles, runs backend lint/tests and Next.js type checking, builds the final backend/frontend images and inspects their runtime contents. It also verifies that the Capacitor source and app-link templates are present and that Flutter/Dart runtime references are gone.
@@ -45,7 +49,7 @@ Recommended cron example:
 17 2 * * * cd /opt/ZAHLMEISTER/docker && ZM_ENV_FILE=./.env.production ZM_COMPOSE_FILE=./compose.prod.yml ./scripts/backup.sh >> /var/log/zahlmeister-backup.log 2>&1
 ```
 
-Restore is deliberately destructive and requires `--force`. It creates a `pre_restore` safety backup, stops backend/worker/frontend, recreates the database, restores the dump, runs migrations and starts the application again.
+Restore is deliberately destructive and requires `--force`. It creates a `pre_restore` safety backup, stops backend/worker/frontend, recreates the database, restores the dump, runs the idempotent schema bootstrap and starts the application again.
 
 ## Monitoring
 
