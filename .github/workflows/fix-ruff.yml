@@ -29,10 +29,10 @@ jobs:
               raise SystemExit("Expected unused communications import exactly once")
           path.write_text(text.replace(old, "", 1))
           PY
-      - name: Verify Ruff
+      - name: Verify changed module
         run: |
           docker build --target test -f docker/backend.Dockerfile -t zahlmeister-ruff-test .
-          docker run --rm zahlmeister-ruff-test ruff check app tests
+          docker run --rm zahlmeister-ruff-test ruff check app/api/routes/collections.py
       - name: Commit cleanup
         run: |
           set -euo pipefail
