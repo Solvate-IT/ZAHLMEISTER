@@ -2,12 +2,14 @@ import re
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.passwords import PASSWORD_MIN_LENGTH, validate_password_strength
+
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
 class RegisterRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=8, max_length=200)
+    password: str = Field(min_length=PASSWORD_MIN_LENGTH, max_length=200)
     display_name: str | None = Field(default=None, max_length=200)
     locale: str = Field(default="en", max_length=20)
     currency: str = Field(default="EUR", min_length=3, max_length=3)
@@ -19,6 +21,11 @@ class RegisterRequest(BaseModel):
         if not _EMAIL_RE.match(value):
             raise ValueError("Invalid email address")
         return value
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return validate_password_strength(value)
 
     @field_validator("display_name")
     @classmethod
