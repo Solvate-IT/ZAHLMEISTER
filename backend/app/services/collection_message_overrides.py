@@ -1,28 +1,19 @@
 import json
 
-from app.services.templates import normalize_language, normalize_translations
+from app.services.templates import normalize_translations
 
 
-def deserialize_collection_message_overrides(
-    value: str | None,
-    *,
-    fallback_language: str,
-) -> tuple[dict[str, str], bool]:
-    """Return localized overrides and whether the stored value is a legacy plain-text override."""
-
+def deserialize_collection_message_overrides(value: str | None) -> dict[str, str]:
     if not value or not value.strip():
-        return {}, False
+        return {}
 
-    stripped = value.strip()
     try:
-        raw = json.loads(stripped)
-    except json.JSONDecodeError:
-        return {normalize_language(fallback_language): stripped}, True
-
-    if isinstance(raw, dict):
-        return normalize_translations(raw), False
-
-    return {normalize_language(fallback_language): stripped}, True
+        raw = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Invalid localized collection message data") from exc
+    if not isinstance(raw, dict):
+        raise ValueError("Invalid localized collection message data")
+    return normalize_translations(raw)
 
 
 def serialize_collection_message_overrides(translations: dict[str, str]) -> str | None:
