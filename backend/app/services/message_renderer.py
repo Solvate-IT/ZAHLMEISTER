@@ -15,6 +15,7 @@ from app.models.entities import (
     Participant,
     User,
 )
+from app.services.collection_message_overrides import deserialize_collection_message_overrides
 from app.services.participant_preferences import get_participant_locale
 from app.services.payments import epc_qr_payload, public_payment_qr_url, public_payment_url
 from app.services.templates import (
@@ -101,8 +102,21 @@ async def render_collection_message(
         participant_locale if isinstance(participant_locale, str) else None
     ) or organization.locale
 
-    template_body = collection.message_body_override
-    if template_body is None and collection.message_template_id is not None:
+    template_body: str | None = None
+    override_translations, legacy_override = deserialize_collection_message_overrides(
+        collection.message_body_override,
+        fallback_language=organization.locale,
+    )
+    if override_translations:
+        if legacy_override:
+            template_body = next(iter(override_translations.values()))
+        else:
+            template_body = template_body_for_locale(
+                override_translations,
+                requested_locale,
+                fallback_locale=organization.locale,
+            )
+    elif collection.message_template_id is not None:
         if session is None:
             raise ValueError("A database session is required to load the selected template")
         template = await session.get(MessageTemplate, collection.message_template_id)
