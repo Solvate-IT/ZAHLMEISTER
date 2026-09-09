@@ -21,6 +21,7 @@ from app.services.payments import epc_qr_payload, public_payment_qr_url, public_
 from app.services.templates import (
     default_template_body,
     message_values,
+    normalize_language,
     normalize_translations,
     render_template,
     template_body_for_locale,
@@ -111,11 +112,12 @@ async def render_collection_message(
         if legacy_override:
             template_body = next(iter(override_translations.values()))
         else:
-            template_body = template_body_for_locale(
-                override_translations,
-                requested_locale,
-                fallback_locale=organization.locale,
-            )
+            requested_language = normalize_language(requested_locale)
+            template_body = override_translations.get(requested_language)
+            if template_body is None:
+                raise ValueError(
+                    f"Missing collection message translation for language: {requested_language}"
+                )
     elif collection.message_template_id is not None:
         if session is None:
             raise ValueError("A database session is required to load the selected template")
