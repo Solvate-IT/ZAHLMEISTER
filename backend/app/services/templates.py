@@ -51,6 +51,7 @@ DEFAULT_TEMPLATE_SIGNOFFS = {
 TEMPLATE_VARIABLES = (
     "name",
     "contact",
+    "organisation",
     "collection_name",
     "amount",
     "due_date",
@@ -190,6 +191,7 @@ def message_values(
     *,
     sender_name: str,
     participant_name: str,
+    organization_name: str,
     collection_name: str,
     amount: Decimal | str,
     currency: str,
@@ -199,6 +201,7 @@ def message_values(
 ) -> dict[str, str]:
     sender = " ".join(sender_name.split()).strip()
     contact = " ".join(participant_name.split()).strip()
+    organisation = " ".join(organization_name.split()).strip()
     amount_text = (
         f"{Decimal(amount):.2f} {currency}"
         if not isinstance(amount, str)
@@ -207,6 +210,7 @@ def message_values(
     return {
         "name": sender,
         "contact": contact,
+        "organisation": organisation,
         "collection_name": collection_name,
         "amount": amount_text,
         "due_date": due_at.date().isoformat() if due_at else "",
