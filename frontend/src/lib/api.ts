@@ -71,6 +71,7 @@ export const api = {
   async previewImport(file:File){ const form=new FormData(); form.append("file",file); return request<T.ImportPreview>("/participant-lists/import-preview",{method:"POST",body:form}); },
   commitImport:(listId:string,participants:T.ImportDraft[])=>request<T.ImportResult>(`/participant-lists/${listId}/import`,{method:"POST",body:JSON.stringify({participants})}),
   collections:()=>request<T.CollectionSummary[]>("/collections"),
+  openBalances:()=>request<T.ParticipantOpenBalance[]>("/collections/open-balances"),
   collection:(id:string)=>request<T.CollectionDetail>(`/collections/${id}`),
   createCollection:(payload:Record<string,unknown>)=>request<T.CollectionSummary>("/collections",{method:"POST",body:JSON.stringify(payload)}),
   updateCollection:(id:string,payload:Record<string,unknown>)=>request<T.CollectionSummary>(`/collections/${id}`,{method:"PATCH",body:JSON.stringify(payload)}),
