@@ -275,7 +275,7 @@ async def mollie_webhook(payment_id: str = Form(alias="id")) -> None:
 )
 async def mollie_invoice_webhook(
     request: Request,
-    signature: str | None = Header(default=None, alias="X-Mollie-Signature"),
+    signature: list[str] | None = Header(default=None, alias="X-Mollie-Signature"),
 ) -> None:
     raw_body = await request.body()
     try:
