@@ -5,8 +5,10 @@ from app.models.entities import (
     ApiCredential,
     BankTransaction,
     Collection,
+    CollectionParticipant,
     CommunicationChannelSetting,
     MessageTemplate,
+    ParticipantList,
 )
 from app.models.platform import StoreSubscription
 
@@ -38,13 +40,28 @@ def test_participant_channel_constraints_match_database_contract() -> None:
     }
 
 
-def test_collection_communication_defaults_and_constraints_match_database_contract() -> None:
+def test_collection_constraints_match_database_contract() -> None:
     assert Collection.__table__.c.communication_channel.default.arg == "auto"
     assert Collection.__table__.c.communication_mode.default.arg == "auto"
     assert _check_names(Collection) >= {
+        "ck_collections_amount_positive",
         "ck_collections_communication_channel",
         "ck_collections_communication_mode",
     }
+    assert "uq_collections_org_name" in _unique_constraint_names(Collection)
+    assert "message_overrides_json" in Collection.__table__.c
+    assert "message_body_override" not in Collection.__table__.c
+
+
+def test_core_names_are_unique_per_organization() -> None:
+    assert "uq_participant_lists_org_name" in _unique_constraint_names(ParticipantList)
+    assert "uq_message_templates_org_name" in _unique_constraint_names(MessageTemplate)
+    assert "uq_collections_org_name" in _unique_constraint_names(Collection)
+
+
+def test_collection_participant_identity_is_unique() -> None:
+    assert "uq_collection_participant_identity" in _unique_constraint_names(CollectionParticipant)
+    assert "ck_collection_participant_reminder_count" in _check_names(CollectionParticipant)
 
 
 def test_message_template_default_is_unique_per_organization() -> None:
