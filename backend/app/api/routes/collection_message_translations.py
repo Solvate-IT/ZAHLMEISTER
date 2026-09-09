@@ -113,11 +113,10 @@ async def _required_languages_for_list(
     return sorted(languages)
 
 
-async def _effective_translations(session, collection: Collection, organization: Organization) -> tuple[dict[str, str], bool]:
-    overrides, _legacy = deserialize_collection_message_overrides(
-        collection.message_body_override,
-        fallback_language=organization.locale,
-    )
+async def _effective_translations(
+    session, collection: Collection, organization: Organization
+) -> tuple[dict[str, str], bool]:
+    overrides = deserialize_collection_message_overrides(collection.message_body_override)
     if overrides:
         return overrides, True
     if collection.message_template_id is not None:
@@ -127,7 +126,9 @@ async def _effective_translations(session, collection: Collection, organization:
     return {}, False
 
 
-async def _read(session, collection: Collection, organization: Organization) -> CollectionMessageTranslationsRead:
+async def _read(
+    session, collection: Collection, organization: Organization
+) -> CollectionMessageTranslationsRead:
     translations, has_override = await _effective_translations(session, collection, organization)
     return CollectionMessageTranslationsRead(
         translations=translations,
