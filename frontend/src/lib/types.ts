@@ -27,6 +27,7 @@ export interface CollectionParticipant {
   delivery_channel?: CommunicationChannel | null; communication_count: number;
 }
 export interface CollectionDetail extends CollectionSummary { participants: CollectionParticipant[]; }
+export interface CollectionMessageTranslations { translations:Record<string,string>; required_languages:string[]; translation_configured:boolean; has_override:boolean; }
 export interface ParticipantOpenBalance { participant_id:string; name:string; email?:string|null; phone?:string|null; open_amount:string|number; currency:string; collection_count:number; }
 export interface ImportDraft { name: string; email?: string | null; phone?: string | null; selected?: boolean; }
 export interface ImportPreview { source_type: string; participants: ImportDraft[]; warnings: string[]; }
