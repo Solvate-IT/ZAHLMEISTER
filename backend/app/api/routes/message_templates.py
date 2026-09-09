@@ -130,29 +130,8 @@ async def create_message_template(
 ) -> MessageTemplateRead:
     translations: dict[str, str] = {}
     if payload.body:
-        source_language = payload.source_language
-        if payload.auto_translate:
-            if not translation.configured():
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Automatic translation is not configured",
-                )
-            try:
-                source_language = source_language or await translation.detect_language(payload.body)
-                translations[source_language] = payload.body
-                translations = await translation.translate_missing(
-                    payload.body,
-                    source_language=source_language,
-                    existing=translations,
-                )
-            except (ValueError, RuntimeError) as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail="Automatic translation failed",
-                ) from exc
-        else:
-            source_language = source_language or normalize_language(organization.locale)
-            translations[source_language] = payload.body
+        source_language = payload.source_language or normalize_language(organization.locale)
+        translations[source_language] = payload.body
 
     async with SessionLocal.begin() as session:
         stored_org = await session.get(Organization, organization.id)
@@ -216,64 +195,6 @@ async def update_message_template(
             )
             await session.flush()
             item.is_default = True
-        await session.flush()
-        return _read(item)
-
-
-@router.post(
-    "/{template_id}/translate-missing",
-    response_model=MessageTemplateRead,
-)
-async def translate_missing_template_languages(
-    template_id: UUID,
-    payload: MessageTemplateTranslateRequest,
-    organization: Organization = Depends(get_organization),
-) -> MessageTemplateRead:
-    if not translation.configured():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Automatic translation is not configured",
-        )
-
-    async with SessionLocal() as session:
-        stored_org = await session.get(Organization, organization.id)
-        assert stored_org is not None
-        item = await _owned_template(session, stored_org, template_id)
-        snapshot = normalize_translations(item.translations_json)
-        source_text = snapshot.get(payload.source_language)
-        if not source_text:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="The selected source language has no template text",
-            )
-
-    try:
-        generated = await translation.translate_missing(
-            source_text,
-            source_language=payload.source_language,
-            existing=snapshot,
-        )
-    except (ValueError, RuntimeError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Automatic translation failed",
-        ) from exc
-
-    async with SessionLocal.begin() as session:
-        stored_org = await session.get(Organization, organization.id)
-        assert stored_org is not None
-        await transaction_lock(session, "message-template", stored_org.id)
-        item = await _owned_template(session, stored_org, template_id)
-        current = normalize_translations(item.translations_json)
-        if current.get(payload.source_language) != source_text:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Source template changed while translations were generated",
-            )
-        for language, body in generated.items():
-            if language not in current:
-                current[language] = body
-        item.translations_json = serialize_translations(current)
         await session.flush()
         return _read(item)
 
