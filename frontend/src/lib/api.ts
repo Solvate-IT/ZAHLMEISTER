@@ -76,6 +76,7 @@ export const api = {
   createCollection:(payload:Record<string,unknown>)=>request<T.CollectionSummary>("/collections",{method:"POST",body:JSON.stringify(payload)}),
   updateCollection:(id:string,payload:Record<string,unknown>)=>request<T.CollectionSummary>(`/collections/${id}`,{method:"PATCH",body:JSON.stringify(payload)}),
   collectionMessageTranslations:(id:string)=>request<T.CollectionMessageTranslations>(`/collections/${id}/message-translations`),
+  previewCollectionMessageTranslations:(participant_list_id:string,language:string,body:string)=>request<T.CollectionMessageTranslations>("/collections/message-translations/preview",{method:"POST",body:JSON.stringify({participant_list_id,language,body})}),
   saveCollectionMessageTranslation:(id:string,language:string,body:string)=>request<T.CollectionMessageTranslations>(`/collections/${id}/message-translations`,{method:"PUT",body:JSON.stringify({language,body})}),
   translateCollectionMessageLanguages:(id:string,language:string,body:string)=>request<T.CollectionMessageTranslations>(`/collections/${id}/message-translations/translate-other-languages`,{method:"POST",body:JSON.stringify({language,body})}),
   setPaid:(cid:string,pid:string,paid:boolean)=>request<T.CollectionParticipant>(`/collections/${cid}/participants/${pid}/payment-status`,{method:"PUT",body:JSON.stringify({paid})}),
