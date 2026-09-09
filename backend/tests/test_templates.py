@@ -17,8 +17,10 @@ def test_default_template_exists_for_all_eu_official_languages() -> None:
     assert set(translations) == set(SUPPORTED_LANGUAGES)
     assert len(translations) == 24
     for text in translations.values():
+        assert "{{contact}}" in text
         assert "{{payment_link}}" in text
         assert "{{payment_reference}}" in text
+        assert "{{first_name}}" not in text
         assert text.endswith("{{name}}")
 
 
@@ -33,9 +35,16 @@ def test_legacy_default_template_is_upgraded_without_touching_custom_text() -> N
     assert custom["de"] == "Eigener Text {{name}}"
 
 
-def test_template_variables_render_without_touching_unknown_text() -> None:
+def test_legacy_first_name_in_stored_template_becomes_contact() -> None:
+    normalized = normalize_translations({"de": "Hallo {{first_name}}"})
+    assert normalized["de"] == "Hallo {{contact}}"
+
+
+def test_template_variables_render_with_account_contact_and_organisation() -> None:
     values = message_values(
+        sender_name="Max Mustermann",
         participant_name="Anna Muster",
+        organization_name="Schulverein Muster",
         collection_name="Ausflug",
         amount="12.00",
         currency="EUR",
@@ -44,10 +53,15 @@ def test_template_variables_render_without_touching_unknown_text() -> None:
         due_at=None,
     )
     rendered = render_template(
-        "Hallo {{first_name}}, {{amount}} / {{collection_name}} / {{payment_reference}}",
+        "Hallo {{contact}}, {{amount}} / {{collection_name}} / {{organisation}} / {{name}}",
         values,
     )
-    assert rendered == "Hallo Anna, 12.00 EUR / Ausflug / ZM-ABC"
+    assert rendered == "Hallo Anna Muster, 12.00 EUR / Ausflug / Schulverein Muster / Max Mustermann"
+
+
+def test_first_name_is_no_longer_a_valid_template_variable() -> None:
+    with pytest.raises(ValueError, match="Unknown template variables"):
+        validate_template_body("Hallo {{first_name}}")
 
 
 def test_unknown_template_variable_is_rejected() -> None:
