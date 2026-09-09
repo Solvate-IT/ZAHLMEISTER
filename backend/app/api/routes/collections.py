@@ -44,7 +44,6 @@ from app.services.reminders import (
     reminder_schedule,
     serialize_reminder_rules,
 )
-from app.services.templates import validate_template_body
 
 router = APIRouter(prefix="/collections", tags=["collections"])
 
@@ -148,7 +147,6 @@ def _summary(
         communication_mode=item.communication_mode,
         channel_order=channel_order,
         message_template_id=item.message_template_id,
-        message_body_override=item.message_body_override,
         reminder_rules=deserialize_reminder_rules(item.reminder_rules_json),
         include_payment_link=_effective_message_options(item, organization)[0],
         include_payment_qr=_effective_message_options(item, organization)[1],
@@ -323,18 +321,6 @@ async def create_collection(
                 )
         else:
             template = await ensure_default_template(session, stored_org)
-        if payload.message_body_override is not None:
-            try:
-                validate_template_body(payload.message_body_override)
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-                ) from exc
-        if payload.message_body_override is not None and payload.message_body_overrides is not None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Use either message_body_override or message_body_overrides, not both",
-            )
 
         try:
             reminder_rules_json = serialize_reminder_rules(
@@ -381,12 +367,8 @@ async def create_collection(
             communication_channel=payload.communication_channel,
             communication_mode="auto",
             message_template_id=template.id,
-            message_body_override=(
-                serialize_collection_message_overrides(payload.message_body_overrides)
-                if payload.message_body_overrides is not None
-                else payload.message_body_override.strip()
-                if payload.message_body_override
-                else None
+            message_body_override=serialize_collection_message_overrides(
+                payload.message_body_overrides or {}
             ),
             reminder_rules_json=reminder_rules_json,
             message_include_payment_link=payload.include_payment_link,
