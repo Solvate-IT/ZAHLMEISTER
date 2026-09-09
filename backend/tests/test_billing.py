@@ -7,6 +7,7 @@ from app.models.platform import StoreSubscription
 from app.services.billing import (
     PRO_PRODUCT_ID,
     VerifiedSubscription,
+    _preserve_cancelled_state,
     subscription_is_entitled,
     validate_verified_subscription,
     verified_subscription_is_entitled,
@@ -115,3 +116,53 @@ def test_verified_purchase_rejects_wrong_product() -> None:
     )
     with pytest.raises(ValueError, match="Unexpected billing product"):
         validate_verified_subscription(organization_id, verified)
+
+
+def test_late_paid_event_does_not_undo_existing_cancellation() -> None:
+    organization_id = uuid4()
+    subscription = StoreSubscription(
+        organization_id=organization_id,
+        provider="mollie",
+        product_id=PRO_PRODUCT_ID,
+        status="cancelled",
+        external_reference="invoice_old",
+        auto_renew=False,
+        cancelled_at=datetime.now(UTC) - timedelta(minutes=5),
+        expires_at=datetime.now(UTC) + timedelta(days=10),
+    )
+    verified = VerifiedSubscription(
+        provider="mollie",
+        product_id=PRO_PRODUCT_ID,
+        external_reference="invoice_new",
+        account_token=str(organization_id),
+        status="active",
+        expires_at=datetime.now(UTC) + timedelta(days=365),
+        auto_renew=False,
+    )
+
+    assert _preserve_cancelled_state(subscription, verified) is True
+
+
+def test_explicit_provider_reactivation_may_enable_auto_renew_again() -> None:
+    organization_id = uuid4()
+    subscription = StoreSubscription(
+        organization_id=organization_id,
+        provider="mollie",
+        product_id=PRO_PRODUCT_ID,
+        status="cancelled",
+        external_reference="invoice_old",
+        auto_renew=False,
+        cancelled_at=datetime.now(UTC) - timedelta(minutes=5),
+        expires_at=datetime.now(UTC) + timedelta(days=10),
+    )
+    verified = VerifiedSubscription(
+        provider="mollie",
+        product_id=PRO_PRODUCT_ID,
+        external_reference="mandate_reactivated",
+        account_token=str(organization_id),
+        status="active",
+        expires_at=datetime.now(UTC) + timedelta(days=365),
+        auto_renew=True,
+    )
+
+    assert _preserve_cancelled_state(subscription, verified) is False
