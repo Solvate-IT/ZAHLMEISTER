@@ -16,9 +16,24 @@ export interface DeviceContactSelection {
   available: boolean;
 }
 
+type ContactNavigator = Navigator & {
+  contacts?: {
+    select: (
+      fields: string[],
+      options: { multiple: boolean },
+    ) => Promise<Array<{ name?: string[]; email?: string[]; tel?: string[] }>>;
+  };
+};
+
 function clean(value: string | undefined | null): string | null {
   const result = value?.trim();
   return result ? result : null;
+}
+
+export function deviceContactsAvailable(): boolean {
+  if (typeof navigator === "undefined") return false;
+  if (Capacitor.isNativePlatform()) return true;
+  return Boolean((navigator as ContactNavigator).contacts?.select);
 }
 
 export async function selectDeviceContacts(): Promise<DeviceContactSelection> {
@@ -38,14 +53,7 @@ export async function selectDeviceContacts(): Promise<DeviceContactSelection> {
     };
   }
 
-  const nav = navigator as Navigator & {
-    contacts?: {
-      select: (
-        fields: string[],
-        options: { multiple: boolean },
-      ) => Promise<Array<{ name?: string[]; email?: string[]; tel?: string[] }>>;
-    };
-  };
+  const nav = navigator as ContactNavigator;
   if (!nav.contacts) return { contacts: [], requiresSelection: false, available: false };
   const rows = await nav.contacts.select(["name", "email", "tel"], { multiple: true });
   const contacts = rows
