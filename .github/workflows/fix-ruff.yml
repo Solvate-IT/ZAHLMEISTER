@@ -1,0 +1,44 @@
+name: Ruff cleanup
+
+on:
+  push:
+    branches: [development]
+    paths:
+      - .github/workflows/fix-ruff.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Remove verified unused import
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("backend/app/api/routes/collections.py")
+          text = path.read_text()
+          old = "from app.schemas.communications import DispatchExternalItem, DispatchRequest, DispatchResult\n"
+          if text.count(old) != 1:
+              raise SystemExit("Expected unused communications import exactly once")
+          path.write_text(text.replace(old, "", 1))
+          PY
+      - name: Verify Ruff
+        run: |
+          docker build --target test -f docker/backend.Dockerfile -t zahlmeister-ruff-test .
+          docker run --rm zahlmeister-ruff-test ruff check app tests
+      - name: Commit cleanup
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/app/api/routes/collections.py
+          git rm .github/workflows/fix-ruff.yml
+          git commit -m "Remove unused collection imports"
+          git push origin HEAD:development
