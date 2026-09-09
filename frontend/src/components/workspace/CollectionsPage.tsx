@@ -11,7 +11,7 @@ type ManualSendState={kind:"initial"|"reminder";routes:DispatchExternalItem[];to
 
 function isBankAccountError(error:unknown):boolean{return error instanceof ApiError&&error.status===409&&error.message.toLowerCase().includes("bank account")}
 
-export function CollectionsPage(){
+export function CollectionsPage({autoCreate=false,onCreateConsumed}:{autoCreate?:boolean;onCreateConsumed?:()=>void}){
   const {t,locale}=useI18n();
   const [items,setItems]=useState<CollectionSummary[]>([]);
   const [selected,setSelected]=useState<CollectionDetail|null>(null);
@@ -30,7 +30,8 @@ export function CollectionsPage(){
   async function runAction(kind:"initial"|"reminder"){if(!selected)return;await dispatch(selected,kind)}
   async function created(id:string,sendNow:boolean){setNewOpen(false);await load();const detail=await open(id);if(detail&&sendNow)await dispatch(detail,"initial")}
 
-  useEffect(()=>{load()},[]);
+  useEffect(()=>{void load()},[]);
+  useEffect(()=>{if(autoCreate){setSelected(null);setNewOpen(true);onCreateConsumed?.()}},[autoCreate,onCreateConsumed]);
   const filtered=useMemo(()=>items.filter(i=>i.name.toLowerCase().includes(search.toLowerCase())),[items,search]);
   if(loading&&!items.length)return <Loading/>;
   if(error&&!items.length)return <ErrorState onRetry={load}/>;
@@ -40,7 +41,7 @@ export function CollectionsPage(){
   return <>
     {notice&&<div className="notice">{notice}</div>}
     <div className="page-title"><div><h1>{selected?selected.name:t("collections")}</h1>{selected&&<button className="button ghost small" onClick={()=>setSelected(null)}>← {t("back")}</button>}</div><div className="actions">{selected?<><button className="button secondary" onClick={()=>setEditOpen(true)}>{t("edit")}</button>{canRemind&&<button className="button" onClick={()=>runAction("reminder")}>{t("remindOpen")}</button>}</>:<button className="button" onClick={()=>setNewOpen(true)}>{t("newCollection")}</button>}</div></div>
-    {selected?<CollectionView item={selected} money={money} onReload={()=>open(selected.id)} onNotice={setNotice} onCommunication={setCommunication} onSend={()=>runAction("initial")}/>:<><div className="toolbar"><input className="input search" placeholder={t("searchPlaceholder")} value={search} onChange={e=>setSearch(e.target.value)}/><button className="button secondary" onClick={load}>{t("refresh")}</button></div>{filtered.length===0?<Empty text={t("noCollections")}/>:<div className="table-wrap"><table className="table"><thead><tr><th>{t("name")}</th><th>{t("amount")}</th><th>{t("paymentProgress")}</th><th>{t("status")}</th><th>{t("actions")}</th></tr></thead><tbody>{filtered.map(c=><tr key={c.id}><td><strong>{c.name}</strong><div className="muted">{c.due_at?`${t("dueDate")}: ${new Date(c.due_at).toLocaleDateString(locale)}`:""}</div></td><td>{money(c.amount,c.currency)}</td><td>{t("paidOf",{paid:c.paid_count,total:c.participant_count})}<div className="progress"><span style={{width:`${c.participant_count?c.paid_count/c.participant_count*100:0}%`}}/></div></td><td><span className={`status-pill ${c.status}`}>{statusText(t,c.status)}</span></td><td><button className="button secondary small" onClick={()=>open(c.id)}>{t("view")}</button></td></tr>)}</tbody></table></div>}</>}
+    {selected?<CollectionView item={selected} money={money} onReload={()=>open(selected.id)} onNotice={setNotice} onCommunication={setCommunication} onSend={()=>runAction("initial")}/>:<><div className="toolbar"><input className="input search" placeholder={t("searchPlaceholder")} value={search} onChange={e=>setSearch(e.target.value)}/><button className="button secondary" onClick={load}>{t("refresh")}</button></div>{filtered.length===0?<Empty text={t("noCollections")}/>:<div className="table-wrap"><table className="table"><thead><tr><th>{t("name")}</th><th>{t("amount")}</th><th>{t("openTotal")}</th><th>{t("status")}</th><th>{t("actions")}</th></tr></thead><tbody>{filtered.map(c=>{const openCount=Math.max(0,c.participant_count-c.paid_count);return <tr key={c.id}><td><strong>{c.name}</strong><div className="muted">{c.due_at?`${t("dueDate")}: ${new Date(c.due_at).toLocaleDateString(locale)}`:""}</div></td><td>{money(c.amount,c.currency)}</td><td><strong>{openCount}/{c.participant_count}</strong><div className="progress"><span style={{width:`${c.participant_count?openCount/c.participant_count*100:0}%`}}/></div></td><td><span className={`status-pill ${c.status}`}>{statusText(t,c.status)}</span></td><td><button className="button secondary small" onClick={()=>open(c.id)}>{t("view")}</button></td></tr>})}</tbody></table></div>}</>}
     {newOpen&&<CollectionModal onClose={()=>setNewOpen(false)} onSaved={created}/>} {selected&&editOpen&&<EditCollectionModal item={selected} onClose={()=>setEditOpen(false)} onSaved={async()=>{setEditOpen(false);await open(selected.id);await load()}}/>} {selected&&communication&&<CommunicationModal collection={selected} participant={communication} onClose={()=>setCommunication(null)}/>} {selected&&manualSend&&<ExternalSendAssistant collection={selected} routes={manualSend.routes} total={manualSend.total} kind={manualSend.kind} onRoutes={routes=>setManualSend(routes.length?{kind:manualSend.kind,routes,total:manualSend.total}:null)} onClose={async()=>{setManualSend(null);await open(selected.id)}}/>}
   </>
 }
