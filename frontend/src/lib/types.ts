@@ -27,9 +27,10 @@ export interface CollectionParticipant {
   delivery_channel?: CommunicationChannel | null; communication_count: number;
 }
 export interface CollectionDetail extends CollectionSummary { participants: CollectionParticipant[]; }
+export interface ParticipantOpenBalance { participant_id:string; name:string; email?:string|null; phone?:string|null; open_amount:string|number; currency:string; collection_count:number; }
 export interface ImportDraft { name: string; email?: string | null; phone?: string | null; selected?: boolean; }
 export interface ImportPreview { source_type: string; participants: ImportDraft[]; warnings: string[]; }
-export interface ImportResult { imported_count: number; skipped_count: number; }
+export interface ImportResult { imported_count: number; updated_count: number; skipped_count: number; }
 export interface PaymentSettingsUpdate { account_name: string; iban: string; bic?: string | null; include_payment_link: boolean; include_payment_qr: boolean; }
 export interface PaymentSettings { account_name: string | null; iban: string | null; bic: string | null; configured: boolean; include_payment_link: boolean; include_payment_qr: boolean; }
 export interface PublicPayment { collection_name: string; participant_name: string; amount: string | number; currency: string; status: string; paid_at?: string | null; account_name?: string | null; iban?: string | null; bic?: string | null; payment_reference: string; epc_qr_data?: string | null; online_payment_available: boolean; online_payment_provider?: string | null; }
