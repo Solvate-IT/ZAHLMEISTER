@@ -36,7 +36,7 @@ async def test_translate_other_languages_replaces_requested_targets(monkeypatch)
     async def fake_translate_text(body: str, *, target_language: str, source_language: str | None = None) -> str:
         assert body == "Hallo {{contact}}"
         assert source_language == "de"
-        return f"{target_language}: {{contact}}"
+        return f"{target_language}: {{{{contact}}}}"
 
     monkeypatch.setattr(translation, "translate_text", fake_translate_text)
     result = await translation.translate_other_languages(
@@ -46,6 +46,6 @@ async def test_translate_other_languages_replaces_requested_targets(monkeypatch)
     )
     assert result == {
         "de": "Hallo {{contact}}",
-        "fr": "fr: {contact}",
-        "it": "it: {contact}",
+        "fr": "fr: {{contact}}",
+        "it": "it: {{contact}}",
     }
