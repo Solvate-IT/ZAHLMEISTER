@@ -25,7 +25,8 @@ jobs:
       - name: Generate pinned constraints
         run: |
           set -euo pipefail
-          docker run --rm zahlmeister-constraints-source python -m pip freeze \
+          docker run --rm zahlmeister-constraints-source \
+            python -m pip freeze --path /home/app/.local/lib/python3.13/site-packages \
             | grep -vE '^zahlmeister-backend([[:space:]@=]|$)' \
             | LC_ALL=C sort > backend/constraints.txt
           test -s backend/constraints.txt
