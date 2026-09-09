@@ -108,7 +108,10 @@ def normalize_translations(value: str | dict[str, str]) -> dict[str, str]:
     for key, text in raw.items():
         language = str(key).split("-", 1)[0].lower()
         if language in SUPPORTED_LANGUAGES and isinstance(text, str) and text.strip():
-            result[language] = text.strip()
+            normalized_text = text.strip()
+            if normalized_text == legacy_default_template_body(language).strip():
+                normalized_text = default_template_body(language)
+            result[language] = normalized_text
     return result
 
 
@@ -180,6 +183,7 @@ def message_values(
         "name": name,
         "collection_name": collection_name,
         "amount": amount_text,
+        "currency": currency,
         "due_date": due_at.date().isoformat() if due_at else "",
         "payment_link": payment_url,
         "payment_reference": payment_reference,
