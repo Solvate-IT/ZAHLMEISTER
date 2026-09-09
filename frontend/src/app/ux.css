@@ -1,0 +1,22 @@
+.sidebar-settings{margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+.overview-open-metric{max-width:380px}
+.overview-balances{margin-top:16px}
+.overview-balance-table{min-width:520px}
+.overview-balance-table th:last-child,.overview-balance-table td:last-child{text-align:right}
+.auth-secondary-links{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:10px}
+.auth-secondary-links .button{padding-left:0;padding-right:0;min-height:34px}
+.field-hint{font-size:.8rem;line-height:1.35}
+.inline-status{display:inline-flex;align-items:center;min-height:30px;padding:5px 9px;border-radius:9px;background:#eef5ff;border:1px solid #d4e5ff;color:var(--blue);font-size:.82rem;font-weight:700;white-space:nowrap}
+.settings-heading-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}
+.provider-onboarding{display:grid;gap:9px;padding:14px;margin:12px 0 16px;border:1px solid var(--border);border-radius:14px;background:#fafcff}
+.provider-onboarding p{margin:0;line-height:1.5}
+.provider-onboarding .button{justify-self:start}
+.import-source-actions{display:grid;gap:12px}
+.camera-capture{display:grid;gap:12px;padding:12px;border:1px solid var(--border);border-radius:14px;background:#f5f8fc}
+.camera-capture video{display:block;width:100%;max-height:480px;object-fit:contain;border-radius:10px;background:#071a46}
+.variable-help{border:1px solid var(--border);border-radius:10px;background:#fafcff}
+.variable-help summary{cursor:pointer;padding:9px 11px;font-size:.84rem;font-weight:700;color:var(--muted)}
+.variable-help-list{display:grid;gap:0;padding:0 11px 9px}
+.variable-help-list .row{padding:7px 0;border-top:1px solid var(--border)}
+.variable-help-list code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--blue)}
+@media(max-width:620px){.overview-open-metric{max-width:none}.overview-balance-table{min-width:460px}.settings-heading-actions{width:100%;justify-content:flex-start}.inline-status{white-space:normal}.auth-secondary-links{align-items:flex-start}.provider-onboarding .button{width:100%}}
