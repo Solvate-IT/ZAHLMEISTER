@@ -5,7 +5,7 @@ import styles from "./FileDropZone.module.css";
 
 type CaptureMode="user"|"environment";
 
-export function FileDropZone({accept,disabled=false,file,label,hint,selectLabel,dropLabel,capture,onFile}:{accept:string;disabled?:boolean;file?:File|null;label:string;hint:string;selectLabel:string;dropLabel:string;capture?:CaptureMode;onFile:(file:File)=>void}){
+export function FileDropZone({accept,disabled=false,file,label,hint,selectLabel,dropLabel,capture,onFile}:{accept:string;disabled?:boolean;file?:File|null;label?:string;hint:string;selectLabel:string;dropLabel:string;capture?:CaptureMode;onFile:(file:File)=>void}){
   const inputRef=useRef<HTMLInputElement|null>(null);
   const [dragging,setDragging]=useState(false);
 
@@ -13,7 +13,7 @@ export function FileDropZone({accept,disabled=false,file,label,hint,selectLabel,
   function picked(next:File|undefined){if(next&&!disabled)onFile(next)}
 
   return <div className="field">
-    <label>{label}</label>
+    {label&&<label>{label}</label>}
     <div
       className={`${styles.zone}${dragging?` ${styles.dragging}`:""}${disabled?` ${styles.disabled}`:""}`}
       role="button"
@@ -22,7 +22,7 @@ export function FileDropZone({accept,disabled=false,file,label,hint,selectLabel,
       onClick={choose}
       onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();choose()}}}
       onDragEnter={event=>{event.preventDefault();if(!disabled)setDragging(true)}}
-      onDragOver={event=>{event.preventDefault();if(!disabled){event.dataTransfer.dropEffect="copy";setDragging(true)}}}
+      onDragOver={event=>{event.preventDefault();if(!disabled){event.dataTransfer.dropEffect="copy";setDragging(true)}}
       onDragLeave={event=>{event.preventDefault();setDragging(false)}}
       onDrop={event=>{event.preventDefault();setDragging(false);picked(event.dataTransfer.files?.[0])}}
     >
