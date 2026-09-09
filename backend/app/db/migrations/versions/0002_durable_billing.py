@@ -16,6 +16,14 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _has_fk(inspector, table: str, local_column: str, remote_table: str) -> bool:
+    return any(
+        fk.get("constrained_columns") == [local_column]
+        and fk.get("referred_table") == remote_table
+        for fk in inspector.get_foreign_keys(table)
+    )
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
@@ -36,7 +44,7 @@ def upgrade() -> None:
             sa.Column("vat_number", sa.String(40)),
             sa.Column("organization_number", sa.String(80)),
             sa.Column("mollie_profile_id", sa.String(120)),
-            sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.true()),
+            sa.Column("active", sa.Boolean(), nullable=False),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
             sa.CheckConstraint("char_length(country) = 2", name="ck_billing_legal_entity_country"),
@@ -53,7 +61,7 @@ def upgrade() -> None:
             sa.Column("registration_type", sa.String(30), nullable=False),
             sa.Column("country", sa.String(2), nullable=False),
             sa.Column("registration_reference", sa.String(120)),
-            sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.true()),
+            sa.Column("active", sa.Boolean(), nullable=False),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
             sa.CheckConstraint("registration_type IN ('vat','eu_oss','gst','sales_tax')", name="ck_billing_tax_registration_type"),
@@ -72,8 +80,8 @@ def upgrade() -> None:
             sa.Column("subscription_id", postgresql.UUID(as_uuid=True)),
             sa.Column("billing_key", sa.String(200), nullable=False),
             sa.Column("operation", sa.String(20), nullable=False),
-            sa.Column("status", sa.String(30), nullable=False, server_default="prepared"),
-            sa.Column("provider", sa.String(20), nullable=False, server_default="mollie"),
+            sa.Column("status", sa.String(30), nullable=False),
+            sa.Column("provider", sa.String(20), nullable=False),
             sa.Column("provider_environment", sa.String(20), nullable=False),
             sa.Column("product_id", sa.String(200), nullable=False),
             sa.Column("tariff_version", sa.String(40), nullable=False),
@@ -85,8 +93,8 @@ def upgrade() -> None:
             sa.Column("tax_scheme", sa.String(30), nullable=False),
             sa.Column("tax_treatment", sa.String(40), nullable=False),
             sa.Column("tax_rule_version", sa.String(80), nullable=False),
-            sa.Column("recipient_json", sa.Text(), nullable=False, server_default="{}"),
-            sa.Column("retry_count", sa.Integer(), nullable=False, server_default="0"),
+            sa.Column("recipient_json", sa.Text(), nullable=False),
+            sa.Column("retry_count", sa.Integer(), nullable=False),
             sa.Column("last_error", sa.Text()),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
@@ -113,10 +121,10 @@ def upgrade() -> None:
             sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
             sa.Column("cycle_id", postgresql.UUID(as_uuid=True), nullable=False),
             sa.Column("organization_id", postgresql.UUID(as_uuid=True), nullable=False),
-            sa.Column("provider", sa.String(20), nullable=False, server_default="mollie"),
+            sa.Column("provider", sa.String(20), nullable=False),
             sa.Column("provider_environment", sa.String(20), nullable=False),
-            sa.Column("attempt", sa.Integer(), nullable=False, server_default="1"),
-            sa.Column("status", sa.String(30), nullable=False, server_default="reserved"),
+            sa.Column("attempt", sa.Integer(), nullable=False),
+            sa.Column("status", sa.String(30), nullable=False),
             sa.Column("sequence_type", sa.String(20), nullable=False),
             sa.Column("idempotency_key", postgresql.UUID(as_uuid=True), nullable=False),
             sa.Column("provider_reference", sa.String(200)),
@@ -137,10 +145,9 @@ def upgrade() -> None:
             sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
             sa.PrimaryKeyConstraint("id"),
             sa.UniqueConstraint("cycle_id", "attempt", name="uq_billing_payment_cycle_attempt"),
-            sa.UniqueConstraint("provider_reference"),
         )
         op.create_index("ix_billing_payment_cycle_status", "billing_payment_transactions", ["cycle_id", "status"])
-        op.create_index("ix_billing_payment_transactions_provider_reference", "billing_payment_transactions", ["provider_reference"])
+        op.create_index("ix_billing_payment_transactions_provider_reference", "billing_payment_transactions", ["provider_reference"], unique=True)
         op.create_index("ix_billing_payment_transactions_status", "billing_payment_transactions", ["status"])
 
     invoice_columns = {column["name"] for column in inspector.get_columns("billing_invoices")}
@@ -158,10 +165,9 @@ def upgrade() -> None:
             op.add_column("billing_invoices", sa.Column(name, type_, nullable=True))
 
     inspector = sa.inspect(bind)
-    fks = {fk.get("name") for fk in inspector.get_foreign_keys("billing_invoices")}
-    if "fk_billing_invoice_cycle" not in fks:
+    if not _has_fk(inspector, "billing_invoices", "billing_cycle_id", "billing_cycles"):
         op.create_foreign_key("fk_billing_invoice_cycle", "billing_invoices", "billing_cycles", ["billing_cycle_id"], ["id"], ondelete="SET NULL")
-    if "fk_billing_invoice_payment" not in fks:
+    if not _has_fk(inspector, "billing_invoices", "payment_transaction_id", "billing_payment_transactions"):
         op.create_foreign_key("fk_billing_invoice_payment", "billing_invoices", "billing_payment_transactions", ["payment_transaction_id"], ["id"], ondelete="SET NULL")
 
     indexes = {index["name"] for index in inspector.get_indexes("billing_invoices")}
