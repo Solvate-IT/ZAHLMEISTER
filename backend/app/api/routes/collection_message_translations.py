@@ -116,7 +116,7 @@ async def _required_languages_for_list(
 async def _effective_translations(
     session, collection: Collection, organization: Organization
 ) -> tuple[dict[str, str], bool]:
-    overrides = deserialize_collection_message_overrides(collection.message_body_override)
+    overrides = deserialize_collection_message_overrides(collection.message_overrides_json)
     if overrides:
         return overrides, True
     if collection.message_template_id is not None:
@@ -208,7 +208,7 @@ async def update_collection_message_translation(
         collection = await _owned_collection(session, stored_org, collection_id)
         translations, _has_override = await _effective_translations(session, collection, stored_org)
         translations[payload.language] = payload.body
-        collection.message_body_override = serialize_collection_message_overrides(translations)
+        collection.message_overrides_json = serialize_collection_message_overrides(translations)
         await session.flush()
         return await _read(session, collection, stored_org)
 
@@ -252,6 +252,6 @@ async def translate_collection_message_languages(
         collection = await _owned_collection(session, stored_org, collection_id)
         current, _has_override = await _effective_translations(session, collection, stored_org)
         current.update(generated)
-        collection.message_body_override = serialize_collection_message_overrides(current)
+        collection.message_overrides_json = serialize_collection_message_overrides(current)
         await session.flush()
         return await _read(session, collection, stored_org)
