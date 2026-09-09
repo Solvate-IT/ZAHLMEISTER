@@ -367,7 +367,7 @@ async def create_collection(
             communication_channel=payload.communication_channel,
             communication_mode="auto",
             message_template_id=template.id,
-            message_body_override=serialize_collection_message_overrides(
+            message_overrides_json=serialize_collection_message_overrides(
                 payload.message_body_overrides or {}
             ),
             reminder_rules_json=reminder_rules_json,
