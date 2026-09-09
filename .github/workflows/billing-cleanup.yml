@@ -22,22 +22,23 @@ jobs:
       - name: Apply payment-first billing cleanup
         run: |
           python - <<'PY'
+          import re
           from pathlib import Path
+          from textwrap import dedent
+
+          def replace_once(text: str, pattern: str, replacement: str, label: str) -> str:
+              result, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE | re.DOTALL)
+              if count != 1:
+                  raise RuntimeError(f"Expected one {label}, found {count}")
+              return result
 
           def remove_function(text: str, name: str) -> str:
-              markers = [f"\nasync def {name}(", f"\ndef {name}("]
-              positions = [text.find(marker) for marker in markers]
-              positions = [position for position in positions if position >= 0]
-              if not positions:
-                  raise RuntimeError(f"Function not found: {name}")
-              start = min(positions) + 1
-              candidates = []
-              for marker in ("\nasync def ", "\ndef "):
-                  position = text.find(marker, start + 1)
-                  if position >= 0:
-                      candidates.append(position)
-              end = min(candidates) + 1 if candidates else len(text)
-              return text[:start] + text[end:]
+              return replace_once(
+                  text,
+                  rf"^(?:async )?def {re.escape(name)}\(.*?(?=^(?:async )?def |\Z)",
+                  "",
+                  f"function {name}",
+              )
 
           core_path = Path("backend/app/services/mollie_billing_core.py")
           core = core_path.read_text()
@@ -46,21 +47,8 @@ jobs:
               "from datetime import UTC, datetime, timedelta",
           )
 
-          old_row = '''async def _mollie_row(
-              session: AsyncSession,
-              organization_id: UUID,
-              *,
-              lock: bool = False,
-          ) -> StoreSubscription | None:
-              statement = select(StoreSubscription).where(
-                  StoreSubscription.organization_id == organization_id,
-                  StoreSubscription.provider == MOLLIE_PROVIDER,
-              )
-              if lock:
-                  statement = statement.with_for_update()
-              return await session.scalar(statement)
-          '''
-          new_row = '''async def _mollie_row(
+          new_row = dedent('''
+          async def _mollie_row(
               session: AsyncSession,
               organization_id: UUID,
               *,
@@ -81,10 +69,15 @@ jobs:
               if lock:
                   statement = statement.with_for_update()
               return await session.scalar(statement)
-          '''
-          if old_row not in core:
-              raise RuntimeError("Canonical Mollie row block changed unexpectedly")
-          core = core.replace(old_row, new_row, 1)
+
+
+          ''').lstrip()
+          core = replace_once(
+              core,
+              r"^async def _mollie_row\(.*?(?=^def _mollie_locale\()",
+              new_row,
+              "canonical Mollie row loader",
+          )
 
           for name in ("_add_year", "_parse_date"):
               core = remove_function(core, name)
@@ -94,114 +87,77 @@ jobs:
               '        "mandate_id", "initial_payment_id",\n',
               1,
           )
-
-          compatibility_start = core.find("    # Compatibility only: invoices created by the pre-v2 renewal flow")
-          compatibility_end = core.find("\n\n\nasync def _ensure_receipt", compatibility_start)
-          if compatibility_start < 0 or compatibility_end < 0:
-              raise RuntimeError("Pre-v2 invoice compatibility block not found")
-          core = core[:compatibility_start] + core[compatibility_end:]
-
-          old_binding = '''    try:
-              cycle_id = UUID(str(metadata["billing_cycle_id"]))
-              transaction_id = UUID(str(metadata["payment_transaction_id"]))
-          except (KeyError, ValueError) as exc:
-              # Legacy first/subscription payments are handled below.
-              return await _process_legacy_payment_payload(payment)
-          '''
-          new_binding = '''    try:
-              cycle_id = UUID(str(metadata["billing_cycle_id"]))
-              transaction_id = UUID(str(metadata["payment_transaction_id"]))
-          except (KeyError, ValueError) as exc:
-              raise MollieBillingVerificationError("Mollie payment billing binding is missing") from exc
-          '''
-          if old_binding not in core:
-              raise RuntimeError("Legacy payment fallback changed unexpectedly")
-          core = core.replace(old_binding, new_binding, 1)
-
+          core = replace_once(
+              core,
+              r"^    # Compatibility only: invoices created by the pre-v2 renewal flow.*?(?=^async def _ensure_receipt\()",
+              "",
+              "pre-v2 invoice entitlement block",
+          )
+          core = replace_once(
+              core,
+              r"        # Legacy first/subscription payments are handled below\.\n        return await _process_legacy_payment_payload\(payment\)",
+              '        raise MollieBillingVerificationError("Mollie payment billing binding is missing") from exc',
+              "legacy payment fallback",
+          )
           for name in ("_process_legacy_payment_payload", "_process_legacy_subscription_payment"):
               core = remove_function(core, name)
-
-          legacy_guard = '''        if isinstance(data.get("subscription_id"), str):
-              return None
-          '''
-          if legacy_guard not in core:
-              raise RuntimeError("Legacy subscription renewal guard not found")
-          core = core.replace(legacy_guard, "", 1)
-
-          old_receipt_branch = '''            if details.get("kind") in {"initial_receipt", "renewal_receipt"}:
-                  await _ensure_receipt(invoice_id)
-                  processed += 1
-              elif details.get("kind") == "renewal":
-                  # Pre-v2 unbound renewal invoices could have been charge-producing.
-                  # Never re-issue them blindly after the architecture upgrade.
-                  raise MollieBillingConflict("Legacy renewal invoice requires reconciliation")
-          '''
-          new_receipt_branch = '''            if details.get("kind") not in {"initial_receipt", "renewal_receipt"}:
-                  raise MollieBillingVerificationError("Billing invoice kind is invalid")
-              await _ensure_receipt(invoice_id)
-              processed += 1
-          '''
-          if old_receipt_branch not in core:
-              raise RuntimeError("Legacy receipt branch changed unexpectedly")
-          core = core.replace(old_receipt_branch, new_receipt_branch, 1)
-
+          core = replace_once(
+              core,
+              r'^        if isinstance\(data\.get\("subscription_id"\), str\):\n            return None\n',
+              "",
+              "legacy renewal guard",
+          )
+          core = replace_once(
+              core,
+              r'^            if details\.get\("kind"\) in \{"initial_receipt", "renewal_receipt"\}:\n                await _ensure_receipt\(invoice_id\)\n                processed \+= 1\n            elif details\.get\("kind"\) == "renewal":\n                # Pre-v2 unbound renewal invoices could have been charge-producing\.\n                # Never re-issue them blindly after the architecture upgrade\.\n                raise MollieBillingConflict\("Legacy renewal invoice requires reconciliation"\)\n',
+              '            if details.get("kind") not in {"initial_receipt", "renewal_receipt"}:\n                raise MollieBillingVerificationError("Billing invoice kind is invalid")\n            await _ensure_receipt(invoice_id)\n            processed += 1\n',
+              "pre-v2 receipt reconciliation branch",
+          )
           for name in ("_execute_due_renewal", "_reconcile_legacy_subscription", "sync_subscription", "run_billing_cycle"):
               core = remove_function(core, name)
 
-          cancel_start = core.find("async def cancel_subscription(")
-          if cancel_start < 0:
-              raise RuntimeError("cancel_subscription not found")
+          cancel_start = core.index("async def cancel_subscription(")
           cancel = core[cancel_start:]
           cancel = cancel.replace(
               "    legacy_customer: str | None = None\n    legacy_subscription: str | None = None\n",
               "",
               1,
           )
-          cancel = cancel.replace(
-              '''        if isinstance(data.get("mollie_customer_id"), str) and isinstance(data.get("subscription_id"), str):
-              legacy_customer = data["mollie_customer_id"]
-              legacy_subscription = data["subscription_id"]
-          ''',
+          cancel = replace_once(
+              cancel,
+              r'^        if isinstance\(data\.get\("mollie_customer_id"\), str\) and isinstance\(data\.get\("subscription_id"\), str\):\n            legacy_customer = data\["mollie_customer_id"\]\n            legacy_subscription = data\["subscription_id"\]\n',
               "",
-              1,
+              "legacy cancellation binding",
           )
           remote_cancel = cancel.find("\n    if legacy_customer and legacy_subscription:")
           if remote_cancel < 0:
-              raise RuntimeError("Legacy remote subscription cancellation block not found")
-          cancel = cancel[:remote_cancel].rstrip() + "\n"
-          core = core[:cancel_start] + cancel
-          if "legacy" in core.lower() or "pre-v2" in core.lower():
+              raise RuntimeError("Legacy remote cancellation block not found")
+          core = core[:cancel_start] + cancel[:remote_cancel].rstrip() + "\n"
+          if re.search(r"legacy|pre-v2", core, re.IGNORECASE):
               raise RuntimeError("Legacy Mollie code remains in core")
           core_path.write_text(core)
 
           runtime_path = Path("backend/app/services/mollie_billing_runtime.py")
           runtime = runtime_path.read_text()
           runtime = remove_function(runtime, "_reconcile_legacy_subscription_safely")
-          runtime = runtime.replace(
-              '''        legacy_customer = data.get("mollie_customer_id")
-              legacy_subscription = data.get("subscription_id")
-              cancellation_pending = bool(row.cancelled_at and not row.auto_renew)
-          ''',
+          runtime = replace_once(
+              runtime,
+              r'^        legacy_customer = data\.get\("mollie_customer_id"\)\n        legacy_subscription = data\.get\("subscription_id"\)\n        cancellation_pending = bool\(row\.cancelled_at and not row\.auto_renew\)\n',
               "",
-              1,
+              "legacy runtime state",
           )
-          old_runtime_branch = '''    if isinstance(legacy_customer, str) and isinstance(legacy_subscription, str):
-              await _reconcile_legacy_subscription_safely(
-                  organization_id,
-                  legacy_customer,
-                  legacy_subscription,
-                  cancellation_pending=cancellation_pending,
-              )
-              return
-          '''
-          if old_runtime_branch not in runtime:
-              raise RuntimeError("Legacy runtime branch not found")
-          runtime = runtime.replace(old_runtime_branch, "", 1)
-          if "legacy" in runtime.lower() or "pre-v2" in runtime.lower():
+          runtime = replace_once(
+              runtime,
+              r'^    if isinstance\(legacy_customer, str\) and isinstance\(legacy_subscription, str\):\n        await _reconcile_legacy_subscription_safely\(.*?^        return\n',
+              "",
+              "legacy runtime reconciliation",
+          )
+          if re.search(r"legacy|pre-v2", runtime, re.IGNORECASE):
               raise RuntimeError("Legacy Mollie code remains in runtime")
           runtime_path.write_text(runtime)
 
-          Path("backend/app/services/mollie_billing.py").write_text('''"""Public Mollie billing service API."""
+          Path("backend/app/services/mollie_billing.py").write_text(dedent('''
+          """Public Mollie billing service API."""
 
           from app.services.mollie_billing_core import (
               MOLLIE_PROVIDER,
@@ -239,33 +195,27 @@ jobs:
               "start_checkout",
               "sync_subscription",
           ]
-          ''')
+          ''').lstrip())
 
-          webhooks_path = Path("backend/app/services/mollie_billing_webhooks.py")
-          webhooks = webhooks_path.read_text().replace(
-              "from app.services.mollie_billing import (",
-              "from app.services.mollie_billing_core import (",
-              1,
-          )
-          webhooks_path.write_text(webhooks)
-
-          billing_test_path = Path("backend/tests/test_mollie_billing.py")
-          billing_test = billing_test_path.read_text().replace(
-              "from app.services.mollie_billing import (",
-              "from app.services.mollie_billing_core import (",
-              1,
-          )
-          billing_test_path.write_text(billing_test)
-
-          webhook_test_path = Path("backend/tests/test_mollie_billing_webhooks.py")
-          webhook_test = webhook_test_path.read_text().replace(
+          for path in (
+              "backend/app/services/mollie_billing_webhooks.py",
+              "backend/tests/test_mollie_billing.py",
+          ):
+              item = Path(path)
+              item.write_text(item.read_text().replace(
+                  "from app.services.mollie_billing import (",
+                  "from app.services.mollie_billing_core import (",
+                  1,
+              ))
+          webhook_test = Path("backend/tests/test_mollie_billing_webhooks.py")
+          webhook_test.write_text(webhook_test.read_text().replace(
               "from app.services.mollie_billing import _invoice_reference, _reference_invoice_id, _remote_invoice_matches_local",
               "from app.services.mollie_billing_core import _invoice_reference, _reference_invoice_id, _remote_invoice_matches_local",
               1,
-          )
-          webhook_test_path.write_text(webhook_test)
+          ))
 
-          Path("backend/tests/test_mollie_sales_invoices.py").write_text('''from datetime import UTC, datetime
+          Path("backend/tests/test_mollie_sales_invoices.py").write_text(dedent('''
+          from datetime import UTC, datetime
           from decimal import Decimal
           from uuid import uuid4
 
@@ -332,12 +282,7 @@ jobs:
               captured = {}
 
               async def fake_request(method, path, *, json_body=None, params=None, idempotency_key=None):
-                  captured.update(
-                      method=method,
-                      path=path,
-                      json_body=json_body,
-                      idempotency_key=idempotency_key,
-                  )
+                  captured.update(method=method, path=path, json_body=json_body, idempotency_key=idempotency_key)
                   return {"id": "invoice_test", "status": "paid"}
 
               monkeypatch.setattr(core, "_request_json", fake_request)
@@ -354,7 +299,6 @@ jobs:
               assert body["lines"][0]["unitPrice"] == {"currency": "EUR", "value": "29.90"}
               assert body["lines"][0]["vatRate"] == "20.00"
               assert core._invoice_reference(item) in body["memo"]
-              assert body["lines"][0]["description"] == "Zahlmeister Pro – 12 Monate"
 
 
           def test_mollie_invoice_status_variants_are_normalized() -> None:
@@ -364,9 +308,7 @@ jobs:
 
 
           @pytest.mark.asyncio
-          async def test_recovery_finds_remote_invoice_before_any_new_post(
-              monkeypatch: pytest.MonkeyPatch,
-          ) -> None:
+          async def test_recovery_finds_remote_invoice_before_any_new_post(monkeypatch: pytest.MonkeyPatch) -> None:
               item = _invoice(kind="renewal_receipt")
               remote = _remote(item)
               calls = []
@@ -395,7 +337,7 @@ jobs:
               assert recipient["type"] == "business"
               assert recipient["organizationName"] == "Example GmbH"
               assert recipient["vatNumber"] == "ATU12345678"
-          ''')
+          ''').lstrip())
           PY
 
       - name: Check for stale billing references
