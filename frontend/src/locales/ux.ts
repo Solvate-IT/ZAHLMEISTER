@@ -21,8 +21,8 @@ export const uxMessages:Record<string,Messages>={
     infobipOnboardingHint:"Für internen SMS- und WhatsApp-Versand benötigst du ein eigenes Infobip-Konto. Die Registrierung erfolgt direkt bei Infobip; nach der Testphase fallen je nach Nutzung und Kanal Providerkosten an.",
     mollieOnboardingTitle:"Mollie-Konto erforderlich · Transaktionskosten",
     mollieOnboardingHint:"Für Online-Zahlungen benötigst du ein eigenes, von Mollie freigeschaltetes Händlerkonto. Registrierung und Verifizierung erfolgen direkt bei Mollie; für Zahlungen gelten die Mollie-Transaktionsgebühren.",
-    pontoOnboardingTitle:"Ponto-Konto erforderlich · kostenpflichtiger Anbieter",
-    pontoOnboardingHint:"Für automatischen BankSync benötigst du ein eigenes Ponto-Konto. Registrierung und Kontofreigabe erfolgen bei Ponto; für die Nutzung können Ponto-Gebühren anfallen. Danach verbindest du das Konto über den Zahlmeister-OAuth-Flow."
+    pontoOnboardingTitle:"Ponto-Onboarding · kostenpflichtiger Anbieter",
+    pontoOnboardingHint:"Für automatischen BankSync erfolgt das Onboarding direkt beim Verbinden über Ponto Customer Paying. Ein eigenes Ponto-Portal-Konto ist dabei optional; Ponto kann den Kunden direkt per E-Mail-Code onboarden. Je nach Ponto-Modell fallen Providergebühren an."
   },
   en:{
     openParticipantBalances:"Open amounts by participant",
@@ -44,7 +44,7 @@ export const uxMessages:Record<string,Messages>={
     infobipOnboardingHint:"Internal SMS and WhatsApp delivery requires your own Infobip account. Registration takes place directly with Infobip; provider charges apply after the trial depending on usage and channel.",
     mollieOnboardingTitle:"Mollie account required · transaction fees",
     mollieOnboardingHint:"Online payments require your own Mollie merchant account approved by Mollie. Registration and verification take place directly with Mollie; Mollie transaction fees apply to payments.",
-    pontoOnboardingTitle:"Ponto account required · paid provider",
-    pontoOnboardingHint:"Automatic BankSync requires your own Ponto account. Registration and bank authorization take place with Ponto; Ponto fees may apply. You then connect the account through the Zahlmeister OAuth flow."
+    pontoOnboardingTitle:"Ponto onboarding · paid provider",
+    pontoOnboardingHint:"Automatic BankSync onboarding starts directly from Connect using Ponto Customer Paying. A separate Ponto portal account is optional; Ponto can onboard the customer by email verification code. Provider charges apply according to the Ponto model."
   }
 };
