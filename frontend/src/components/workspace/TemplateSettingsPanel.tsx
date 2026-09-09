@@ -67,7 +67,7 @@ function NewTemplateEditor({languages,onCreated}:{languages:string[];onCreated:(
     if(!name.trim()||!body.trim()||busy)return;
     setBusy(true);setError("");
     try{
-      const item=await api.createTemplate({name:name.trim(),body:body.trim(),source_language:language,auto_translate:false});
+      const item=await api.createTemplate({name:name.trim(),body:body.trim(),source_language:language});
       onCreated(item);
     }catch{setError(t("requestFailed"))}
     finally{setBusy(false)}
