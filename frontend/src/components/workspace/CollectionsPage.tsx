@@ -67,19 +67,39 @@ function isPaid(p:CollectionParticipant){return p.status==="paid"}
 function statusText(t:(k:string,p?:Record<string,string|number>)=>string,status:string){const map:Record<string,string>={paid:"paid",open:"open",active:"active",draft:"draft",scheduled:"scheduled",overdue:"overdue",queued:"statusQueued",sent:"statusSent",external_opened:"statusOpened",delivered:"statusDelivered",read:"statusRead",failed:"statusFailed",skipped:"statusSkipped",error:"statusError",received:"statusReceived"};return t(map[status]??"statusUnknown")}
 function channelText(t:(k:string)=>string,channel:string){const map:Record<string,string>={email:"email",sms:"sms",whatsapp:"whatsApp",telegram:"telegram"};return t(map[channel]??"statusUnknown")}
 function templateTextForLocale(template:MessageTemplate|undefined,locale:string):string{if(!template)return "";const language=locale.trim().toLowerCase().split(/[-_]/,1)[0];return template.translations[language]??template.translations.en??Object.values(template.translations)[0]??""}
+function languageName(uiLocale:string,language:string):string{try{return new Intl.DisplayNames([uiLocale],{type:"language"}).of(language)??language.toUpperCase()}catch{return language.toUpperCase()}}
 
 function CollectionModal({onClose,onSaved}:{onClose:()=>void;onSaved:(id:string,sendNow:boolean)=>void}){
   const {t,locale}=useI18n();
+  const sourceLanguage=locale.split("-")[0];
   const [lists,setLists]=useState<ParticipantListSummary[]>([]);
   const [templates,setTemplates]=useState<MessageTemplate[]>([]);
   const [paymentConfigured,setPaymentConfigured]=useState<boolean|null>(null);
+  const [translationConfigured,setTranslationConfigured]=useState(false);
+  const [requiredLanguages,setRequiredLanguages]=useState<string[]>([sourceLanguage]);
+  const [messageTranslations,setMessageTranslations]=useState<Record<string,string>>({});
+  const [messageLanguage,setMessageLanguage]=useState(sourceLanguage);
   const [form,setForm]=useState({listId:"",name:"",amount:"",due:"",sendAt:"",channel:"auto",templateId:"",body:"",includeLink:true,includeQr:false});
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
 
-  useEffect(()=>{Promise.all([api.lists(),api.templates(),api.paymentSettings()]).then(([l,m,payment])=>{setLists(l);setTemplates(m);setPaymentConfigured(payment.configured);const selected=m.find(x=>x.is_default)??m[0];setForm(f=>({...f,listId:l[0]?.id??"",templateId:selected?.id??"",body:templateTextForLocale(selected,locale)}))}).catch(()=>setError(t("loadError")))},[t,locale]);
+  async function loadListLanguages(listId:string){
+    if(!listId){setRequiredLanguages([sourceLanguage]);return}
+    try{
+      const detail=await api.list(listId);
+      const languages=new Set<string>([sourceLanguage]);
+      detail.participants.forEach(participant=>{if(participant.locale)languages.add(participant.locale.split(/[-_]/)[0])});
+      setRequiredLanguages(Array.from(languages).sort());
+    }catch{setRequiredLanguages([sourceLanguage])}
+  }
 
-  function selectTemplate(templateId:string){const selected=templates.find(item=>item.id===templateId);setForm(current=>({...current,templateId,body:templateTextForLocale(selected,locale)}))}
+  useEffect(()=>{Promise.all([api.lists(),api.templates(),api.paymentSettings(),api.templateTranslationStatus()]).then(([l,m,payment,translation])=>{setLists(l);setTemplates(m);setPaymentConfigured(payment.configured);setTranslationConfigured(translation.configured);const selected=m.find(x=>x.is_default)??m[0];const listId=l[0]?.id??"";setForm(f=>({...f,listId,templateId:selected?.id??"",body:templateTextForLocale(selected,locale)}));void loadListLanguages(listId)}).catch(()=>setError(t("loadError")))},[t,locale]);
+
+  function selectList(listId:string){setForm(current=>({...current,listId}));void loadListLanguages(listId)}
+  function selectTemplate(templateId:string){const selected=templates.find(item=>item.id===templateId);setForm(current=>({...current,templateId,body:templateTextForLocale(selected,locale)}));setMessageTranslations({});setMessageLanguage(sourceLanguage)}
+  function sourceBodyChanged(body:string){const selectedTemplate=templates.find(item=>item.id===form.templateId);const templateBody=templateTextForLocale(selectedTemplate,locale).trim();setForm(current=>({...current,body}));setMessageLanguage(sourceLanguage);setMessageTranslations(body.trim()&&body.trim()!==templateBody?{[sourceLanguage]:body}:{})}
+  function translationBodyChanged(body:string){if(messageLanguage===sourceLanguage){sourceBodyChanged(body);return}setMessageTranslations(current=>({...current,[messageLanguage]:body}))}
+  async function translateOtherLanguages(){if(!translationConfigured||!form.listId||!form.body.trim()||busy)return;setBusy(true);setError("");try{const next=await api.previewCollectionMessageTranslations(form.listId,sourceLanguage,form.body.trim());setRequiredLanguages(next.required_languages);setMessageTranslations(next.translations)}catch(err){setError(err instanceof ApiError&&err.status===502?t("translationFailed"):t("requestFailed"))}finally{setBusy(false)}}
 
   async function submit(e:React.FormEvent<HTMLFormElement>){
     e.preventDefault();
@@ -88,23 +108,26 @@ function CollectionModal({onClose,onSaved}:{onClose:()=>void;onSaved:(id:string,
     const sendNow=submitter?.value==="send"&&!scheduled;
     if(!form.includeLink&&!form.includeQr){setError(t("paymentLinkOrQrRequired"));return}
     if((sendNow||scheduled)&&paymentConfigured===false){setError(t("paymentAccountRequired"));return}
-    setBusy(true);setError("");
     const selectedTemplate=templates.find(item=>item.id===form.templateId);
     const selectedTemplateBody=templateTextForLocale(selectedTemplate,locale).trim();
     const customizedBody=form.body.trim();
+    const customized=Boolean(customizedBody&&customizedBody!==selectedTemplateBody);
+    const overrides=customized?{...messageTranslations,[sourceLanguage]:customizedBody}:{};
+    if(customized&&(sendNow||scheduled)&&requiredLanguages.some(language=>!overrides[language]?.trim())){setError(t("missingCollectionTranslations"));return}
+    setBusy(true);setError("");
     const payload:Record<string,unknown>={participant_list_id:form.listId,name:form.name,amount:Number(form.amount).toFixed(2),communication_channel:form.channel,message_template_id:form.templateId||null,include_payment_link:form.includeLink,include_payment_qr:form.includeQr};
     if(form.due)payload.due_at=new Date(`${form.due}T23:59:00`).toISOString();
     if(form.sendAt)payload.send_at=new Date(form.sendAt).toISOString();
-    if(customizedBody&&customizedBody!==selectedTemplateBody)payload.message_body_override=customizedBody;
-    try{
-      const c=await api.createCollection(payload);
-      if(customizedBody&&customizedBody!==selectedTemplateBody){await api.saveCollectionMessageTranslation(c.id,locale.split("-")[0],customizedBody)}
-      onSaved(c.id,sendNow);
-    }catch(error){setError(isBankAccountError(error)?t("paymentAccountRequired"):error instanceof ApiError&&error.status===422&&scheduled?t("scheduledRequiresInternal"):t("requestFailed"))}finally{setBusy(false)}
+    if(customized)payload.message_body_overrides=overrides;
+    try{const c=await api.createCollection(payload);onSaved(c.id,sendNow)}catch(error){setError(isBankAccountError(error)?t("paymentAccountRequired"):error instanceof ApiError&&error.status===422&&scheduled?t("scheduledRequiresInternal"):t("requestFailed"))}finally{setBusy(false)}
   }
 
+  const selectedTemplate=templates.find(item=>item.id===form.templateId);
+  const selectedTemplateBody=templateTextForLocale(selectedTemplate,locale).trim();
+  const customized=Boolean(form.body.trim()&&form.body.trim()!==selectedTemplateBody);
   const scheduled=Boolean(form.sendAt);
-  return <Modal title={t("newCollection")} onClose={onClose} large resizable><form className="form" onSubmit={submit}>{error&&<div className="notice error">{error}</div>}<div className="split"><div className="field"><label>{t("selectList")}</label><select className="select" required value={form.listId} onChange={e=>setForm({...form,listId:e.target.value})}><option value="">{t("selectList")}</option>{lists.map(l=><option key={l.id} value={l.id}>{l.name} ({l.participant_count})</option>)}</select></div><div className="field"><label>{t("collectionName")}</label><input className="input" required value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></div></div><div className="split"><div className="field"><label>{t("amountPerParticipant")}</label><input className="input" type="number" min="0.01" step="0.01" required value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})}/></div><div className="field"><label>{t("dueDate")} <span className="muted">({t("optional")})</span></label><input className="input" type="date" value={form.due} onChange={e=>setForm({...form,due:e.target.value})}/></div></div><div className="split"><div className="field"><label>{t("channel")}</label><select className="select" value={form.channel} onChange={e=>setForm({...form,channel:e.target.value})}><option value="auto">{t("standardChannelOrder")}</option><option value="email">{t("email")}</option><option value="whatsapp">{t("whatsApp")}</option><option value="sms">{t("sms")}</option><option value="telegram">{t("telegram")}</option></select></div><div className="field"><label>{t("sendDate")} <span className="muted">({t("optional")})</span></label><input className="input" type="datetime-local" value={form.sendAt} onChange={e=>setForm({...form,sendAt:e.target.value})}/>{scheduled&&<span className="muted">{t("scheduledRequiresInternal")}</span>}</div></div><div className="field"><label>{t("messageTemplate")}</label><select className="select" value={form.templateId} onChange={e=>selectTemplate(e.target.value)}>{templates.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></div><div className="field"><label>{t("message")}</label><textarea className="textarea" style={{minHeight:180}} placeholder={t("messageTemplateHint")} value={form.body} onChange={e=>setForm({...form,body:e.target.value})}/></div><div className="card"><strong>{t("paymentMessageOptions")}</strong><div className="stack"><label className="checkbox"><input type="checkbox" checked={form.includeLink} onChange={e=>setForm({...form,includeLink:e.target.checked})}/>{t("includePaymentLink")}</label><label className="checkbox"><input type="checkbox" checked={form.includeQr} onChange={e=>setForm({...form,includeQr:e.target.checked})}/>{t("includePaymentQr")}</label></div></div><div className="actions"><button type="button" className="button secondary" onClick={onClose}>{t("cancel")}</button>{!scheduled&&<button className="button secondary" type="submit" value="save" disabled={busy||!form.listId}>{t("save")}</button>}<button className="button" type="submit" value="send" disabled={busy||!form.listId}>{scheduled?t("create"):`${t("create")} & ${t("sendNow")}`}</button></div></form></Modal>
+  const currentTranslation=messageLanguage===sourceLanguage?form.body:(messageTranslations[messageLanguage]??"");
+  return <Modal title={t("newCollection")} onClose={onClose} large resizable><form className="form" onSubmit={submit}>{error&&<div className="notice error">{error}</div>}<div className="split"><div className="field"><label>{t("selectList")}</label><select className="select" required value={form.listId} onChange={e=>selectList(e.target.value)}><option value="">{t("selectList")}</option>{lists.map(l=><option key={l.id} value={l.id}>{l.name} ({l.participant_count})</option>)}</select></div><div className="field"><label>{t("collectionName")}</label><input className="input" required value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></div></div><div className="split"><div className="field"><label>{t("amountPerParticipant")}</label><input className="input" type="number" min="0.01" step="0.01" required value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})}/></div><div className="field"><label>{t("dueDate")} <span className="muted">({t("optional")})</span></label><input className="input" type="date" value={form.due} onChange={e=>setForm({...form,due:e.target.value})}/></div></div><div className="split"><div className="field"><label>{t("channel")}</label><select className="select" value={form.channel} onChange={e=>setForm({...form,channel:e.target.value})}><option value="auto">{t("standardChannelOrder")}</option><option value="email">{t("email")}</option><option value="whatsapp">{t("whatsApp")}</option><option value="sms">{t("sms")}</option><option value="telegram">{t("telegram")}</option></select></div><div className="field"><label>{t("sendDate")} <span className="muted">({t("optional")})</span></label><input className="input" type="datetime-local" value={form.sendAt} onChange={e=>setForm({...form,sendAt:e.target.value})}/>{scheduled&&<span className="muted">{t("scheduledRequiresInternal")}</span>}</div></div><div className="field"><label>{t("messageTemplate")}</label><select className="select" value={form.templateId} onChange={e=>selectTemplate(e.target.value)}>{templates.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></div><div className="field"><label>{t("message")}</label><textarea className="textarea" style={{minHeight:180}} placeholder={t("messageTemplateHint")} value={form.body} onChange={e=>sourceBodyChanged(e.target.value)}/></div>{customized&&<div className="card stack"><strong>{t("collectionMessageTranslations")}</strong><p className="muted">{t("collectionMessageTranslationsHint")}</p><div className="field"><label>{t("messageLanguage")}</label><select className="select" value={messageLanguage} onChange={e=>setMessageLanguage(e.target.value)}>{requiredLanguages.map(code=><option key={code} value={code}>{languageName(locale,code)}{(code===sourceLanguage?form.body:messageTranslations[code])?.trim()?" ✓":""}</option>)}</select></div><div className="field"><textarea className="textarea" style={{minHeight:160}} value={currentTranslation} onChange={e=>translationBodyChanged(e.target.value)}/></div>{translationConfigured&&<button type="button" className="button secondary" onClick={translateOtherLanguages} disabled={busy||!form.body.trim()}>{t("translateOtherLanguages")}</button>}</div>}<div className="card"><strong>{t("paymentMessageOptions")}</strong><div className="stack"><label className="checkbox"><input type="checkbox" checked={form.includeLink} onChange={e=>setForm({...form,includeLink:e.target.checked})}/>{t("includePaymentLink")}</label><label className="checkbox"><input type="checkbox" checked={form.includeQr} onChange={e=>setForm({...form,includeQr:e.target.checked})}/>{t("includePaymentQr")}</label></div></div><div className="actions"><button type="button" className="button secondary" onClick={onClose}>{t("cancel")}</button>{!scheduled&&<button className="button secondary" type="submit" value="save" disabled={busy||!form.listId}>{t("save")}</button>}<button className="button" type="submit" value="send" disabled={busy||!form.listId}>{scheduled?t("create"):`${t("create")} & ${t("sendNow")}`}</button></div></form></Modal>
 }
 
 function EditCollectionModal({item,onClose,onSaved}:{item:CollectionDetail;onClose:()=>void;onSaved:()=>void}){
