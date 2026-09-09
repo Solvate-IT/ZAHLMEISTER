@@ -11,25 +11,16 @@ from app.services.collection_message_overrides import (
 from app.services.message_renderer import render_collection_message
 
 
-def test_legacy_collection_override_remains_readable() -> None:
-    translations, legacy = deserialize_collection_message_overrides(
-        "Hallo {{contact}}",
-        fallback_language="de",
-    )
-    assert legacy is True
-    assert translations == {"de": "Hallo {{contact}}"}
+def test_plain_text_collection_override_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Invalid localized collection message data"):
+        deserialize_collection_message_overrides("Hallo {{contact}}")
 
 
 def test_localized_collection_overrides_roundtrip() -> None:
     stored = serialize_collection_message_overrides(
         {"de": "Hallo {{contact}}", "fr": "Bonjour {{contact}}"}
     )
-    translations, legacy = deserialize_collection_message_overrides(
-        stored,
-        fallback_language="de",
-    )
-    assert legacy is False
-    assert translations == {
+    assert deserialize_collection_message_overrides(stored) == {
         "de": "Hallo {{contact}}",
         "fr": "Bonjour {{contact}}",
     }
@@ -115,7 +106,9 @@ async def test_localized_override_rejects_missing_participant_language() -> None
     participant = SimpleNamespace(id="participant", name="Jean Dupont")
     collection_participant = SimpleNamespace(public_token="token", payment_reference="ZM-1")
 
-    with pytest.raises(ValueError, match="Missing collection message translation for language: fr"):
+    with pytest.raises(
+        ValueError, match="Collection message override is missing participant language: fr"
+    ):
         await render_collection_message(
             None,
             collection=collection,
@@ -128,7 +121,9 @@ async def test_localized_override_rejects_missing_participant_language() -> None
 
 @pytest.mark.asyncio
 async def test_translate_other_languages_replaces_requested_targets(monkeypatch) -> None:
-    async def fake_translate_text(body: str, *, target_language: str, source_language: str | None = None) -> str:
+    async def fake_translate_text(
+        body: str, *, target_language: str, source_language: str | None = None
+    ) -> str:
         assert body == "Hallo {{contact}}"
         assert source_language == "de"
         return f"{target_language}: {{{{contact}}}}"
