@@ -99,7 +99,6 @@ class CollectionCreate(BaseModel):
     due_at: datetime | None = None
     communication_channel: CollectionChannel = "auto"
     message_template_id: UUID | None = None
-    message_body_override: str | None = Field(default=None, max_length=10000)
     message_body_overrides: dict[str, str] | None = None
     reminder_rules: list[ReminderRule] | None = None
     include_payment_link: bool | None = None
@@ -175,7 +174,6 @@ class CollectionRead(BaseModel):
     communication_mode: str = "auto"
     channel_order: list[str] = Field(default_factory=list)
     message_template_id: UUID | None = None
-    message_body_override: str | None = None
     reminder_rules: list[ReminderRule] = Field(default_factory=list)
     include_payment_link: bool = True
     include_payment_qr: bool = False
