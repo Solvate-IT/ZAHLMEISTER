@@ -52,7 +52,7 @@ def _account_read(item: BankSyncAccount) -> BankSyncAccountRead:
 
 def _ponto_redirect(result: str) -> RedirectResponse:
     return RedirectResponse(
-        f"{settings.public_app_url.rstrip('/')}?ponto={result}",
+        f"{settings.public_app_url.rstrip('/')}/app/?view=settings&ponto={result}",
         status_code=status.HTTP_302_FOUND,
     )
 
@@ -152,9 +152,6 @@ async def finish_ponto(
             item.last_error = description[:2000] if description else "Ponto authorization failed"
             item.last_tested_at = now
             if cancelled:
-                # The encrypted OAuth config also contains the short-lived PKCE verifier
-                # and may contain credentials from an earlier connection. A cancelled
-                # authorization must leave no usable credentials behind.
                 item.encrypted_config = None
                 item.connected_at = None
             result = "cancelled" if cancelled else "error"
@@ -265,9 +262,6 @@ async def disconnect(organization: Organization = Depends(get_organization)) -> 
         )
         if item is None or item.status == "disconnected":
             return
-        # Keep connection/account rows because historical BankTransaction records point
-        # to those accounts. Removing only the credentials stops access while retaining
-        # the financial audit trail and the user's previous account enable/disable choices.
         item.status = "disconnected"
         item.encrypted_config = None
         item.connected_at = None
