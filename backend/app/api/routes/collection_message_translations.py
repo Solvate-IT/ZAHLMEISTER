@@ -6,7 +6,14 @@ from sqlalchemy import select
 
 from app.api.deps import get_organization
 from app.db.session import SessionLocal
-from app.models.entities import Collection, CollectionParticipant, MessageTemplate, Organization
+from app.models.entities import (
+    Collection,
+    CollectionParticipant,
+    MessageTemplate,
+    Organization,
+    Participant,
+    ParticipantList,
+)
 from app.models.participant_preferences import ParticipantPreference
 from app.services import translation
 from app.services.collection_message_overrides import (
@@ -49,6 +56,10 @@ class CollectionMessageTranslateRequest(CollectionMessageTranslationUpdate):
     pass
 
 
+class CollectionMessagePreviewRequest(CollectionMessageTranslationUpdate):
+    participant_list_id: UUID
+
+
 async def _owned_collection(session, organization: Organization, collection_id: UUID) -> Collection:
     item = await session.get(Collection, collection_id, with_for_update=True)
     if item is None or item.organization_id != organization.id:
@@ -64,6 +75,29 @@ async def _required_languages(session, collection: Collection, organization: Org
                 select(CollectionParticipant.participant_id).where(
                     CollectionParticipant.collection_id == collection.id
                 )
+            )
+        ).scalars()
+    )
+    if participant_ids:
+        locales = (
+            await session.execute(
+                select(ParticipantPreference.locale).where(
+                    ParticipantPreference.participant_id.in_(participant_ids)
+                )
+            )
+        ).scalars().all()
+        languages.update(normalize_language(locale) for locale in locales if locale)
+    return sorted(languages)
+
+
+async def _required_languages_for_list(
+    session, participant_list: ParticipantList, organization: Organization
+) -> list[str]:
+    languages = {normalize_language(organization.locale)}
+    participant_ids = list(
+        (
+            await session.execute(
+                select(Participant.id).where(Participant.list_id == participant_list.id)
             )
         ).scalars()
     )
@@ -100,6 +134,46 @@ async def _read(session, collection: Collection, organization: Organization) -> 
         required_languages=await _required_languages(session, collection, organization),
         translation_configured=translation.configured(),
         has_override=has_override,
+    )
+
+
+@router.post(
+    "/message-translations/preview",
+    response_model=CollectionMessageTranslationsRead,
+)
+async def preview_collection_message_translations(
+    payload: CollectionMessagePreviewRequest,
+    organization: Organization = Depends(get_organization),
+) -> CollectionMessageTranslationsRead:
+    if not translation.configured():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Automatic translation is not configured",
+        )
+    async with SessionLocal() as session:
+        stored_org = await session.get(Organization, organization.id)
+        assert stored_org is not None
+        participant_list = await session.get(ParticipantList, payload.participant_list_id)
+        if participant_list is None or participant_list.organization_id != stored_org.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Participant list not found")
+        targets = await _required_languages_for_list(session, participant_list, stored_org)
+
+    try:
+        generated = await translation.translate_other_languages(
+            payload.body,
+            source_language=payload.language,
+            target_languages=targets,
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Automatic translation failed",
+        ) from exc
+    return CollectionMessageTranslationsRead(
+        translations=generated,
+        required_languages=targets,
+        translation_configured=True,
+        has_override=True,
     )
 
 
