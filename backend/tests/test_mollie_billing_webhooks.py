@@ -8,7 +8,7 @@ import pytest
 
 from app.core.config import settings
 from app.models.billing import BillingInvoice
-from app.services.mollie_billing import _invoice_reference, _reference_invoice_id, _remote_invoice_matches_local
+from app.services.mollie_billing_core import _invoice_reference, _reference_invoice_id, _remote_invoice_matches_local
 from app.services.mollie_billing_webhooks import (
     MollieBillingWebhookError,
     _invoice_id_from_webhook_payload,

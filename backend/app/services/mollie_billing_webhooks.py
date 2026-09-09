@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.billing import BillingInvoice
-from app.services.mollie_billing import (
+from app.services.mollie_billing_core import (
     MOLLIE_PROVIDER,
     MollieBillingVerificationError,
     _apply_invoice_payload,

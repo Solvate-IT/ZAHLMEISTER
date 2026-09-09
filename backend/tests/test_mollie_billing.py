@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -8,11 +8,10 @@ import app.core.config as config_module
 from app.core.billing_catalog import BillingTariff, PRO_YEARLY_TARIFF
 from app.core.config import settings
 from app.services.billing import PRO_PRODUCT_ID
-from app.services.mollie_billing import (
+from app.services.mollie_billing_core import (
     MOLLIE_GRACE_DAYS,
     MOLLIE_PURPOSE,
     MollieBillingVerificationError,
-    _add_year,
     _grace_expiry,
     _metadata,
     _payment_amount_matches,
@@ -108,9 +107,7 @@ def test_renewal_grace_period_is_anchored_and_does_not_roll_forward() -> None:
 def test_new_checkout_clears_finished_subscription_state_but_keeps_customer() -> None:
     data = {
         "mollie_customer_id": "cst_example",
-        "subscription_id": "sub_old",
         "mandate_id": "mdt_old",
-        "subscription_status": "canceled",
         "initial_payment_id": "tr_old",
         "billing_amount": "29.90",
         "billing_currency": "EUR",
@@ -157,6 +154,3 @@ def test_invalid_payment_metadata_is_rejected() -> None:
             }
         )
 
-
-def test_annual_renewal_handles_leap_day() -> None:
-    assert _add_year(date(2028, 2, 29)) == date(2029, 2, 28)

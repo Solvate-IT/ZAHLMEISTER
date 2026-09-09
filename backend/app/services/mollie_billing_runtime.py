@@ -160,28 +160,6 @@ async def _execute_due_renewal(organization_id: UUID) -> bool:
     return True
 
 
-async def _reconcile_legacy_subscription_safely(
-    organization_id: UUID,
-    customer_id: str,
-    subscription_id: str,
-    *,
-    cancellation_pending: bool,
-) -> None:
-    if cancellation_pending:
-        # A failed remote cancellation must never resurrect local auto-renew.
-        await core._request_json("DELETE", f"customers/{customer_id}/subscriptions/{subscription_id}")
-        async with SessionLocal.begin() as session:
-            row = await core._mollie_row(session, organization_id, lock=True)
-            if row is not None:
-                data = core._verification_data(row)
-                data.pop("subscription_id", None)
-                data.pop("subscription_status", None)
-                row.verification_data_encrypted = core.encrypt_config(data)
-                row.last_verified_at = datetime.now(UTC)
-        return
-    await core._reconcile_legacy_subscription(organization_id, customer_id, subscription_id)
-
-
 async def sync_subscription(_session, organization_id: UUID) -> None:
     core._require_configured()
     async with SessionLocal() as session:
@@ -189,9 +167,6 @@ async def sync_subscription(_session, organization_id: UUID) -> None:
         if row is None:
             return
         data = core._verification_data(row)
-        legacy_customer = data.get("mollie_customer_id")
-        legacy_subscription = data.get("subscription_id")
-        cancellation_pending = bool(row.cancelled_at and not row.auto_renew)
         tx_ids = (
             await session.execute(
                 select(BillingPaymentTransaction.id)
@@ -204,14 +179,6 @@ async def sync_subscription(_session, organization_id: UUID) -> None:
             )
         ).scalars().all()
 
-    if isinstance(legacy_customer, str) and isinstance(legacy_subscription, str):
-        await _reconcile_legacy_subscription_safely(
-            organization_id,
-            legacy_customer,
-            legacy_subscription,
-            cancellation_pending=cancellation_pending,
-        )
-        return
 
     for tx_id in tx_ids:
         async with SessionLocal() as session:

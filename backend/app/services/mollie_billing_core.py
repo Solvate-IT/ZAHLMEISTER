@@ -4,7 +4,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -205,13 +205,6 @@ def _return_url(result: str) -> str:
     return f"{settings.public_app_url.rstrip('/')}/app?view=billing&billing={result}"
 
 
-def _add_year(value: date) -> date:
-    try:
-        return value.replace(year=value.year + 1)
-    except ValueError:
-        return value.replace(year=value.year + 1, month=2, day=28)
-
-
 def _add_year_datetime(value: datetime) -> datetime:
     try:
         return value.replace(year=value.year + 1)
@@ -229,15 +222,6 @@ def _parse_datetime(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
-
-
-def _parse_date(value: Any) -> date | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        return date.fromisoformat(value)
-    except ValueError:
-        return None
 
 
 def _normalize_utc(value: datetime) -> datetime:
@@ -385,6 +369,14 @@ async def _mollie_row(
     *,
     lock: bool = False,
 ) -> StoreSubscription | None:
+    if lock:
+        organization = await session.scalar(
+            select(Organization.id)
+            .where(Organization.id == organization_id)
+            .with_for_update()
+        )
+        if organization is None:
+            return None
     statement = select(StoreSubscription).where(
         StoreSubscription.organization_id == organization_id,
         StoreSubscription.provider == MOLLIE_PROVIDER,
@@ -524,7 +516,7 @@ async def _ensure_customer(
 
 def _reset_finished_subscription_data(data: dict[str, Any]) -> None:
     for key in (
-        "subscription_id", "mandate_id", "subscription_status", "initial_payment_id",
+        "mandate_id", "initial_payment_id",
         "checkout_url", "checkout_attempt", "last_payment_id", "last_payment_status",
         "billing_amount", "billing_currency", "billing_tariff_version", "billing_recipient",
         "billing_tax_rate", "billing_vat_scheme", "billing_tax_treatment",
@@ -867,32 +859,6 @@ async def _apply_invoice_payload(session: AsyncSession, item: BillingInvoice, pa
     if item.status == "paid":
         item.paid_at = _parse_datetime(payload.get("paidAt")) or item.paid_at or datetime.now(UTC)
 
-    # Compatibility only: invoices created by the pre-v2 renewal flow could still be
-    # the payment-producing object. New v2 receipts never drive entitlements.
-    if item.billing_cycle_id is None and _invoice_details(item).get("kind") == "renewal" and item.status == "paid":
-        row = await _mollie_row(session, item.organization_id, lock=True)
-        if row is not None:
-            data = _verification_data(row)
-            data["paid_through"] = item.period_end.isoformat()
-            data["latest_invoice_id"] = item.external_id
-            await apply_verified_subscription(
-                session,
-                item.organization_id,
-                VerifiedSubscription(
-                    provider=MOLLIE_PROVIDER,
-                    product_id=PRO_PRODUCT_ID,
-                    external_reference=str(data.get("mandate_id") or item.external_id),
-                    account_token=str(item.organization_id),
-                    status="active",
-                    purchased_at=row.purchased_at or item.period_start,
-                    expires_at=item.period_end,
-                    auto_renew=bool(row.auto_renew),
-                    environment=settings.mollie_billing_environment,
-                    verification_data=data,
-                ),
-            )
-
-
 async def _ensure_receipt(invoice_id: UUID) -> None:
     async with SessionLocal.begin() as session:
         item = await session.get(BillingInvoice, invoice_id, with_for_update=True)
@@ -957,8 +923,7 @@ async def _process_payment_payload(payment: dict[str, Any]) -> UUID:
         cycle_id = UUID(str(metadata["billing_cycle_id"]))
         transaction_id = UUID(str(metadata["payment_transaction_id"]))
     except (KeyError, ValueError) as exc:
-        # Legacy first/subscription payments are handled below.
-        return await _process_legacy_payment_payload(payment)
+        raise MollieBillingVerificationError("Mollie payment billing binding is missing") from exc
 
     sequence_type = str(payment.get("sequenceType", ""))
     mandate_id: str | None = None
@@ -1065,116 +1030,6 @@ async def _process_payment_payload(payment: dict[str, Any]) -> UUID:
         except MollieBillingUnavailable:
             logger.exception("Mollie receipt creation deferred", extra={"invoice_id": str(invoice_id)})
     return organization_id
-
-
-async def _process_legacy_payment_payload(payment: dict[str, Any]) -> UUID:
-    organization_id = _verified_metadata(payment)
-    payment_id = payment.get("id")
-    if not isinstance(payment_id, str):
-        raise MollieBillingVerificationError("Mollie payment reference is missing")
-    async with SessionLocal.begin() as session:
-        row = await _mollie_row(session, organization_id, lock=True)
-        if row is None:
-            raise MollieBillingVerificationError("Legacy Mollie payment is not linked")
-        data = _verification_data(row)
-        amount, currency = _stored_billing_terms(data)
-        if not _payment_amount_matches(payment, amount, currency):
-            raise MollieBillingVerificationError("Legacy Mollie payment amount is invalid")
-        sequence_type = str(payment.get("sequenceType", ""))
-        status = _remote_payment_status(payment.get("status"))
-        data.update({"last_payment_id": payment_id, "last_payment_status": status})
-        if sequence_type == "first" and data.get("initial_payment_id") == payment_id and status == "paid":
-            customer_id = payment.get("customerId")
-            if not isinstance(customer_id, str):
-                raise MollieBillingVerificationError("Legacy Mollie customer is missing")
-            mandate_id = await _valid_mandate(customer_id)
-            paid_at = _parse_datetime(payment.get("paidAt")) or datetime.now(UTC)
-            period_end = _add_year_datetime(paid_at)
-            data.update({"mandate_id": mandate_id, "paid_through": period_end.isoformat()})
-            recipient = json.dumps(_invoice_recipient(await _load_profile(session, organization_id)), ensure_ascii=False)
-            decision = await _prepare_profile_tax(await _load_profile(session, organization_id))
-            cycle = BillingCycle(
-                id=uuid4(), organization_id=organization_id, subscription_id=row.id,
-                billing_key=f"ZM:{uuid4()}", operation="initial", status="paid",
-                provider=MOLLIE_PROVIDER, provider_environment=settings.mollie_billing_environment,
-                product_id=PRO_PRODUCT_ID, tariff_version=str(data.get("billing_tariff_version") or PRO_YEARLY_TARIFF.version),
-                period_start=paid_at, period_end=period_end, gross_amount=Decimal(amount), currency=currency,
-                tax_rate=decision.rate, tax_scheme=decision.vat_scheme, tax_treatment=decision.treatment,
-                tax_rule_version=decision.rule_version, recipient_json=recipient,
-            )
-            session.add(cycle)
-            await session.flush()
-            tx = BillingPaymentTransaction(
-                cycle_id=cycle.id, organization_id=organization_id, provider=MOLLIE_PROVIDER,
-                provider_environment=settings.mollie_billing_environment, attempt=1, status="paid",
-                sequence_type="first", provider_reference=payment_id, gross_amount=Decimal(amount),
-                currency=currency, paid_at=paid_at, last_synced_at=datetime.now(UTC),
-            )
-            session.add(tx)
-            await session.flush()
-            invoice = await _invoice_record(session, cycle, tx, source_payment_id=payment_id)
-            await apply_verified_subscription(
-                session, organization_id,
-                VerifiedSubscription(
-                    provider=MOLLIE_PROVIDER, product_id=PRO_PRODUCT_ID, external_reference=mandate_id,
-                    account_token=str(organization_id), status="active", purchased_at=paid_at,
-                    expires_at=period_end, auto_renew=True, environment=settings.mollie_billing_environment,
-                    verification_data={**data, "billing_flow_version": 2},
-                ),
-            )
-            invoice_id = invoice.id
-        elif sequence_type == "recurring" and isinstance(data.get("subscription_id"), str):
-            await _process_legacy_subscription_payment(session, row, data, payment)
-            invoice_id = None
-        else:
-            row.verification_data_encrypted = encrypt_config(data)
-            row.last_verified_at = datetime.now(UTC)
-            invoice_id = None
-    if invoice_id is not None:
-        await _ensure_receipt(invoice_id)
-    return organization_id
-
-
-async def _process_legacy_subscription_payment(
-    session: AsyncSession,
-    row: StoreSubscription,
-    data: dict[str, Any],
-    payment: dict[str, Any],
-) -> None:
-    subscription_id = data.get("subscription_id")
-    customer_id = data.get("mollie_customer_id")
-    if not isinstance(subscription_id, str) or not isinstance(customer_id, str):
-        raise MollieBillingVerificationError("Legacy Mollie subscription binding is incomplete")
-    if payment.get("subscriptionId") != subscription_id:
-        raise MollieBillingVerificationError("Legacy Mollie subscription binding is invalid")
-    subscription = await _request_json("GET", f"customers/{customer_id}/subscriptions/{subscription_id}")
-    remote_status = str(subscription.get("status", ""))
-    status = _remote_payment_status(payment.get("status"))
-    data.update({"last_payment_id": payment.get("id"), "last_payment_status": status, "subscription_status": remote_status})
-    if status == "paid":
-        paid_at = _parse_datetime(payment.get("paidAt")) or datetime.now(UTC)
-        next_payment = _parse_date(subscription.get("nextPaymentDate")) or _add_year(paid_at.date())
-        expires_at = datetime.combine(next_payment, paid_at.timetz())
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=UTC)
-        data["paid_through"] = expires_at.isoformat()
-        data.pop("grace_until", None)
-        await apply_verified_subscription(
-            session, row.organization_id,
-            VerifiedSubscription(
-                provider=MOLLIE_PROVIDER, product_id=PRO_PRODUCT_ID, external_reference=subscription_id,
-                account_token=str(row.organization_id), status="active" if remote_status == "active" else "on_hold",
-                purchased_at=row.purchased_at or paid_at, expires_at=expires_at,
-                auto_renew=remote_status == "active", environment=settings.mollie_billing_environment,
-                verification_data=data,
-            ),
-        )
-    elif status in FAILED_PAYMENT_STATUSES:
-        grace_until = _grace_expiry(data, row.expires_at)
-        row.expires_at = grace_until
-        row.status = "grace_period" if grace_until > datetime.now(UTC) else "expired"
-        row.auto_renew = remote_status in {"active", "pending"}
-        row.verification_data_encrypted = encrypt_config(data)
 
 
 async def _reserve_initial_checkout(organization_id: UUID) -> tuple[UUID, UUID, str, str, str, dict[str, str], str]:
@@ -1381,8 +1236,6 @@ async def _reserve_due_renewal(organization_id: UUID) -> tuple[UUID, UUID, str, 
         if row is None or not row.auto_renew or row.status not in {"active", "grace_period", "expired"}:
             return None
         data = _verification_data(row)
-        if isinstance(data.get("subscription_id"), str):
-            return None
         paid_through = _parse_datetime(data.get("paid_through")) or row.expires_at
         if paid_through is None or paid_through > datetime.now(UTC):
             return None
@@ -1453,58 +1306,6 @@ async def _reserve_due_renewal(organization_id: UUID) -> tuple[UUID, UUID, str, 
         return cycle.id, tx.id, customer_id, mandate_id
 
 
-async def _execute_due_renewal(organization_id: UUID) -> bool:
-    reserved = await _reserve_due_renewal(organization_id)
-    if reserved is None:
-        return False
-    cycle_id, tx_id, customer_id, mandate_id = reserved
-    await _valid_mandate(customer_id, mandate_id)
-    async with SessionLocal() as session:
-        cycle = await session.get(BillingCycle, cycle_id)
-        tx = await session.get(BillingPaymentTransaction, tx_id)
-        if cycle is None or tx is None:
-            raise MollieBillingUnavailable("Billing reservation disappeared")
-        if tx.provider_reference:
-            payment = await _get_payment(tx.provider_reference)
-        else:
-            payment = await _find_remote_payment(tx, cycle, customer_id)
-            if payment is None:
-                webhook = _webhook_url()
-                payload: dict[str, Any] = {
-                    "amount": {"currency": tx.currency, "value": _decimal_amount(tx.gross_amount)},
-                    "description": "Zahlmeister Pro renewal",
-                    "sequenceType": "recurring",
-                    "customerId": customer_id,
-                    "mandateId": mandate_id,
-                    "metadata": _payment_metadata(organization_id, cycle, tx),
-                }
-                if webhook:
-                    payload["webhookUrl"] = webhook
-                payment = await _request_json(
-                    "POST", "payments", json_body=payload,
-                    idempotency_key=f"zahlmeister-payment-{tx.idempotency_key}",
-                )
-    payment_id = payment.get("id")
-    if not isinstance(payment_id, str) or not payment_id.startswith("tr_"):
-        raise MollieBillingUnavailable("Mollie renewal payment creation failed")
-    async with SessionLocal.begin() as session:
-        row = await _mollie_row(session, organization_id, lock=True)
-        cycle = await session.get(BillingCycle, cycle_id, with_for_update=True)
-        tx = await session.get(BillingPaymentTransaction, tx_id, with_for_update=True)
-        if row is None or cycle is None or tx is None:
-            raise MollieBillingUnavailable("Billing reservation disappeared")
-        if not row.auto_renew and tx.provider_reference is None:
-            cycle.status = "cancelled"
-            tx.status = "cancelled"
-            return False
-        tx.provider_reference = payment_id
-        tx.status = _remote_payment_status(payment.get("status"))
-        tx.last_synced_at = datetime.now(UTC)
-        cycle.status = "payment_pending"
-    await _process_payment_payload(await _get_payment(payment_id))
-    return True
-
-
 async def _sync_receipts(organization_id: UUID | None = None) -> int:
     async with SessionLocal() as session:
         statement = select(BillingInvoice.id).where(
@@ -1537,118 +1338,20 @@ async def _sync_receipts(organization_id: UUID | None = None) -> int:
                         await _apply_invoice_payload(update_session, locked, remote)
                 processed += 1
                 continue
-            if details.get("kind") in {"initial_receipt", "renewal_receipt"}:
-                await _ensure_receipt(invoice_id)
-                processed += 1
-            elif details.get("kind") == "renewal":
-                # Pre-v2 unbound renewal invoices could have been charge-producing.
-                # Never re-issue them blindly after the architecture upgrade.
-                raise MollieBillingConflict("Legacy renewal invoice requires reconciliation")
+            if details.get("kind") not in {"initial_receipt", "renewal_receipt"}:
+                raise MollieBillingVerificationError("Billing invoice kind is invalid")
+            await _ensure_receipt(invoice_id)
+            processed += 1
     return processed
-
-
-async def _reconcile_legacy_subscription(organization_id: UUID, customer_id: str, subscription_id: str) -> None:
-    subscription = await _request_json("GET", f"customers/{customer_id}/subscriptions/{subscription_id}")
-    payments_payload = await _request_json(
-        "GET", f"customers/{customer_id}/subscriptions/{subscription_id}/payments",
-        params={"limit": 10, "sort": "desc"},
-    )
-    payments = _embedded_rows(payments_payload, ("payments",))
-    if payments:
-        await _process_legacy_payment_payload(payments[0])
-        return
-    async with SessionLocal.begin() as session:
-        row = await _mollie_row(session, organization_id, lock=True)
-        if row is None:
-            return
-        remote_status = str(subscription.get("status", ""))
-        row.status = {"active": "active", "pending": "pending", "canceled": "cancelled", "completed": "expired", "suspended": "on_hold"}.get(remote_status, "on_hold")
-        row.auto_renew = remote_status == "active"
-        data = _verification_data(row)
-        data["subscription_status"] = remote_status
-        row.verification_data_encrypted = encrypt_config(data)
-        row.last_verified_at = datetime.now(UTC)
-
-
-async def sync_subscription(_session: AsyncSession, organization_id: UUID) -> None:
-    _require_configured()
-    async with SessionLocal() as session:
-        row = await _mollie_row(session, organization_id)
-        if row is None:
-            return
-        data = _verification_data(row)
-        legacy_customer = data.get("mollie_customer_id")
-        legacy_subscription = data.get("subscription_id")
-        tx_ids = (
-            await session.execute(
-                select(BillingPaymentTransaction.id)
-                .where(
-                    BillingPaymentTransaction.organization_id == organization_id,
-                    BillingPaymentTransaction.provider == MOLLIE_PROVIDER,
-                    BillingPaymentTransaction.status.in_(["reserved", "open", "pending"]),
-                )
-                .order_by(BillingPaymentTransaction.created_at)
-            )
-        ).scalars().all()
-    if isinstance(legacy_customer, str) and isinstance(legacy_subscription, str):
-        await _reconcile_legacy_subscription(organization_id, legacy_customer, legacy_subscription)
-        return
-    for tx_id in tx_ids:
-        async with SessionLocal() as session:
-            tx = await session.get(BillingPaymentTransaction, tx_id)
-            if tx is None:
-                continue
-            cycle = await session.get(BillingCycle, tx.cycle_id)
-            row = await _mollie_row(session, organization_id)
-            if cycle is None or row is None:
-                continue
-            data = _verification_data(row)
-            customer_id = data.get("mollie_customer_id")
-            if not isinstance(customer_id, str):
-                continue
-            if tx.provider_reference:
-                payment = await _get_payment(tx.provider_reference)
-            else:
-                payment = await _find_remote_payment(tx, cycle, customer_id)
-            if payment is not None:
-                await _process_payment_payload(payment)
-    await _sync_receipts(organization_id)
-    await _execute_due_renewal(organization_id)
-
-
-async def run_billing_cycle(_session: AsyncSession) -> dict[str, int]:
-    if not billing_configured():
-        return {"invoices_synced": 0, "renewals_created": 0}
-    invoices_synced = await _sync_receipts()
-    async with SessionLocal() as session:
-        ids = (
-            await session.execute(
-                select(StoreSubscription.organization_id).where(
-                    StoreSubscription.provider == MOLLIE_PROVIDER,
-                    StoreSubscription.auto_renew.is_(True),
-                    StoreSubscription.status.in_(["active", "grace_period", "expired"]),
-                ).order_by(StoreSubscription.expires_at).limit(100)
-            )
-        ).scalars().all()
-    renewals = 0
-    for organization_id in ids:
-        if await _execute_due_renewal(organization_id):
-            renewals += 1
-    return {"invoices_synced": invoices_synced, "renewals_created": renewals}
 
 
 async def cancel_subscription(_session: AsyncSession, organization_id: UUID) -> None:
     _require_configured()
-    legacy_customer: str | None = None
-    legacy_subscription: str | None = None
     async with SessionLocal.begin() as session:
         row = await _mollie_row(session, organization_id, lock=True)
         if row is None:
             raise MollieBillingConflict("No Mollie subscription exists")
         data = _verification_data(row)
-        if isinstance(data.get("mollie_customer_id"), str) and isinstance(data.get("subscription_id"), str):
-            legacy_customer = data["mollie_customer_id"]
-            legacy_subscription = data["subscription_id"]
         now = datetime.now(UTC)
         paid_through = _parse_datetime(data.get("paid_through")) or row.expires_at
         row.auto_renew = False
@@ -1679,13 +1382,3 @@ async def cancel_subscription(_session: AsyncSession, organization_id: UUID) -> 
             if tx is not None and tx.provider_reference is None:
                 tx.status = "cancelled"
                 cycle.status = "cancelled"
-
-    if legacy_customer and legacy_subscription:
-        await _request_json("DELETE", f"customers/{legacy_customer}/subscriptions/{legacy_subscription}")
-        async with SessionLocal.begin() as session:
-            row = await _mollie_row(session, organization_id, lock=True)
-            if row is not None:
-                data = _verification_data(row)
-                data.pop("subscription_id", None)
-                data.pop("subscription_status", None)
-                row.verification_data_encrypted = encrypt_config(data)
