@@ -16,7 +16,7 @@ export interface CollectionSummary {
   send_at?: string | null; due_at?: string | null; status: string; participant_count: number;
   paid_count: number; paid_amount: string | number; communication_channel: CollectionChannel; communication_mode: string;
   channel_order: CommunicationChannel[];
-  message_template_id?: string | null; message_body_override?: string | null; reminder_rules: ReminderRule[];
+  message_template_id?: string | null; reminder_rules: ReminderRule[];
   include_payment_link: boolean; include_payment_qr: boolean;
 }
 export interface CollectionParticipant {
@@ -68,4 +68,3 @@ export interface PlatformAdminSummary { customers:number; free_customers:number;
 export interface PlatformCustomer { organization_id:string; organization_name:string; created_at:string; locale:string; currency:string; api_enabled:boolean; plan:"free"|"pro"; billing_provider?:string|null; subscription_status?:string|null; subscription_expires_at?:string|null; user_count:number; active_user_count:number; primary_email?:string|null; last_login_at?:string|null; participant_lists:number; participants:number; collections:number; }
 export interface PlatformCustomerUser { id:string; email:string; display_name:string; is_active:boolean; email_verified:boolean; created_at:string; last_login_at?:string|null; }
 export interface PlatformSubscription { id:string; provider:string; product_id:string; status:string; external_reference?:string|null; purchased_at?:string|null; expires_at?:string|null; cancelled_at?:string|null; auto_renew?:boolean|null; environment?:string|null; last_verified_at?:string|null; created_at:string; updated_at:string; }
-export interface PlatformCustomerDetail extends PlatformCustomer { users:PlatformCustomerUser[]; subscriptions:PlatformSubscription[]; }
