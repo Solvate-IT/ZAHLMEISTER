@@ -44,7 +44,7 @@ def test_collection_create_accepts_localized_overrides() -> None:
 @pytest.mark.asyncio
 async def test_localized_override_uses_participant_language() -> None:
     collection = SimpleNamespace(
-        message_body_override=serialize_collection_message_overrides(
+        message_overrides_json=serialize_collection_message_overrides(
             {"de": "Hallo {{contact}}", "fr": "Bonjour {{contact}}"}
         ),
         message_template_id=None,
@@ -82,7 +82,7 @@ async def test_localized_override_uses_participant_language() -> None:
 @pytest.mark.asyncio
 async def test_localized_override_rejects_missing_participant_language() -> None:
     collection = SimpleNamespace(
-        message_body_override=serialize_collection_message_overrides(
+        message_overrides_json=serialize_collection_message_overrides(
             {"de": "Hallo {{contact}}"}
         ),
         message_template_id=None,
