@@ -39,33 +39,6 @@ def _restore_variables(body: str, replacements: dict[str, str]) -> str:
     return result
 
 
-async def detect_language(body: str) -> str:
-    validate_template_body(body)
-    if not configured():
-        raise ValueError("Automatic translation is not configured")
-    text = _TOKEN_RE.sub(" ", body).strip()
-    if not text:
-        raise ValueError("Template has no text that can be used for language detection")
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(
-                settings.google_translate_api_url.rstrip("/") + "/detect",
-                params={"key": settings.google_translate_api_key},
-                json={"q": text},
-            )
-        response.raise_for_status()
-        data = response.json()
-    except (httpx.HTTPError, ValueError) as exc:
-        raise RuntimeError("Automatic language detection failed") from exc
-    detections = data.get("data", {}).get("detections", [])
-    first_group = detections[0] if detections and isinstance(detections[0], list) else []
-    first = first_group[0] if first_group and isinstance(first_group[0], dict) else {}
-    detected = str(first.get("language") or "").split("-", 1)[0].lower()
-    if detected not in SUPPORTED_LANGUAGES:
-        raise ValueError("Detected source language is not supported by Zahlmeister")
-    return detected
-
-
 async def translate_text(
     body: str,
     *,
@@ -134,24 +107,6 @@ async def _translate_languages(
             return language, translated
 
     return dict(await asyncio.gather(*(translate_one(language) for language in targets)))
-
-
-async def translate_missing(
-    source_text: str,
-    *,
-    source_language: str | None,
-    existing: dict[str, str],
-) -> dict[str, str]:
-    result = dict(existing)
-    missing = [language for language in SUPPORTED_LANGUAGES if language not in result]
-    result.update(
-        await _translate_languages(
-            source_text,
-            source_language=source_language,
-            target_languages=missing,
-        )
-    )
-    return result
 
 
 async def translate_other_languages(
