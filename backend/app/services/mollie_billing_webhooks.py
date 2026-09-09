@@ -25,17 +25,31 @@ class MollieBillingWebhookError(RuntimeError):
     pass
 
 
-def verify_sales_invoice_signature(raw_body: bytes, signature: str | None) -> None:
+def _normalized_signatures(signatures: str | list[str] | tuple[str, ...] | None) -> list[str]:
+    if signatures is None:
+        return []
+    values = [signatures] if isinstance(signatures, str) else list(signatures)
+    normalized: list[str] = []
+    for value in values:
+        for candidate in value.split(","):
+            supplied = candidate.strip().removeprefix("sha256=").strip().lower()
+            if len(supplied) == 64 and all(character in "0123456789abcdef" for character in supplied):
+                normalized.append(supplied)
+    return normalized
+
+
+def verify_sales_invoice_signature(
+    raw_body: bytes,
+    signatures: str | list[str] | tuple[str, ...] | None,
+) -> None:
     secret = settings.mollie_billing_webhook_secret.strip()
     if not secret:
         raise MollieBillingWebhookError("Mollie billing webhook secret is not configured")
-    if not signature:
-        raise MollieBillingWebhookError("Mollie billing webhook signature is missing")
-    supplied = signature.removeprefix("sha256=").strip().lower()
-    if len(supplied) != 64 or any(character not in "0123456789abcdef" for character in supplied):
-        raise MollieBillingWebhookError("Mollie billing webhook signature is invalid")
+    supplied = _normalized_signatures(signatures)
+    if not supplied:
+        raise MollieBillingWebhookError("Mollie billing webhook signature is missing or invalid")
     expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, supplied):
+    if not any(hmac.compare_digest(expected, candidate) for candidate in supplied):
         raise MollieBillingWebhookError("Mollie billing webhook signature is invalid")
 
 
@@ -95,9 +109,9 @@ async def _recover_unbound_invoice(
 async def process_sales_invoice_webhook(
     session: AsyncSession,
     raw_body: bytes,
-    signature: str | None,
+    signatures: str | list[str] | tuple[str, ...] | None,
 ) -> UUID | None:
-    verify_sales_invoice_signature(raw_body, signature)
+    verify_sales_invoice_signature(raw_body, signatures)
     try:
         payload = json.loads(raw_body)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
