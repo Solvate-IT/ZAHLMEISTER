@@ -104,7 +104,7 @@ async def render_collection_message(
     ) or organization.locale
 
     template_body: str | None = None
-    override_translations = deserialize_collection_message_overrides(collection.message_body_override)
+    override_translations = deserialize_collection_message_overrides(collection.message_overrides_json)
     if override_translations:
         requested_language = normalize_language(requested_locale)
         template_body = override_translations.get(requested_language)
