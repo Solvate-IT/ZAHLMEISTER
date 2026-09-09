@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -13,9 +12,7 @@ from app.models.platform import StoreSubscription
 from app.services import mollie_billing_core as core
 from app.services.billing_tax import BillingTaxValidationUnavailable
 
-RENEWAL_RETRY_INTERVAL = timedelta(
-    hours=max(1, int(os.getenv("MOLLIE_BILLING_RETRY_INTERVAL_HOURS", "24")))
-)
+RENEWAL_RETRY_INTERVAL = timedelta(hours=24)
 
 
 async def _apply_validation_grace(organization_id: UUID) -> None:
