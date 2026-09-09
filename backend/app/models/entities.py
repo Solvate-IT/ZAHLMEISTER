@@ -56,7 +56,7 @@ class ApiCredential(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
-    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     token_prefix: Mapped[str] = mapped_column(String(20), nullable=False)
     scopes_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -91,7 +91,9 @@ class ParticipantList(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
 
-    __table_args__ = (Index("ix_participant_lists_org_name", "organization_id", "name"),)
+    __table_args__ = (
+        UniqueConstraint("organization_id", "name", name="uq_participant_lists_org_name"),
+    )
 
 
 class Participant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -152,7 +154,6 @@ class CommunicationChannelSetting(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     __table_args__ = (
         UniqueConstraint("organization_id", "channel", name="uq_comm_channel_org_channel"),
-        Index("ix_comm_channel_settings_org", "organization_id"),
         Index("ix_comm_channel_settings_connection", "connection_id"),
     )
 
@@ -168,8 +169,7 @@ class MessageTemplate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (
-        Index("ix_message_templates_org", "organization_id"),
-        Index("ix_message_templates_org_name", "organization_id", "name"),
+        UniqueConstraint("organization_id", "name", name="uq_message_templates_org_name"),
         Index(
             "uq_message_templates_org_default",
             "organization_id",
@@ -199,12 +199,14 @@ class Collection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     message_template_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("message_templates.id", ondelete="SET NULL")
     )
-    message_body_override: Mapped[str | None] = mapped_column(Text)
+    message_overrides_json: Mapped[str | None] = mapped_column(Text)
     reminder_rules_json: Mapped[str] = mapped_column(Text, nullable=False, default='[{"type":"after_send","days":5}]')
     message_include_payment_link: Mapped[bool | None] = mapped_column(Boolean)
     message_include_payment_qr: Mapped[bool | None] = mapped_column(Boolean)
 
     __table_args__ = (
+        UniqueConstraint("organization_id", "name", name="uq_collections_org_name"),
+        CheckConstraint("amount > 0", name="ck_collections_amount_positive"),
         CheckConstraint(
             "communication_channel IN ('auto','email','whatsapp','sms','telegram')",
             name="ck_collections_communication_channel",
@@ -236,6 +238,10 @@ class CollectionParticipant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     reminder_count: Mapped[int] = mapped_column(nullable=False, default=0)
 
     __table_args__ = (
+        UniqueConstraint(
+            "collection_id", "participant_id", name="uq_collection_participant_identity"
+        ),
+        CheckConstraint("reminder_count >= 0", name="ck_collection_participant_reminder_count"),
         Index("ix_collection_participants_collection_status", "collection_id", "status"),
     )
 
@@ -275,7 +281,6 @@ class OnlinePaymentConnection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UniqueConstraint(
             "organization_id", "provider", name="uq_online_payment_connection_org_provider"
         ),
-        Index("ix_online_payment_connections_org_provider", "organization_id", "provider"),
     )
 
 
@@ -372,7 +377,6 @@ class BankSyncConnection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     __table_args__ = (
         UniqueConstraint("organization_id", "provider", name="uq_bank_sync_connection_org_provider"),
-        Index("ix_bank_sync_connections_org_provider", "organization_id", "provider"),
     )
 
 
