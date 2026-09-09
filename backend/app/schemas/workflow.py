@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.services.participant_preferences import normalize_participant_locale
+from app.services.templates import normalize_language, validate_template_body
 
 
 class ParticipantListCreate(BaseModel):
@@ -99,6 +100,7 @@ class CollectionCreate(BaseModel):
     communication_channel: CollectionChannel = "auto"
     message_template_id: UUID | None = None
     message_body_override: str | None = Field(default=None, max_length=10000)
+    message_body_overrides: dict[str, str] | None = None
     reminder_rules: list[ReminderRule] | None = None
     include_payment_link: bool | None = None
     include_payment_qr: bool | None = None
@@ -107,6 +109,27 @@ class CollectionCreate(BaseModel):
     @classmethod
     def normalize_currency(cls, value: str | None) -> str | None:
         return value.upper() if value else value
+
+    @field_validator("message_body_overrides")
+    @classmethod
+    def validate_message_body_overrides(
+        cls, value: dict[str, str] | None
+    ) -> dict[str, str] | None:
+        if value is None:
+            return None
+        result: dict[str, str] = {}
+        for language, text in value.items():
+            normalized_language = normalize_language(language, fallback="")
+            if not normalized_language:
+                raise ValueError(f"Unsupported language: {language}")
+            body = text.strip()
+            if not body:
+                raise ValueError("Collection message text must not be empty")
+            if len(body) > 10000:
+                raise ValueError("Collection message text is too long")
+            validate_template_body(body)
+            result[normalized_language] = body
+        return result or None
 
 
 class CollectionUpdate(BaseModel):
