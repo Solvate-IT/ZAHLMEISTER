@@ -4,7 +4,6 @@ from app.services.templates import (
     SUPPORTED_LANGUAGES,
     default_template_body,
     default_template_translations,
-    legacy_default_template_body,
     message_values,
     normalize_translations,
     render_template,
@@ -28,16 +27,10 @@ def test_german_default_template_uses_requested_signoff() -> None:
     assert default_template_body("de").endswith("Mit freundlichen Grüßen\n{{name}}")
 
 
-def test_legacy_default_template_is_upgraded_without_touching_custom_text() -> None:
-    upgraded = normalize_translations({"de": legacy_default_template_body("de")})
-    assert upgraded["de"] == default_template_body("de")
-    custom = normalize_translations({"de": "Eigener Text {{name}}"})
-    assert custom["de"] == "Eigener Text {{name}}"
-
-
-def test_legacy_first_name_in_stored_template_becomes_contact() -> None:
-    normalized = normalize_translations({"de": "Hallo {{first_name}}"})
-    assert normalized["de"] == "Hallo {{contact}}"
+def test_translation_normalization_only_normalizes_language_keys_and_whitespace() -> None:
+    assert normalize_translations({"de-AT": "  Eigener Text {{name}}  "}) == {
+        "de": "Eigener Text {{name}}"
+    }
 
 
 def test_template_variables_render_with_account_contact_and_organisation() -> None:
@@ -59,9 +52,14 @@ def test_template_variables_render_with_account_contact_and_organisation() -> No
     assert rendered == "Hallo Anna Muster, 12.00 EUR / Ausflug / Schulverein Muster / Max Mustermann"
 
 
-def test_first_name_is_no_longer_a_valid_template_variable() -> None:
+def test_first_name_is_not_a_valid_template_variable() -> None:
     with pytest.raises(ValueError, match="Unknown template variables"):
         validate_template_body("Hallo {{first_name}}")
+
+
+def test_render_rejects_obsolete_template_variables() -> None:
+    with pytest.raises(ValueError, match="Unknown template variables"):
+        render_template("Hallo {{first_name}}", {"contact": "Anna Muster"})
 
 
 def test_unknown_template_variable_is_rejected() -> None:
