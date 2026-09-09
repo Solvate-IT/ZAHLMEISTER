@@ -162,6 +162,16 @@ class CollectionDetail(CollectionRead):
     participants: list[CollectionParticipantRead]
 
 
+class ParticipantOpenBalanceRead(BaseModel):
+    participant_id: UUID
+    name: str
+    email: str | None = None
+    phone: str | None = None
+    open_amount: Decimal
+    currency: str
+    collection_count: int
+
+
 class PaymentStatusUpdate(BaseModel):
     paid: bool
 
