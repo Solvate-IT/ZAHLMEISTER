@@ -7,6 +7,7 @@ from sqlalchemy import func, select, text
 from app.core.config import settings
 from app.db.session import SessionLocal, engine
 from app.models.entities import RuntimeHeartbeat, ScheduledJob
+from app.services.mollie_billing import billing_readiness_errors
 
 router = APIRouter(tags=["system"])
 
@@ -39,6 +40,11 @@ async def ready() -> dict[str, str]:
     security_errors = settings.production_security_errors()
     if security_errors:
         raise HTTPException(status_code=503, detail="production configuration is unsafe")
+
+    if settings.mollie_billing_configured:
+        billing_errors = billing_readiness_errors()
+        if billing_errors:
+            raise HTTPException(status_code=503, detail="billing configuration is incomplete")
 
     if settings.readiness_require_worker:
         worker_status, _ = await _worker_state()
