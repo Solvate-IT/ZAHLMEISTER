@@ -1,0 +1,33 @@
+name: Generate npm lockfiles
+
+on:
+  push:
+    branches: [development]
+    paths:
+      - .github/workflows/generate-lockfiles.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Generate frontend lockfile
+        working-directory: frontend
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Generate mobile lockfile
+        working-directory: mobile
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Bundle lockfiles
+        run: tar -czf lockfiles.tgz frontend/package-lock.json mobile/package-lock.json
+      - name: Upload lockfiles
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: npm-lockfiles
+          path: lockfiles.tgz
+          retention-days: 1
