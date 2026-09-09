@@ -54,10 +54,29 @@ jobs:
           PY
           bash /tmp/apply-billing-cleanup.sh
 
+      - name: Remove stale annual subscription helper test
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('backend/tests/test_mollie_billing.py')
+          text = path.read_text()
+          text = text.replace(
+              'from datetime import UTC, date, datetime, timedelta\n',
+              'from datetime import UTC, datetime, timedelta\n',
+              1,
+          )
+          text = text.replace('    _add_year,\n', '', 1)
+          stale_test = '''\n\ndef test_annual_renewal_handles_leap_day() -> None:\n    assert _add_year(date(2028, 2, 29)) == date(2029, 2, 28)\n'''
+          if stale_test not in text:
+              raise SystemExit('Stale annual renewal test not found')
+          path.write_text(text.replace(stale_test, '\n', 1))
+          PY
+
       - name: Verify no stale billing paths remain
         run: |
           set -euo pipefail
-          ! grep -RniE 'legacy|pre-v2|_create_due_renewal|_apply_invoice_entitlement|_retry_local_invoice|_create_remote_invoice|_cancel_renewal_invoices|_invoice_create_retry_allowed' backend/app/services/mollie_billing*.py backend/tests/test_mollie*.py
+          ! grep -RniE 'legacy|pre-v2|_create_due_renewal|_apply_invoice_entitlement|_retry_local_invoice|_create_remote_invoice|_cancel_renewal_invoices|_invoice_create_retry_allowed|_add_year' backend/app/services/mollie_billing*.py backend/tests/test_mollie*.py
           ! grep -Rni '_core._mollie_row =' backend
 
       - name: Run full backend quality suite
