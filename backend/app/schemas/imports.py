@@ -51,4 +51,5 @@ class ImportCommitRequest(BaseModel):
 
 class ImportCommitResponse(BaseModel):
     imported_count: int
+    updated_count: int = 0
     skipped_count: int = 0
