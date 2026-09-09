@@ -2,6 +2,7 @@ import json
 from dataclasses import dataclass
 from decimal import Decimal
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -12,6 +13,7 @@ from app.models.entities import (
     MessageTemplate,
     Organization,
     Participant,
+    User,
 )
 from app.services.participant_preferences import get_participant_locale
 from app.services.payments import epc_qr_payload, public_payment_qr_url, public_payment_url
@@ -68,6 +70,18 @@ def _message_options(collection: Collection, organization: Organization) -> tupl
     return bool(include_link), bool(include_qr)
 
 
+async def _account_display_name(session: AsyncSession | None, organization: Organization) -> str:
+    if session is None:
+        return organization.name
+    display_name = await session.scalar(
+        select(User.display_name)
+        .where(User.organization_id == organization.id, User.is_active.is_(True))
+        .order_by(User.created_at.asc(), User.id.asc())
+        .limit(1)
+    )
+    return str(display_name or organization.name)
+
+
 async def render_collection_message(
     session: AsyncSession | None,
     *,
@@ -110,7 +124,9 @@ async def render_collection_message(
         settings.public_app_url, collection_participant.public_token
     )
     values = message_values(
+        sender_name=await _account_display_name(session, organization),
         participant_name=participant.name,
+        organization_name=organization.name,
         collection_name=collection.name,
         amount=f"{Decimal(collection.amount):.2f}",
         currency=collection.currency,
