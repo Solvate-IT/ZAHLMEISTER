@@ -1,0 +1,76 @@
+name: Run billing cleanup
+
+on:
+  push:
+    branches: [development]
+    paths:
+      - .github/workflows/run-billing-cleanup.yml
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Apply existing payment-first cleanup
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path('.github/workflows/billing-cleanup.yml').read_text().splitlines()
+          marker = '      - name: Apply payment-first billing cleanup'
+          try:
+              start = source.index(marker)
+          except ValueError as exc:
+              raise SystemExit('Billing cleanup step not found') from exc
+          run_index = next(
+              index for index in range(start + 1, len(source))
+              if source[index] == '        run: |'
+          )
+          end = next(
+              (
+                  index for index in range(run_index + 1, len(source))
+                  if source[index].startswith('      - name: ')
+              ),
+              len(source),
+          )
+          body = []
+          for line in source[run_index + 1:end]:
+              if line.startswith('          '):
+                  body.append(line[10:])
+              elif not line.strip():
+                  body.append('')
+              else:
+                  raise SystemExit(f'Unexpected indentation in billing cleanup: {line!r}')
+          script = Path('/tmp/apply-billing-cleanup.sh')
+          script.write_text('\n'.join(body) + '\n')
+          PY
+          bash /tmp/apply-billing-cleanup.sh
+
+      - name: Verify no stale billing paths remain
+        run: |
+          set -euo pipefail
+          ! grep -RniE 'legacy|pre-v2|_create_due_renewal|_apply_invoice_entitlement|_retry_local_invoice|_create_remote_invoice|_cancel_renewal_invoices|_invoice_create_retry_allowed' backend/app/services/mollie_billing*.py backend/tests/test_mollie*.py
+          ! grep -Rni '_core._mollie_row =' backend
+
+      - name: Run full backend quality suite
+        run: |
+          docker build --target test -f docker/backend.Dockerfile -t zahlmeister-billing-cleanup-test .
+          docker run --rm -e ENVIRONMENT=test -e READINESS_REQUIRE_WORKER=false zahlmeister-billing-cleanup-test sh -c 'ruff check app tests && pytest -q'
+
+      - name: Commit tested cleanup
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -u backend
+          git rm .github/workflows/billing-cleanup.yml .github/workflows/run-billing-cleanup.yml
+          git commit -m "Remove legacy Mollie billing paths"
+          git push origin HEAD:development
