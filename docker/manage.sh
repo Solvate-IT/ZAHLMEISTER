@@ -7,6 +7,30 @@ MODE="development"
 ENV_FILE="$SCRIPT_DIR/.env"
 COMPOSE_FILE="$SCRIPT_DIR/compose.yml"
 
+check_env_keys() {
+  local example_file="$1"
+  local env_file="$2"
+  local label="$3"
+  local line key
+  local -a missing=()
+
+  [[ -f "$example_file" && -f "$env_file" ]] || return 0
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
+    key="${line%%=*}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    grep -qE "^${key}=" "$env_file" || missing+=("$key")
+  done < "$example_file"
+
+  if (( ${#missing[@]} > 0 )); then
+    echo "WARNING: $label environment is missing variables from $(basename "$example_file"):" >&2
+    printf '  - %s\n' "${missing[@]}" >&2
+    echo "Add the missing variables to $env_file. Existing values are never changed automatically." >&2
+    echo >&2
+  fi
+}
+
 if [[ "${1:-}" == "--production" ]]; then
   MODE="production"
   ENV_FILE="${ZM_ENV_FILE:-$SCRIPT_DIR/.env.production}"
@@ -16,8 +40,11 @@ if [[ "${1:-}" == "--production" ]]; then
     echo "Copy .env.production.example to .env.production and configure it first." >&2
     exit 1
   }
+  check_env_keys "$SCRIPT_DIR/.env.production.example" "$ENV_FILE" "production"
 elif [[ ! -f "$ENV_FILE" ]]; then
   cp "$SCRIPT_DIR/.env.example" "$ENV_FILE"
+else
+  check_env_keys "$SCRIPT_DIR/.env.example" "$ENV_FILE" "development"
 fi
 
 export ZM_ENV_FILE="$ENV_FILE"
