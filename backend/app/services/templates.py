@@ -13,9 +13,9 @@ SUPPORTED_LANGUAGES = (
 )
 
 DEFAULT_TEMPLATE_NAME_MSGID = "Payment request"
-# Keep the historical gettext msgid so existing compiled translations remain usable.
-# The obsolete first_name token is converted to contact after translation.
-DEFAULT_TEMPLATE_BODY_MSGID = (
+# Stable gettext catalog key. Compiled catalogs use this msgid; the placeholder is
+# converted immediately when reading the catalog and is never accepted in stored data.
+_DEFAULT_TEMPLATE_BODY_CATALOG_MSGID = (
     "Hello {{first_name}},\n\n"
     "Please pay {{amount}} for {{collection_name}}.\n\n"
     "Pay here: {{payment_link}}\n"
@@ -61,7 +61,7 @@ TEMPLATE_VARIABLES = (
 
 _LOCALE_DIR = Path(__file__).resolve().parents[2] / "locales"
 _TOKEN_RE = re.compile(r"{{\s*([a-z_]+)\s*}}")
-_LEGACY_FIRST_NAME_RE = re.compile(r"{{\s*first_name\s*}}")
+_CATALOG_CONTACT_RE = re.compile(r"{{\s*first_name\s*}}")
 
 
 def normalize_language(value: str | None, *, fallback: str = "en") -> str:
@@ -82,27 +82,14 @@ def default_template_name(language: str = "en") -> str:
     return _translation(normalize_language(language)).gettext(DEFAULT_TEMPLATE_NAME_MSGID)
 
 
-def legacy_default_template_body(language: str = "en") -> str:
-    normalized = normalize_language(language)
-    return _translation(normalized).gettext(DEFAULT_TEMPLATE_BODY_MSGID)
-
-
-def _replace_legacy_first_name(body: str) -> str:
-    return _LEGACY_FIRST_NAME_RE.sub("{{contact}}", body)
-
-
-def previous_default_template_body(language: str = "en") -> str:
-    normalized = normalize_language(language)
-    return (
-        f"{legacy_default_template_body(normalized)}\n\n"
-        f"{DEFAULT_TEMPLATE_SIGNOFFS.get(normalized, DEFAULT_TEMPLATE_SIGNOFFS['en'])}\n"
-        "{{name}}"
-    )
+def _catalog_default_template_body(language: str) -> str:
+    translated = _translation(language).gettext(_DEFAULT_TEMPLATE_BODY_CATALOG_MSGID)
+    return _CATALOG_CONTACT_RE.sub("{{contact}}", translated)
 
 
 def default_template_body(language: str = "en") -> str:
     normalized = normalize_language(language)
-    translated_body = _replace_legacy_first_name(legacy_default_template_body(normalized))
+    translated_body = _catalog_default_template_body(normalized)
     return (
         f"{translated_body}\n\n"
         f"{DEFAULT_TEMPLATE_SIGNOFFS.get(normalized, DEFAULT_TEMPLATE_SIGNOFFS['en'])}\n"
@@ -126,15 +113,7 @@ def normalize_translations(value: str | dict[str, str]) -> dict[str, str]:
     for key, text in raw.items():
         language = str(key).split("-", 1)[0].lower()
         if language in SUPPORTED_LANGUAGES and isinstance(text, str) and text.strip():
-            normalized_text = text.strip()
-            if normalized_text in {
-                legacy_default_template_body(language).strip(),
-                previous_default_template_body(language).strip(),
-            }:
-                normalized_text = default_template_body(language)
-            else:
-                normalized_text = _replace_legacy_first_name(normalized_text)
-            result[language] = normalized_text
+            result[language] = text.strip()
     return result
 
 
@@ -175,9 +154,6 @@ def validate_same_template_variables(source: str, translated: str) -> None:
 
 
 def render_template(body: str, values: dict[str, Any]) -> str:
-    # Stored collection overrides may predate the removal of first_name. They render
-    # as the full contact name but new/edited templates no longer accept that token.
-    body = _replace_legacy_first_name(body)
     validate_template_body(body)
 
     def replace(match: re.Match[str]) -> str:
