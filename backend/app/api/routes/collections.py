@@ -30,6 +30,7 @@ from app.schemas.workflow import (
     CollectionParticipantRead,
     CollectionRead,
     CollectionUpdate,
+    ParticipantOpenBalanceRead,
     PaymentStatusUpdate,
     QueueActionResult,
 )
@@ -246,6 +247,55 @@ async def list_collections(
     ]
 
 
+@router.get("/open-balances", response_model=list[ParticipantOpenBalanceRead])
+async def list_open_balances(
+    organization: Organization = Depends(get_organization),
+    session: AsyncSession = Depends(get_session),
+) -> list[ParticipantOpenBalanceRead]:
+    amount_expr = func.sum(Collection.amount)
+    count_expr = func.count(CollectionParticipant.id)
+    rows = (
+        await session.execute(
+            select(
+                Participant.id,
+                Participant.name,
+                Participant.email,
+                Participant.phone,
+                Collection.currency,
+                amount_expr.label("open_amount"),
+                count_expr.label("collection_count"),
+            )
+            .join(CollectionParticipant, CollectionParticipant.participant_id == Participant.id)
+            .join(Collection, Collection.id == CollectionParticipant.collection_id)
+            .where(
+                Collection.organization_id == organization.id,
+                CollectionParticipant.status != "paid",
+            )
+            .group_by(
+                Participant.id,
+                Participant.name,
+                Participant.email,
+                Participant.phone,
+                Collection.currency,
+            )
+            .having(amount_expr > 0)
+            .order_by(amount_expr.desc(), Participant.name.asc())
+        )
+    ).all()
+    return [
+        ParticipantOpenBalanceRead(
+            participant_id=participant_id,
+            name=name,
+            email=email,
+            phone=phone,
+            currency=currency,
+            open_amount=open_amount,
+            collection_count=collection_count,
+        )
+        for participant_id, name, email, phone, currency, open_amount, collection_count in rows
+    ]
+
+
 @router.post("", response_model=CollectionRead, status_code=status.HTTP_201_CREATED)
 async def create_collection(
     payload: CollectionCreate,
@@ -418,51 +468,37 @@ async def get_collection(
                     CommunicationMessage.channel,
                     CommunicationMessage.created_at,
                 )
-                .where(
-                    CommunicationMessage.collection_participant_id.in_(cp_ids),
-                    CommunicationMessage.status != "draft",
-                )
+                .where(CommunicationMessage.collection_participant_id.in_(cp_ids))
                 .order_by(CommunicationMessage.created_at.desc())
             )
         ).all()
-        for cp_id, message_status, message_channel, _created_at in message_rows:
-            if cp_id not in delivery_statuses:
-                delivery_statuses[cp_id] = message_status
-                delivery_channels[cp_id] = message_channel
-        count_rows = (
-            await session.execute(
-                select(
-                    CommunicationMessage.collection_participant_id,
-                    func.count(CommunicationMessage.id),
-                )
-                .where(
-                    CommunicationMessage.collection_participant_id.in_(cp_ids),
-                    CommunicationMessage.status != "draft",
-                )
-                .group_by(CommunicationMessage.collection_participant_id)
-            )
-        ).all()
-        communication_counts = {cp_id: int(count) for cp_id, count in count_rows}
+        for cp_id, message_status, channel, _created_at in message_rows:
+            communication_counts[cp_id] = communication_counts.get(cp_id, 0) + 1
+            delivery_statuses.setdefault(cp_id, message_status)
+            delivery_channels.setdefault(cp_id, channel)
 
-    _include_link, include_qr = _effective_message_options(item, organization)
-    participants = [
-        _participant_read(
-            cp=cp,
-            participant=participant,
-            payment_method=payment_methods.get(cp.id),
-            delivery_status=delivery_statuses.get(cp.id),
-            delivery_channel=delivery_channels.get(cp.id),
-            communication_count=communication_counts.get(cp.id, 0),
-            payment_qr_url=_payment_qr_url_if_available(
-                organization=organization, collection=item, cp=cp, enabled=include_qr
-            ),
-        )
-        for cp, participant in rows
-    ]
-    paid_count = sum(1 for participant in participants if participant.status == "paid")
     channel_order = await get_channel_order(session, organization.id)
-    base = _summary(item, len(participants), paid_count, organization, channel_order)
-    return CollectionDetail(**base.model_dump(), participants=participants)
+    include_link, include_qr = _effective_message_options(item, organization)
+    return CollectionDetail(
+        **_summary(item, len(rows), sum(cp.status == "paid" for cp, _participant in rows), organization, channel_order).model_dump(),
+        participants=[
+            _participant_read(
+                cp=cp,
+                participant=participant,
+                payment_method=payment_methods.get(cp.id),
+                delivery_status=delivery_statuses.get(cp.id),
+                delivery_channel=delivery_channels.get(cp.id),
+                communication_count=communication_counts.get(cp.id, 0),
+                payment_qr_url=_payment_qr_url_if_available(
+                    organization=organization,
+                    collection=item,
+                    cp=cp,
+                    enabled=include_qr,
+                ),
+            )
+            for cp, participant in rows
+        ],
+    )
 
 
 @router.patch("/{collection_id}", response_model=CollectionRead)
@@ -475,23 +511,30 @@ async def update_collection(
         stored_org = await session.get(Organization, organization.id)
         assert stored_org is not None
         item = await _owned_collection(session, stored_org, collection_id, for_update=True)
-        if "name" in payload.model_fields_set:
+        if payload.name is not None:
             item.name = await unique_collection_name(
                 session, stored_org, payload.name, exclude_id=item.id
             )
-        if "due_at" in payload.model_fields_set:
+        if payload.due_at is not None:
+            if item.send_at is not None and payload.due_at.date() < item.send_at.date():
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Due date must not be before the send date",
+                )
             item.due_at = payload.due_at
-        if "include_payment_link" in payload.model_fields_set:
+        if payload.include_payment_link is not None:
             item.message_include_payment_link = payload.include_payment_link
-        if "include_payment_qr" in payload.model_fields_set:
+        if payload.include_payment_qr is not None:
             item.message_include_payment_qr = payload.include_payment_qr
         include_link, include_qr = _effective_message_options(item, stored_org)
         _validate_message_options(include_link, include_qr)
         total = await session.scalar(
-            select(func.count()).where(CollectionParticipant.collection_id == item.id)
+            select(func.count(CollectionParticipant.id)).where(
+                CollectionParticipant.collection_id == item.id
+            )
         )
         paid = await session.scalar(
-            select(func.count()).where(
+            select(func.count(CollectionParticipant.id)).where(
                 CollectionParticipant.collection_id == item.id,
                 CollectionParticipant.status == "paid",
             )
@@ -500,95 +543,11 @@ async def update_collection(
         return _summary(item, total or 0, paid or 0, stored_org, channel_order)
 
 
-@router.post("/{collection_id}/dispatch", response_model=DispatchResult, status_code=202)
-async def dispatch_collection(
-    collection_id: UUID,
-    payload: DispatchRequest,
-    organization: Organization = Depends(get_organization),
-) -> DispatchResult:
-    external_channels = {str(channel) for channel in payload.external_channels}
-    cp_ids = set(payload.collection_participant_ids) if payload.collection_participant_ids else None
-    async with SessionLocal.begin() as session:
-        stored_org = await session.get(Organization, organization.id)
-        assert stored_org is not None
-        _require_bank_account(stored_org)
-        item = await _owned_collection(session, stored_org, collection_id, for_update=True)
-        first_activation = payload.kind == "initial" and item.status != "active"
-        outcome = await queue_collection_messages(
-            session,
-            collection=item,
-            organization=stored_org,
-            kind=payload.kind,
-            external_channels=external_channels,
-            collection_participant_ids=cp_ids,
-            include_external=True,
-        )
-        if payload.kind == "initial":
-            item.status = "active"
-            if first_activation:
-                await _schedule_reminders(session, item, now=datetime.now(UTC))
-        return DispatchResult(
-            queued_internal=outcome.queued_internal,
-            external=[
-                DispatchExternalItem(
-                    collection_participant_id=row.collection_participant_id,
-                    participant_id=row.participant_id,
-                    name=row.name,
-                    channel=row.channel,
-                )
-                for row in outcome.external
-            ],
-            unreachable=outcome.unreachable,
-        )
-
-
-@router.post("/{collection_id}/send", response_model=QueueActionResult, status_code=202)
-async def queue_collection_send(
-    collection_id: UUID,
-    organization: Organization = Depends(get_organization),
-) -> QueueActionResult:
-    async with SessionLocal.begin() as session:
-        stored_org = await session.get(Organization, organization.id)
-        assert stored_org is not None
-        _require_bank_account(stored_org)
-        item = await _owned_collection(session, stored_org, collection_id, for_update=True)
-        outcome = await queue_collection_messages(
-            session,
-            collection=item,
-            organization=stored_org,
-            kind="initial",
-            include_external=False,
-        )
-        if outcome.queued_internal:
-            item.status = "active"
-        return QueueActionResult(queued=outcome.queued_internal)
-
-
-@router.post("/{collection_id}/remind", response_model=QueueActionResult, status_code=202)
-async def queue_collection_reminder(
-    collection_id: UUID,
-    organization: Organization = Depends(get_organization),
-) -> QueueActionResult:
-    async with SessionLocal.begin() as session:
-        stored_org = await session.get(Organization, organization.id)
-        assert stored_org is not None
-        _require_bank_account(stored_org)
-        item = await _owned_collection(session, stored_org, collection_id, for_update=True)
-        outcome = await queue_collection_messages(
-            session,
-            collection=item,
-            organization=stored_org,
-            kind="reminder",
-            include_external=False,
-        )
-        return QueueActionResult(queued=outcome.queued_internal)
-
-
 @router.put(
     "/{collection_id}/participants/{collection_participant_id}/payment-status",
     response_model=CollectionParticipantRead,
 )
-async def set_manual_payment_status(
+async def update_payment_status(
     collection_id: UUID,
     collection_participant_id: UUID,
     payload: PaymentStatusUpdate,
@@ -598,83 +557,78 @@ async def set_manual_payment_status(
     async with SessionLocal.begin() as session:
         stored_org = await session.get(Organization, organization.id)
         assert stored_org is not None
-        collection = await _owned_collection(session, stored_org, collection_id)
-        cp = await session.get(
-            CollectionParticipant, collection_participant_id, with_for_update=True
-        )
-        if cp is None or cp.collection_id != collection.id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Collection participant not found"
-            )
+        item = await _owned_collection(session, stored_org, collection_id, for_update=True)
+        cp = await session.get(CollectionParticipant, collection_participant_id, with_for_update=True)
+        if cp is None or cp.collection_id != item.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Participant not found")
         participant = await session.get(Participant, cp.participant_id)
         assert participant is not None
-
-        if payload.paid and cp.status != "paid":
-            cp.status = "paid"
-            cp.paid_at = now
-            existing_manual = await session.scalar(
-                select(Payment.id).where(
-                    Payment.collection_participant_id == cp.id,
-                    Payment.method == "manual",
-                )
-            )
-            if existing_manual is None:
+        if payload.paid:
+            if cp.status != "paid":
+                cp.status = "paid"
+                cp.paid_at = now
                 session.add(
                     Payment(
                         collection_participant_id=cp.id,
-                        amount=collection.amount,
-                        currency=collection.currency,
+                        amount=item.amount,
+                        currency=item.currency,
                         method="manual",
                         booked_at=now,
-                        details="Marked as paid manually",
                     )
                 )
-        elif not payload.paid and cp.status == "paid":
-            non_manual_count = await session.scalar(
-                select(func.count()).where(
-                    Payment.collection_participant_id == cp.id,
-                    Payment.method != "manual",
-                )
-            )
-            if non_manual_count:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="A synchronized/imported payment cannot be cleared manually",
-                )
+        else:
+            cp.status = "open"
+            cp.paid_at = None
             await session.execute(
                 delete(Payment).where(
                     Payment.collection_participant_id == cp.id,
                     Payment.method == "manual",
                 )
             )
-            cp.status = "open"
-            cp.paid_at = None
-
-        latest_delivery = (
-            await session.execute(
-                select(CommunicationMessage.status, CommunicationMessage.channel)
-                .where(
-                    CommunicationMessage.collection_participant_id == cp.id,
-                    CommunicationMessage.status != "draft",
-                )
-                .order_by(CommunicationMessage.created_at.desc())
-                .limit(1)
-            )
-        ).one_or_none()
-        payment_method = await session.scalar(
-            select(Payment.method)
-            .where(Payment.collection_participant_id == cp.id)
-            .order_by(Payment.booked_at.desc(), Payment.created_at.desc())
-            .limit(1)
-        )
-        _include_link, include_qr = _effective_message_options(collection, stored_org)
         return _participant_read(
             cp=cp,
             participant=participant,
-            payment_method=payment_method if cp.status == "paid" else None,
-            delivery_status=latest_delivery[0] if latest_delivery else None,
-            delivery_channel=latest_delivery[1] if latest_delivery else None,
-            payment_qr_url=_payment_qr_url_if_available(
-                organization=stored_org, collection=collection, cp=cp, enabled=include_qr
-            ),
+            payment_method="manual" if payload.paid else None,
+            delivery_status=None,
         )
+
+
+@router.post("/{collection_id}/send", response_model=QueueActionResult)
+async def send_collection(
+    collection_id: UUID,
+    organization: Organization = Depends(get_organization),
+) -> QueueActionResult:
+    async with SessionLocal.begin() as session:
+        stored_org = await session.get(Organization, organization.id)
+        assert stored_org is not None
+        item = await _owned_collection(session, stored_org, collection_id, for_update=True)
+        _require_bank_account(stored_org)
+        include_link, include_qr = _effective_message_options(item, stored_org)
+        _validate_message_options(include_link, include_qr)
+        queued = await queue_collection_messages(
+            session, collection=item, organization=stored_org, kind="initial"
+        )
+        item.status = "active"
+        if item.send_at is None:
+            item.send_at = datetime.now(UTC)
+        await _schedule_reminders(session, item, now=datetime.now(UTC))
+        return QueueActionResult(queued=queued)
+
+
+@router.post("/{collection_id}/remind", response_model=QueueActionResult)
+async def remind_collection(
+    collection_id: UUID,
+    organization: Organization = Depends(get_organization),
+) -> QueueActionResult:
+    async with SessionLocal.begin() as session:
+        stored_org = await session.get(Organization, organization.id)
+        assert stored_org is not None
+        item = await _owned_collection(session, stored_org, collection_id, for_update=True)
+        _require_bank_account(stored_org)
+        include_link, include_qr = _effective_message_options(item, stored_org)
+        _validate_message_options(include_link, include_qr)
+        queued = await queue_collection_messages(
+            session, collection=item, organization=stored_org, kind="reminder"
+        )
+        await _schedule_reminders(session, item, now=datetime.now(UTC))
+        return QueueActionResult(queued=queued)
