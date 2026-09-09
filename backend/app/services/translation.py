@@ -106,18 +106,21 @@ async def translate_text(
     return translated
 
 
-async def translate_missing(
+async def _translate_languages(
     source_text: str,
     *,
     source_language: str | None,
-    existing: dict[str, str],
+    target_languages: list[str],
 ) -> dict[str, str]:
     validate_template_body(source_text)
-    result = dict(existing)
     source = normalize_language(source_language) if source_language else None
-    missing = [language for language in SUPPORTED_LANGUAGES if language not in result]
-    if not missing:
-        return result
+    targets = [
+        normalize_language(language)
+        for language in dict.fromkeys(target_languages)
+        if normalize_language(language) != source
+    ]
+    if not targets:
+        return {}
 
     semaphore = asyncio.Semaphore(4)
 
@@ -130,8 +133,38 @@ async def translate_missing(
             )
             return language, translated
 
-    for language, translated in await asyncio.gather(
-        *(translate_one(language) for language in missing)
-    ):
-        result[language] = translated
+    return dict(await asyncio.gather(*(translate_one(language) for language in targets)))
+
+
+async def translate_missing(
+    source_text: str,
+    *,
+    source_language: str | None,
+    existing: dict[str, str],
+) -> dict[str, str]:
+    result = dict(existing)
+    missing = [language for language in SUPPORTED_LANGUAGES if language not in result]
+    result.update(
+        await _translate_languages(
+            source_text,
+            source_language=source_language,
+            target_languages=missing,
+        )
+    )
     return result
+
+
+async def translate_other_languages(
+    source_text: str,
+    *,
+    source_language: str,
+    target_languages: list[str] | None = None,
+) -> dict[str, str]:
+    source = normalize_language(source_language)
+    targets = target_languages or list(SUPPORTED_LANGUAGES)
+    translated = await _translate_languages(
+        source_text,
+        source_language=source,
+        target_languages=targets,
+    )
+    return {source: source_text, **translated}
