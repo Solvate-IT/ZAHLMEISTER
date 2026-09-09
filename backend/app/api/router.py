@@ -7,6 +7,7 @@ from app.api.routes.auth import router as auth_router
 from app.api.routes.bank_imports import router as bank_imports_router
 from app.api.routes.bank_sync import router as bank_sync_router
 from app.api.routes.billing import router as billing_router
+from app.api.routes.collection_message_translations import router as collection_message_translations_router
 from app.api.routes.collections import router as collections_router
 from app.api.routes.communication_settings import router as communication_settings_router
 from app.api.routes.communications import router as communications_router
@@ -33,6 +34,7 @@ api_router.include_router(imports_router)
 api_router.include_router(bank_imports_router)
 api_router.include_router(bank_sync_router)
 api_router.include_router(collections_router)
+api_router.include_router(collection_message_translations_router)
 api_router.include_router(reports_router)
 api_router.include_router(communications_router)
 api_router.include_router(communication_settings_router)
