@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import os
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -10,10 +11,65 @@ from app.db.session import SessionLocal
 from app.models.billing import BillingCycle, BillingPaymentTransaction
 from app.models.platform import StoreSubscription
 from app.services import mollie_billing_core as core
+from app.services.billing_tax import BillingTaxValidationUnavailable
+
+RENEWAL_RETRY_INTERVAL = timedelta(
+    hours=max(1, int(os.getenv("MOLLIE_BILLING_RETRY_INTERVAL_HOURS", "24")))
+)
+
+
+async def _apply_validation_grace(organization_id: UUID) -> None:
+    """Keep paid entitlement temporarily available when tax validation is unavailable.
+
+    No charge is attempted while VIES/provider tax validation is unavailable. The
+    original paid-through value remains unchanged so later worker runs retry the
+    same renewal. ``_grace_expiry`` stores one fixed deadline and therefore cannot
+    extend the grace window indefinitely.
+    """
+    async with SessionLocal.begin() as session:
+        row = await core._mollie_row(session, organization_id, lock=True)
+        if row is None or not row.auto_renew:
+            return
+        data = core._verification_data(row)
+        paid_through = core._parse_datetime(data.get("paid_through")) or row.expires_at
+        if paid_through is None:
+            return
+        paid_through = core._normalize_utc(paid_through)
+        if paid_through > datetime.now(UTC):
+            return
+        grace_until = core._grace_expiry(data, paid_through)
+        data["grace_reason"] = "tax_validation_unavailable"
+        row.status = "grace_period" if grace_until > datetime.now(UTC) else "expired"
+        row.expires_at = grace_until
+        row.verification_data_encrypted = core.encrypt_config(data)
+        row.last_verified_at = datetime.now(UTC)
+
+
+async def _retry_is_due(transaction: BillingPaymentTransaction) -> bool:
+    if transaction.attempt <= 1:
+        return True
+    async with SessionLocal() as session:
+        previous = await session.scalar(
+            select(BillingPaymentTransaction)
+            .where(
+                BillingPaymentTransaction.cycle_id == transaction.cycle_id,
+                BillingPaymentTransaction.attempt == transaction.attempt - 1,
+            )
+        )
+    if previous is None:
+        return True
+    reference_time = previous.last_synced_at or previous.updated_at or previous.created_at
+    if reference_time is None:
+        return True
+    return core._normalize_utc(reference_time) + RENEWAL_RETRY_INTERVAL <= datetime.now(UTC)
 
 
 async def _execute_due_renewal(organization_id: UUID) -> bool:
-    reserved = await core._reserve_due_renewal(organization_id)
+    try:
+        reserved = await core._reserve_due_renewal(organization_id)
+    except BillingTaxValidationUnavailable:
+        await _apply_validation_grace(organization_id)
+        return False
     if reserved is None:
         return False
     cycle_id, tx_id, customer_id, mandate_id = reserved
@@ -24,6 +80,8 @@ async def _execute_due_renewal(organization_id: UUID) -> bool:
         tx = await session.get(BillingPaymentTransaction, tx_id)
         if cycle is None or tx is None:
             raise core.MollieBillingUnavailable("Billing reservation disappeared")
+        if not await _retry_is_due(tx):
+            return False
         if tx.provider_reference:
             payment = await core._get_payment(tx.provider_reference)
         else:
@@ -44,6 +102,8 @@ async def _execute_due_renewal(organization_id: UUID) -> bool:
                 if tx.provider_reference is None:
                     tx.status = "cancelled"
                     cycle.status = "cancelled"
+                return False
+            if not await _retry_is_due(tx):
                 return False
             if tx.provider_reference:
                 existing_reference = tx.provider_reference
