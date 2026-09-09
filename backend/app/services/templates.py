@@ -19,6 +19,32 @@ DEFAULT_TEMPLATE_BODY_MSGID = (
     "Pay here: {{payment_link}}\n"
     "Payment reference: {{payment_reference}}"
 )
+DEFAULT_TEMPLATE_SIGNOFFS = {
+    "bg": "С уважение",
+    "hr": "Srdačan pozdrav",
+    "cs": "S pozdravem",
+    "da": "Med venlig hilsen",
+    "nl": "Met vriendelijke groet",
+    "en": "Kind regards",
+    "et": "Lugupidamisega",
+    "fi": "Ystävällisin terveisin",
+    "fr": "Cordialement",
+    "de": "Mit freundlichen Grüßen",
+    "el": "Με εκτίμηση",
+    "hu": "Üdvözlettel",
+    "ga": "Le dea-mhéin",
+    "it": "Cordiali saluti",
+    "lv": "Ar cieņu",
+    "lt": "Pagarbiai",
+    "mt": "Tislijiet",
+    "pl": "Z poważaniem",
+    "pt": "Com os melhores cumprimentos",
+    "ro": "Cu stimă",
+    "sk": "S pozdravom",
+    "sl": "Lep pozdrav",
+    "es": "Atentamente",
+    "sv": "Med vänliga hälsningar",
+}
 
 TEMPLATE_VARIABLES = (
     "first_name",
@@ -52,8 +78,18 @@ def default_template_name(language: str = "en") -> str:
     return _translation(normalize_language(language)).gettext(DEFAULT_TEMPLATE_NAME_MSGID)
 
 
+def legacy_default_template_body(language: str = "en") -> str:
+    normalized = normalize_language(language)
+    return _translation(normalized).gettext(DEFAULT_TEMPLATE_BODY_MSGID)
+
+
 def default_template_body(language: str = "en") -> str:
-    return _translation(normalize_language(language)).gettext(DEFAULT_TEMPLATE_BODY_MSGID)
+    normalized = normalize_language(language)
+    return (
+        f"{legacy_default_template_body(normalized)}\n\n"
+        f"{DEFAULT_TEMPLATE_SIGNOFFS.get(normalized, DEFAULT_TEMPLATE_SIGNOFFS['en'])}\n"
+        "{{name}}"
+    )
 
 
 def default_template_translations() -> dict[str, str]:
