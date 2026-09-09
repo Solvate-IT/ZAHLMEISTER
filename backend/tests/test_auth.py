@@ -1,6 +1,9 @@
 from datetime import UTC, datetime
 
+import pytest
+
 from app.core.config import settings
+from app.schemas.passwords import validate_password_strength
 from app.services.auth import (
     ADMIN_SESSION_HOURS,
     hash_password,
@@ -16,6 +19,16 @@ def test_password_hash_roundtrip() -> None:
     assert hashed != "very-secret-password"
     assert verify_password(hashed, "very-secret-password")
     assert not verify_password(hashed, "wrong-password")
+
+
+def test_password_policy_accepts_six_characters_with_letter_and_number() -> None:
+    assert validate_password_strength("abc123") == "abc123"
+
+
+@pytest.mark.parametrize("password", ["abc12", "abcdef", "123456"])
+def test_password_policy_rejects_weak_passwords(password: str) -> None:
+    with pytest.raises(ValueError, match="at least 6 characters"):
+        validate_password_strength(password)
 
 
 def test_email_and_token_normalization() -> None:
