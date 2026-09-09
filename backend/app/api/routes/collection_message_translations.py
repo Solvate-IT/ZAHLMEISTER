@@ -6,14 +6,14 @@ from sqlalchemy import select
 
 from app.api.deps import get_organization
 from app.db.session import SessionLocal
-from app.models.entities import Collection, CollectionParticipant, Organization
+from app.models.entities import Collection, CollectionParticipant, MessageTemplate, Organization
 from app.models.participant_preferences import ParticipantPreference
 from app.services import translation
 from app.services.collection_message_overrides import (
     deserialize_collection_message_overrides,
     serialize_collection_message_overrides,
 )
-from app.services.templates import normalize_language, validate_template_body
+from app.services.templates import normalize_language, normalize_translations, validate_template_body
 
 router = APIRouter(prefix="/collections", tags=["collections"])
 
@@ -22,6 +22,7 @@ class CollectionMessageTranslationsRead(BaseModel):
     translations: dict[str, str] = Field(default_factory=dict)
     required_languages: list[str] = Field(default_factory=list)
     translation_configured: bool = False
+    has_override: bool = False
 
 
 class CollectionMessageTranslationUpdate(BaseModel):
@@ -78,15 +79,27 @@ async def _required_languages(session, collection: Collection, organization: Org
     return sorted(languages)
 
 
-async def _read(session, collection: Collection, organization: Organization) -> CollectionMessageTranslationsRead:
-    translations, _legacy = deserialize_collection_message_overrides(
+async def _effective_translations(session, collection: Collection, organization: Organization) -> tuple[dict[str, str], bool]:
+    overrides, _legacy = deserialize_collection_message_overrides(
         collection.message_body_override,
         fallback_language=organization.locale,
     )
+    if overrides:
+        return overrides, True
+    if collection.message_template_id is not None:
+        template = await session.get(MessageTemplate, collection.message_template_id)
+        if template is not None and template.organization_id == organization.id:
+            return normalize_translations(template.translations_json), False
+    return {}, False
+
+
+async def _read(session, collection: Collection, organization: Organization) -> CollectionMessageTranslationsRead:
+    translations, has_override = await _effective_translations(session, collection, organization)
     return CollectionMessageTranslationsRead(
         translations=translations,
         required_languages=await _required_languages(session, collection, organization),
         translation_configured=translation.configured(),
+        has_override=has_override,
     )
 
 
@@ -118,10 +131,7 @@ async def update_collection_message_translation(
         stored_org = await session.get(Organization, organization.id)
         assert stored_org is not None
         collection = await _owned_collection(session, stored_org, collection_id)
-        translations, _legacy = deserialize_collection_message_overrides(
-            collection.message_body_override,
-            fallback_language=stored_org.locale,
-        )
+        translations, _has_override = await _effective_translations(session, collection, stored_org)
         translations[payload.language] = payload.body
         collection.message_body_override = serialize_collection_message_overrides(translations)
         await session.flush()
@@ -165,10 +175,7 @@ async def translate_collection_message_languages(
         stored_org = await session.get(Organization, organization.id)
         assert stored_org is not None
         collection = await _owned_collection(session, stored_org, collection_id)
-        current, _legacy = deserialize_collection_message_overrides(
-            collection.message_body_override,
-            fallback_language=stored_org.locale,
-        )
+        current, _has_override = await _effective_translations(session, collection, stored_org)
         current.update(generated)
         collection.message_body_override = serialize_collection_message_overrides(current)
         await session.flush()
