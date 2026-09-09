@@ -23,7 +23,6 @@ from app.models.entities import (
     Payment,
     ScheduledJob,
 )
-from app.schemas.communications import DispatchExternalItem, DispatchRequest, DispatchResult
 from app.schemas.workflow import (
     CollectionCreate,
     CollectionDetail,
