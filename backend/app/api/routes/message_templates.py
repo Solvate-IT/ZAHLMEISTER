@@ -214,8 +214,6 @@ async def update_message_template(
                 )
                 .values(is_default=False)
             )
-            # Release the previous default before setting the new row to true so the
-            # partial unique index can never observe two defaults during an ORM flush.
             await session.flush()
             item.is_default = True
         await session.flush()
@@ -275,6 +273,62 @@ async def translate_missing_template_languages(
         for language, body in generated.items():
             if language not in current:
                 current[language] = body
+        item.translations_json = serialize_translations(current)
+        await session.flush()
+        return _read(item)
+
+
+@router.post(
+    "/{template_id}/translate-other-languages",
+    response_model=MessageTemplateRead,
+)
+async def translate_other_template_languages(
+    template_id: UUID,
+    payload: MessageTemplateTranslateRequest,
+    organization: Organization = Depends(get_organization),
+) -> MessageTemplateRead:
+    if not translation.configured():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Automatic translation is not configured",
+        )
+
+    async with SessionLocal() as session:
+        stored_org = await session.get(Organization, organization.id)
+        assert stored_org is not None
+        item = await _owned_template(session, stored_org, template_id)
+        snapshot = normalize_translations(item.translations_json)
+        source_text = snapshot.get(payload.source_language)
+        if not source_text:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The selected source language has no template text",
+            )
+
+    try:
+        generated = await translation.translate_other_languages(
+            source_text,
+            source_language=payload.source_language,
+            target_languages=list(SUPPORTED_LANGUAGES),
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Automatic translation failed",
+        ) from exc
+
+    async with SessionLocal.begin() as session:
+        stored_org = await session.get(Organization, organization.id)
+        assert stored_org is not None
+        await transaction_lock(session, "message-template", stored_org.id)
+        item = await _owned_template(session, stored_org, template_id)
+        current = normalize_translations(item.translations_json)
+        if current.get(payload.source_language) != source_text:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Source template changed while translations were generated",
+            )
+        current.update(generated)
         item.translations_json = serialize_translations(current)
         await session.flush()
         return _read(item)
