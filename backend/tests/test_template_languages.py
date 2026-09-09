@@ -27,11 +27,11 @@ def test_participant_locale_is_optional_and_normalized() -> None:
 
 def test_translated_template_must_keep_exact_variables() -> None:
     validate_same_template_variables(
-        "Hello {{first_name}}, pay {{amount}}.",
-        "Hallo {{first_name}}, bitte {{amount}} bezahlen.",
+        "Hello {{contact}}, pay {{amount}}.",
+        "Hallo {{contact}}, bitte {{amount}} bezahlen.",
     )
     with pytest.raises(ValueError, match="variables do not match"):
         validate_same_template_variables(
-            "Hello {{first_name}}, pay {{amount}}.",
-            "Hallo {{first_name}}.",
+            "Hello {{contact}}, pay {{amount}}.",
+            "Hallo {{contact}}.",
         )
