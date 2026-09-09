@@ -35,6 +35,7 @@ from app.schemas.workflow import (
     QueueActionResult,
 )
 from app.services.channel_strategy import get_channel_order
+from app.services.collection_message_overrides import serialize_collection_message_overrides
 from app.services.message_dispatch import all_routes_internal, queue_collection_messages
 from app.services.naming import unique_collection_name
 from app.services.payments import epc_qr_payload, public_payment_qr_url, public_payment_url
@@ -329,6 +330,11 @@ async def create_collection(
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                 ) from exc
+        if payload.message_body_override is not None and payload.message_body_overrides is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Use either message_body_override or message_body_overrides, not both",
+            )
 
         try:
             reminder_rules_json = serialize_reminder_rules(
@@ -376,7 +382,11 @@ async def create_collection(
             communication_mode="auto",
             message_template_id=template.id,
             message_body_override=(
-                payload.message_body_override.strip() if payload.message_body_override else None
+                serialize_collection_message_overrides(payload.message_body_overrides)
+                if payload.message_body_overrides is not None
+                else payload.message_body_override.strip()
+                if payload.message_body_override
+                else None
             ),
             reminder_rules_json=reminder_rules_json,
             message_include_payment_link=payload.include_payment_link,
