@@ -9,7 +9,7 @@ from app.models.entities import Organization, Participant, ParticipantList
 from app.schemas.imports import ImportCommitRequest, ImportCommitResponse, ImportPreview
 from app.services.channel_strategy import reset_channel_knowledge
 from app.services.imports import ImportParseError, parse_import
-from app.services.plans import FREE_PARTICIPANTS_PER_LIST, participant_capacity_available
+from app.services.plans import FREE_PARTICIPANTS_PER_LIST, is_pro
 
 router = APIRouter(prefix="/participant-lists", tags=["participant-lists"])
 
@@ -63,6 +63,8 @@ async def commit_import(
                 .with_for_update()
             )
         ).scalars().all()
+        initial_count = len(existing_rows)
+        pro = await is_pro(session, organization.id)
 
         by_email = {_email_key(row.email): row for row in existing_rows if _email_key(row.email)}
         by_phone = {_phone_key(row.phone): row for row in existing_rows if _phone_key(row.phone)}
@@ -113,6 +115,11 @@ async def commit_import(
                     by_phone[phone_key] = target
                 continue
 
+            if not pro and initial_count + len(new_rows) + 1 > FREE_PARTICIPANTS_PER_LIST:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Free plan supports up to {FREE_PARTICIPANTS_PER_LIST} participants per list",
+                )
             row = Participant(
                 list_id=participant_list.id,
                 name=item.name,
@@ -126,19 +133,6 @@ async def commit_import(
                 by_email[email_key] = row
             if phone_key:
                 by_phone[phone_key] = row
-
-        if not await participant_capacity_available(
-            session,
-            organization.id,
-            participant_list.id,
-            adding=0,
-        ):
-            # New rows are already part of the transaction and therefore included in the count.
-            # Rollback keeps the list unchanged if the import would exceed the plan limit.
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Free plan supports up to {FREE_PARTICIPANTS_PER_LIST} participants per list",
-            )
 
         return ImportCommitResponse(
             imported_count=len(new_rows),
