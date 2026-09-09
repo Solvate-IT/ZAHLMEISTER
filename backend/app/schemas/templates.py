@@ -18,7 +18,6 @@ class MessageTemplateCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     body: str | None = Field(default=None, max_length=10000)
     source_language: str | None = Field(default=None, max_length=10)
-    auto_translate: bool = False
 
     @field_validator("source_language")
     @classmethod
