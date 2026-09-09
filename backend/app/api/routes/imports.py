@@ -7,10 +7,19 @@ from app.api.deps import get_organization
 from app.db.session import SessionLocal
 from app.models.entities import Organization, Participant, ParticipantList
 from app.schemas.imports import ImportCommitRequest, ImportCommitResponse, ImportPreview
+from app.services.channel_strategy import reset_channel_knowledge
 from app.services.imports import ImportParseError, parse_import
 from app.services.plans import FREE_PARTICIPANTS_PER_LIST, participant_capacity_available
 
 router = APIRouter(prefix="/participant-lists", tags=["participant-lists"])
+
+
+def _email_key(value: str | None) -> str:
+    return (value or "").strip().casefold()
+
+
+def _phone_key(value: str | None) -> str:
+    return "".join(char for char in (value or "") if char.isdigit())
 
 
 async def _owned_list(
@@ -48,53 +57,91 @@ async def commit_import(
         participant_list = await _owned_list(session, organization, list_id, for_update=True)
         existing_rows = (
             await session.execute(
-                select(Participant.name, Participant.email, Participant.phone).where(
-                    Participant.list_id == participant_list.id
-                )
+                select(Participant)
+                .where(Participant.list_id == participant_list.id)
+                .order_by(Participant.created_at)
+                .with_for_update()
             )
-        ).all()
-        existing = {
-            (
-                name.casefold(),
-                (email or "").casefold(),
-                "".join(char for char in (phone or "") if char.isdigit()),
-            )
-            for name, email, phone in existing_rows
-        }
+        ).scalars().all()
 
-        candidates: list[tuple[object, tuple[str, str, str]]] = []
-        seen = set(existing)
+        by_email = {_email_key(row.email): row for row in existing_rows if _email_key(row.email)}
+        by_phone = {_phone_key(row.phone): row for row in existing_rows if _phone_key(row.phone)}
+        new_rows: list[Participant] = []
+        updated_ids: set[UUID] = set()
         skipped = 0
+
         for item in payload.participants:
-            key = (
-                item.name.casefold(),
-                (str(item.email) if item.email else "").casefold(),
-                "".join(char for char in (item.phone or "") if char.isdigit()),
-            )
-            if key in seen:
-                skipped += 1
+            email = str(item.email).strip().lower() if item.email else None
+            phone = item.phone.strip() if item.phone else None
+            email_key = _email_key(email)
+            phone_key = _phone_key(phone)
+            email_match = by_email.get(email_key) if email_key else None
+            phone_match = by_phone.get(phone_key) if phone_key else None
+
+            if email_match is not None and phone_match is not None and email_match.id != phone_match.id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Imported email and phone belong to different existing participants",
+                )
+
+            target = email_match or phone_match
+            if target is not None:
+                changed = False
+                old_email = target.email
+                old_phone = target.phone
+                if target.name != item.name:
+                    target.name = item.name
+                    changed = True
+                if email and target.email != email:
+                    target.email = email
+                    changed = True
+                if phone and target.phone != phone:
+                    target.phone = phone
+                    changed = True
+                if changed:
+                    if _email_key(old_email) != _email_key(target.email):
+                        await reset_channel_knowledge(session, target.id, "email")
+                    if _phone_key(old_phone) != _phone_key(target.phone):
+                        await reset_channel_knowledge(session, target.id, "whatsapp")
+                        await reset_channel_knowledge(session, target.id, "sms")
+                    updated_ids.add(target.id)
+                else:
+                    skipped += 1
+                if email_key:
+                    by_email[email_key] = target
+                if phone_key:
+                    by_phone[phone_key] = target
                 continue
-            seen.add(key)
-            candidates.append((item, key))
+
+            row = Participant(
+                list_id=participant_list.id,
+                name=item.name,
+                email=email,
+                phone=phone,
+            )
+            session.add(row)
+            await session.flush()
+            new_rows.append(row)
+            if email_key:
+                by_email[email_key] = row
+            if phone_key:
+                by_phone[phone_key] = row
 
         if not await participant_capacity_available(
             session,
             organization.id,
             participant_list.id,
-            adding=len(candidates),
+            adding=0,
         ):
+            # New rows are already part of the transaction and therefore included in the count.
+            # Rollback keeps the list unchanged if the import would exceed the plan limit.
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Free plan supports up to {FREE_PARTICIPANTS_PER_LIST} participants per list",
             )
 
-        for item, _ in candidates:
-            session.add(
-                Participant(
-                    list_id=participant_list.id,
-                    name=item.name,
-                    email=str(item.email) if item.email else None,
-                    phone=item.phone,
-                )
-            )
-        return ImportCommitResponse(imported_count=len(candidates), skipped_count=skipped)
+        return ImportCommitResponse(
+            imported_count=len(new_rows),
+            updated_count=len(updated_ids),
+            skipped_count=skipped,
+        )
