@@ -38,7 +38,6 @@ echo "== Zahlmeister pre-deployment checks =="
 echo "The same script is used locally and by the main-branch CI workflow."
 
 required_files=(
-  ".github/workflows/production-ci.yml"
   "backend/pyproject.toml"
   "backend/app/main.py"
   "backend/app/worker.py"
@@ -90,7 +89,6 @@ echo "[2/11] Checking Git tracking and packaging inputs..."
     mobile/assets mobile/mobile-links mobile/tool mobile/package.json mobile/capacitor.config.ts
     docker/backend.Dockerfile docker/frontend.Dockerfile docker/compose.yml docker/compose.prod.yml
     docker/nginx.conf docker/manage.sh docker/predeploy.sh docker/scripts
-    .github/workflows/production-ci.yml
   )
   untracked="$(git status --porcelain --untracked-files=all -- "${runtime_paths[@]}" | awk 'substr($0,1,2)=="??" {print substr($0,4)}')"
   if [[ -n "$untracked" ]]; then
