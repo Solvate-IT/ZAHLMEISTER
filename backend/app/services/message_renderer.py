@@ -104,20 +104,14 @@ async def render_collection_message(
     ) or organization.locale
 
     template_body: str | None = None
-    override_translations, legacy_override = deserialize_collection_message_overrides(
-        collection.message_body_override,
-        fallback_language=organization.locale,
-    )
+    override_translations = deserialize_collection_message_overrides(collection.message_body_override)
     if override_translations:
-        if legacy_override:
-            template_body = next(iter(override_translations.values()))
-        else:
-            requested_language = normalize_language(requested_locale)
-            template_body = override_translations.get(requested_language)
-            if template_body is None:
-                raise ValueError(
-                    f"Missing collection message translation for language: {requested_language}"
-                )
+        requested_language = normalize_language(requested_locale)
+        template_body = override_translations.get(requested_language)
+        if template_body is None:
+            raise ValueError(
+                f"Collection message override is missing participant language: {requested_language}"
+            )
     elif collection.message_template_id is not None:
         if session is None:
             raise ValueError("A database session is required to load the selected template")
