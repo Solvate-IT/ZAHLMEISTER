@@ -94,6 +94,27 @@ def validate_verified_subscription(
         raise ValueError("Subscription reference is missing")
 
 
+def _preserve_cancelled_state(
+    subscription: StoreSubscription,
+    verified: VerifiedSubscription,
+) -> bool:
+    """Keep a user's cancellation monotonic across late provider confirmations.
+
+    A payment/provider event may legitimately arrive after the user has already
+    cancelled future renewal. Such an event may extend the paid-through date but
+    must not silently re-enable auto-renew or clear the cancellation marker. A
+    genuine reactivation remains possible when the provider verifies
+    ``auto_renew=True``.
+    """
+
+    return (
+        subscription.cancelled_at is not None
+        and subscription.auto_renew is False
+        and verified.status == "active"
+        and verified.auto_renew is False
+    )
+
+
 async def _lock_organization(session: AsyncSession, organization_id: UUID) -> None:
     locked = await session.scalar(
         select(Organization.id).where(Organization.id == organization_id).with_for_update()
@@ -166,19 +187,25 @@ async def apply_verified_subscription(
         )
         session.add(subscription)
 
+    preserve_cancelled = _preserve_cancelled_state(subscription, verified)
+    previous_cancelled_at = subscription.cancelled_at
+
     subscription.product_id = verified.product_id
-    subscription.status = verified.status
+    subscription.status = "cancelled" if preserve_cancelled else verified.status
     subscription.external_reference = verified.external_reference
     subscription.purchased_at = verified.purchased_at
     subscription.expires_at = verified.expires_at
-    subscription.auto_renew = verified.auto_renew
+    subscription.auto_renew = False if preserve_cancelled else verified.auto_renew
     subscription.environment = verified.environment
     subscription.last_verified_at = datetime.now(UTC)
-    subscription.cancelled_at = (
-        datetime.now(UTC)
-        if verified.status in {"cancelled", "expired", "revoked"}
-        else None
-    )
+    if preserve_cancelled:
+        subscription.cancelled_at = previous_cancelled_at
+    else:
+        subscription.cancelled_at = (
+            datetime.now(UTC)
+            if verified.status in {"cancelled", "expired", "revoked"}
+            else None
+        )
     if verified.verification_data is not None:
         subscription.verification_data_encrypted = encrypt_config(verified.verification_data)
     await session.flush()
