@@ -1,0 +1,50 @@
+type Messages=Record<string,string>;
+
+export const uxMessages:Record<string,Messages>={
+  de:{
+    openParticipantBalances:"Offene Beträge nach Teilnehmer",
+    noOpenParticipantBalances:"Keine offenen Beträge.",
+    openTotal:"Offen / Gesamt",
+    importFromFile:"Aus Datei oder Bild importieren",
+    importFromContacts:"Handy-Kontakte übernehmen",
+    takePhoto:"Foto aufnehmen",
+    usePhoto:"Foto verwenden",
+    cameraUnavailable:"Die Kamera ist nicht verfügbar oder der Zugriff wurde nicht erlaubt.",
+    deselectAll:"Alle abwählen",
+    importIdentityConflict:"E-Mail und Telefonnummer gehören zu unterschiedlichen bestehenden Teilnehmern. Bitte den Kontakt vor dem Import korrigieren.",
+    passwordRequirements:"Mindestens 6 Zeichen mit mindestens einem Buchstaben und einer Zahl.",
+    variableHelp:"Variablen anzeigen",
+    variableFirstName:"Vorname",
+    variableCollectionName:"Sammelaktion",
+    registerWithProvider:"Beim Anbieter registrieren",
+    infobipOnboardingTitle:"Infobip-Konto erforderlich · kostenpflichtiger Anbieter",
+    infobipOnboardingHint:"Für internen SMS- und WhatsApp-Versand benötigst du ein eigenes Infobip-Konto. Die Registrierung erfolgt direkt bei Infobip; nach der Testphase fallen je nach Nutzung und Kanal Providerkosten an.",
+    mollieOnboardingTitle:"Mollie-Konto erforderlich · Transaktionskosten",
+    mollieOnboardingHint:"Für Online-Zahlungen benötigst du ein eigenes, von Mollie freigeschaltetes Händlerkonto. Registrierung und Verifizierung erfolgen direkt bei Mollie; für Zahlungen gelten die Mollie-Transaktionsgebühren.",
+    pontoOnboardingTitle:"Ponto-Konto erforderlich · kostenpflichtiger Anbieter",
+    pontoOnboardingHint:"Für automatischen BankSync benötigst du ein eigenes Ponto-Konto. Registrierung und Kontofreigabe erfolgen bei Ponto; für die Nutzung können Ponto-Gebühren anfallen. Danach verbindest du das Konto über den Zahlmeister-OAuth-Flow."
+  },
+  en:{
+    openParticipantBalances:"Open amounts by participant",
+    noOpenParticipantBalances:"No open amounts.",
+    openTotal:"Open / total",
+    importFromFile:"Import from file or image",
+    importFromContacts:"Import phone contacts",
+    takePhoto:"Take photo",
+    usePhoto:"Use photo",
+    cameraUnavailable:"The camera is unavailable or access was not granted.",
+    deselectAll:"Deselect all",
+    importIdentityConflict:"The email address and phone number belong to different existing participants. Correct the contact before importing.",
+    passwordRequirements:"At least 6 characters with at least one letter and one number.",
+    variableHelp:"Show variables",
+    variableFirstName:"First name",
+    variableCollectionName:"Collection",
+    registerWithProvider:"Register with provider",
+    infobipOnboardingTitle:"Infobip account required · paid provider",
+    infobipOnboardingHint:"Internal SMS and WhatsApp delivery requires your own Infobip account. Registration takes place directly with Infobip; provider charges apply after the trial depending on usage and channel.",
+    mollieOnboardingTitle:"Mollie account required · transaction fees",
+    mollieOnboardingHint:"Online payments require your own Mollie merchant account approved by Mollie. Registration and verification take place directly with Mollie; Mollie transaction fees apply to payments.",
+    pontoOnboardingTitle:"Ponto account required · paid provider",
+    pontoOnboardingHint:"Automatic BankSync requires your own Ponto account. Registration and bank authorization take place with Ponto; Ponto fees may apply. You then connect the account through the Zahlmeister OAuth flow."
+  }
+};
