@@ -1,10 +1,12 @@
 "use client";
 
 import {useEffect,useMemo,useRef,useState} from "react";
+import {Capacitor} from "@capacitor/core";
 import {useRouter,useSearchParams} from "next/navigation";
 import {api,ApiError} from "@/lib/api";
-import type {BillingEntitlement,BillingInvoice,BillingProfile,BillingProfileWrite,MollieBillingConfig} from "@/lib/types";
+import type {BillingEntitlement,BillingInvoice,BillingProfile,BillingProfileWrite,BillingPurchaseContext,GooglePlayBillingConfig,MollieBillingConfig} from "@/lib/types";
 import {useI18n} from "@/lib/i18n";
+import {currentGooglePlayPurchaseTokens,getGooglePlayOffer,isGooglePlayBillingRuntime,manageGooglePlaySubscriptions,purchaseGooglePlayPro} from "@/lib/googlePlayPurchases";
 import {isNativeApp} from "@/lib/native";
 import {Loading} from "../State";
 
@@ -29,6 +31,12 @@ export function BillingPage(){
   const [notice,setNotice]=useState("");
   const [error,setError]=useState("");
   const [native,setNative]=useState<boolean|null>(null);
+  const [platform,setPlatform]=useState<"web"|"android"|"ios">("web");
+  const [googleConfig,setGoogleConfig]=useState<GooglePlayBillingConfig|null>(null);
+  const [googleContext,setGoogleContext]=useState<BillingPurchaseContext|null>(null);
+  const [googlePrice,setGooglePrice]=useState("");
+  const [googleRuntime,setGoogleRuntime]=useState(false);
+  const googleSetupStarted=useRef(false);
   const profileSectionRef=useRef<HTMLElement|null>(null);
   const primaryProfileFieldRef=useRef<HTMLInputElement|null>(null);
   const regionNames=useMemo(()=>new Intl.DisplayNames([locale],{type:"region"}),[locale]);
@@ -48,7 +56,11 @@ export function BillingPage(){
     requestAnimationFrame(()=>{profileSectionRef.current?.scrollIntoView({behavior:"smooth",block:"start"});requestAnimationFrame(()=>primaryProfileFieldRef.current?.focus())});
   }
 
-  useEffect(()=>{setNative(isNativeApp())},[]);
+  useEffect(()=>{
+    setNative(isNativeApp());
+    const current=Capacitor.getPlatform();
+    setPlatform(current==="android"||current==="ios"?current:"web");
+  },[]);
   useEffect(()=>{
     if(billingResult==="return"){
       setLoading(true);setError("");
@@ -58,11 +70,59 @@ export function BillingPage(){
     if(billingResult==="cancelled")setNotice(t("billingCheckoutCancelled"));
     load().finally(()=>{if(billingResult==="cancelled")clearBillingResult()});
   },[billingResult]);
+  useEffect(()=>{
+    if(native!==true||platform!=="android"||!entitlement||googleSetupStarted.current)return;
+    googleSetupStarted.current=true;
+    let cancelled=false;
+    void (async()=>{
+      try{
+        const [nextConfig,nextContext]=await Promise.all([api.googlePlayBillingConfig(),api.billingPurchaseContext("google")]);
+        if(cancelled)return;
+        setGoogleConfig(nextConfig);setGoogleContext(nextContext);
+        const runtime=isGooglePlayBillingRuntime();setGoogleRuntime(runtime);
+        if(!runtime||!nextConfig.available)return;
+        try{const offer=await getGooglePlayOffer(nextConfig);if(!cancelled)setGooglePrice(offer.price)}catch{}
+        if(entitlement.provider==="google"){
+          try{const next=await api.googlePlayBillingSync();if(!cancelled)setEntitlement(next)}catch{}
+          return;
+        }
+        if(entitlement.active||!nextContext.purchase_allowed)return;
+        const tokens=await currentGooglePlayPurchaseTokens(nextConfig,nextContext.account_token);
+        for(const token of tokens){
+          try{
+            const next=await api.googlePlayBillingVerify(token);
+            if(cancelled)return;
+            setEntitlement(next);
+            if(next.active){setNotice(t("billingActivated"));break}
+          }catch{}
+        }
+      }catch{}
+    })();
+    return()=>{cancelled=true};
+  },[native,platform,entitlement]);
 
   async function refresh(){
-    if(!config?.available||native){await load();return}
+    if(!config?.available){await load();return}
     setBusy(true);setError("");
     try{const next=await api.mollieBillingSync();setEntitlement(next);await load();setNotice(next.active?t("billingActivated"):next.status==="pending"?t("billingReturnProcessing"):"")}catch{setError(t("billingError"))}finally{setBusy(false)}
+  }
+  async function syncGoogle(){
+    setBusy(true);setError("");setNotice("");
+    try{const next=await api.googlePlayBillingSync();setEntitlement(next);await load();setNotice(next.active?t("billingActivated"):next.status==="pending"?t("billingReturnProcessing"):"")}catch{setError(t("billingError"))}finally{setBusy(false)}
+  }
+  async function startGooglePlay(){
+    if(!googleConfig?.available||!googleContext?.purchase_allowed||!googleRuntime){setError(t("billingError"));return}
+    setBusy(true);setError("");setNotice("");
+    try{
+      const purchase=await purchaseGooglePlayPro(googleConfig,googleContext.account_token);
+      if(!purchase.purchaseToken){setNotice(t("billingReturnProcessing"));return}
+      const next=await api.googlePlayBillingVerify(purchase.purchaseToken);
+      setEntitlement(next);await load();setNotice(next.active?t("billingActivated"):t("billingReturnProcessing"));
+    }catch{setError(t("billingError"))}finally{setBusy(false)}
+  }
+  async function manageGooglePlay(){
+    setError("");
+    try{await manageGooglePlaySubscriptions()}catch{setError(t("billingError"))}
   }
   async function saveProfile(e:React.FormEvent){
     e.preventDefault();setError("");
@@ -82,11 +142,11 @@ export function BillingPage(){
 
   if(loading||native===null||!entitlement||!config)return <Loading/>;
   const active=entitlement.active;
-  const pending=entitlement.provider==="mollie"&&entitlement.status==="pending";
+  const pending=entitlement.status==="pending"&&(entitlement.provider==="mollie"||entitlement.provider==="google");
   const price=config.amount?new Intl.NumberFormat(locale,{style:"currency",currency:config.currency}).format(Number(config.amount)):"";
   const provider=providerLabel(entitlement.provider,t);
   const status=statusLabel(entitlement.status,t);
-  const showMollieDetails=!native||entitlement.provider==="mollie"||invoices.length>0;
+  const showMollieDetails=entitlement.provider==="mollie"||invoices.length>0||(!native&&!active);
   const openRenewalInvoice=invoices.find(item=>OPEN_INVOICE_STATUSES.has(item.status));
   const latestPaidInvoice=invoices.find(item=>item.status==="paid");
   const renewalInvoice=openRenewalInvoice??latestPaidInvoice;
@@ -94,12 +154,12 @@ export function BillingPage(){
   const renewalDate=openRenewalInvoice?.period_start??latestPaidInvoice?.period_end??entitlement.expires_at;
 
   return <>
-    <div className="page-title"><div><h1>{t("billingTitle")}</h1><div className="muted">{t("billingSubtitle")}</div></div><button className="button secondary" onClick={refresh} disabled={busy}>{t("billingRefresh")}</button></div>
+    <div className="page-title"><div><h1>{t("billingTitle")}</h1><div className="muted">{t("billingSubtitle")}</div></div></div>
     {error&&<div className="notice error">{error}</div>}{notice&&<div className="notice success">{notice}</div>}
     <div className="split billing-plan-grid">
       <section className="card"><div className="muted">{t("billingCurrentPlan")}</div><div className="payment-amount">{active?t("billingPro"):t("billingFree")}</div><p className="muted">{active?t("billingProHint"):t("billingFreeHint")}</p>{!active&&!pending&&<div className="notice">{t("billingFreeRegistration")}</div>}{(active||pending)&&<div className="stack">{provider&&<div className="row between"><span className="muted">{t("billingProvider")}</span><strong>{provider}</strong></div>}{status&&<div className="row between"><span className="muted">{t("billingStatus")}</span><span className={`status-pill ${entitlement.status??""}`}>{status}</span></div>}{active&&entitlement.expires_at&&<div className="notice">{t("billingEndsAt",{date:formatDate(entitlement.expires_at,locale)})}</div>}</div>}</section>
       <section className="card">
-        {native?<><h3>{t("billingPro")}</h3><p className="muted">{t("billingNativeStoreHint")}</p></>:active?<><h3>{provider||t("billingPro")}</h3>{entitlement.provider==="mollie"&&<><div className="billing-renewal-row"><span className="muted">{t("billingRenews")}</span><RenewalSwitch checked={Boolean(entitlement.auto_renew)} disabled={busy} label={t("billingRenews")} onChange={updateAutoRenew}/></div>{entitlement.auto_renew?<><p className="muted">{renewalDate?t("billingNextRenewal",{date:formatDate(renewalDate,locale),price:renewalPrice}):t("billingProHint")}</p><div className="notice">{t("billingAutoDebitMandate")}</div></>:entitlement.expires_at&&<div className="notice">{t("billingCancelledNotice",{date:formatDate(entitlement.expires_at,locale)})}</div>}</>}</>:pending?<><h3>{t("billingReturnProcessing")}</h3><p className="muted">{t("billingProHint")}</p><div className="actions"><button className="button secondary" onClick={refresh} disabled={busy}>{t("billingRefresh")}</button><button className="button" onClick={startCheckout} disabled={busy}>{t("billingUpgrade")}</button></div></>:config.available?<><h3>{t("billingPro")}</h3><p><strong>{t("billingPriceYear",{price})}</strong></p><div className="billing-renewal-row"><span className="muted">{t("billingRenews")}</span><RenewalSwitch checked disabled label={t("billingRenews")} onChange={()=>{}}/></div><div className="notice">{t("billingAutoDebitMandate")}</div><p className="muted">{t("billingProHint")}</p>{config.environment==="test"&&<div className="notice"><strong>{t("billingTestMode")}</strong><div>{t("billingTestModeHint")}</div></div>}<button className="button" onClick={startCheckout} disabled={busy||!profile}>{busy?t("billingOpeningCheckout"):t("billingUpgrade")}</button>{!profile&&<button type="button" className="billing-profile-jump" onClick={openBillingProfile}>{t("billingProfileRequired")}</button>}</>:<><h3>{t("billingUnavailable")}</h3><p className="muted">{t("billingUnavailableHint")}</p></>}
+        {native?(platform==="android"?(entitlement.provider==="google"&&(active||pending)?<><h3>{t("billingManagedGoogle")}</h3><p className="muted">{t("billingNativeStoreHint")}</p>{active&&<div className="billing-renewal-row"><span className="muted">{t("billingRenews")}</span><strong>{entitlement.auto_renew===false?t("billingNo"):t("billingYes")}</strong></div>}{entitlement.auto_renew===false&&entitlement.expires_at&&<div className="notice">{t("billingCancelledNotice",{date:formatDate(entitlement.expires_at,locale)})}</div>}{pending&&<p className="muted">{t("billingReturnProcessing")}</p>}<div className="actions"><button className="button secondary" onClick={syncGoogle} disabled={busy}>{t("billingStoreSync")}</button>{googleRuntime&&<button className="button secondary" onClick={manageGooglePlay} disabled={busy}>{t("billingStoreManage")}</button>}</div></>:active?<><h3>{provider||t("billingPro")}</h3><p className="muted">{t("billingNativeStoreHint")}</p></>:googleConfig?.available&&googleRuntime&&googleContext?.purchase_allowed?<><h3>{t("billingPro")}</h3>{googlePrice&&<p><strong>{t("billingPriceYear",{price:googlePrice})}</strong></p>}<p className="muted">{t("billingNativeStoreHint")}</p><button className="button" onClick={startGooglePlay} disabled={busy}>{t("billingUpgrade")}</button></>:<><h3>{t("billingPro")}</h3><p className="muted">{t("billingNativeStoreHint")}</p></>):<><h3>{t("billingPro")}</h3><p className="muted">{t("billingNativeStoreHint")}</p></>):active?<><h3>{provider||t("billingPro")}</h3>{entitlement.provider==="mollie"&&<><div className="billing-renewal-row"><span className="muted">{t("billingRenews")}</span><RenewalSwitch checked={Boolean(entitlement.auto_renew)} disabled={busy} label={t("billingRenews")} onChange={updateAutoRenew}/></div>{entitlement.auto_renew?<><p className="muted">{renewalDate?t("billingNextRenewal",{date:formatDate(renewalDate,locale),price:renewalPrice}):t("billingProHint")}</p><div className="notice">{t("billingAutoDebitMandate")}</div></>:entitlement.expires_at&&<div className="notice">{t("billingCancelledNotice",{date:formatDate(entitlement.expires_at,locale)})}</div>}<div className="actions"><button className="button secondary" onClick={refresh} disabled={busy}>{t("billingMollieSync")}</button></div></>}{entitlement.provider==="google"&&<><div className="billing-renewal-row"><span className="muted">{t("billingRenews")}</span><strong>{entitlement.auto_renew===false?t("billingNo"):t("billingYes")}</strong></div>{entitlement.auto_renew===false&&entitlement.expires_at&&<div className="notice">{t("billingCancelledNotice",{date:formatDate(entitlement.expires_at,locale)})}</div>}<div className="actions"><button className="button secondary" onClick={syncGoogle} disabled={busy}>{t("billingStoreSync")}</button></div></>}</>:pending?<><h3>{t("billingReturnProcessing")}</h3><p className="muted">{t("billingProHint")}</p><div className="actions">{entitlement.provider==="google"?<button className="button secondary" onClick={syncGoogle} disabled={busy}>{t("billingStoreSync")}</button>:<button className="button secondary" onClick={refresh} disabled={busy}>{t("billingMollieSync")}</button>}{entitlement.provider==="mollie"&&<button className="button" onClick={startCheckout} disabled={busy}>{t("billingUpgrade")}</button>}</div></>:config.available?<><h3>{t("billingPro")}</h3><p><strong>{t("billingPriceYear",{price})}</strong></p><div className="billing-renewal-row"><span className="muted">{t("billingRenews")}</span><RenewalSwitch checked disabled label={t("billingRenews")} onChange={()=>{}}/></div><div className="notice">{t("billingAutoDebitMandate")}</div><p className="muted">{t("billingProHint")}</p>{config.environment==="test"&&<div className="notice"><strong>{t("billingTestMode")}</strong><div>{t("billingTestModeHint")}</div></div>}<button className="button" onClick={startCheckout} disabled={busy||!profile}>{busy?t("billingOpeningCheckout"):t("billingUpgrade")}</button>{!profile&&<button type="button" className="billing-profile-jump" onClick={openBillingProfile}>{t("billingProfileRequired")}</button>}</>:<><h3>{t("billingUnavailable")}</h3><p className="muted">{t("billingUnavailableHint")}</p></>}
       </section>
     </div>
 
