@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
 from app.api.deps import require_platform_admin
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.entities import Organization, User
 from app.models.platform import PlatformAdminAudit
@@ -34,6 +35,14 @@ async def create_customer_support_session(
 
     async with SessionLocal.begin() as session:
         organization = await session.get(Organization, organization_id)
+        if organization is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer user not found")
+        organization_emails = list(
+            await session.scalars(select(User.email).where(User.organization_id == organization_id))
+        )
+        if any(email.casefold() in settings.platform_admin_emails for email in organization_emails):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer user not found")
+
         target_user = await session.scalar(
             select(User).where(
                 User.id == user_id,
@@ -41,7 +50,7 @@ async def create_customer_support_session(
                 User.is_active.is_(True),
             )
         )
-        if organization is None or target_user is None:
+        if target_user is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer user not found")
         if is_platform_admin(target_user):
             raise HTTPException(
