@@ -11,12 +11,17 @@ from app.services.api_access import credential_is_active, decode_scopes
 from app.services.auth import (
     ADMIN_REQUEST_HEADER,
     ADMIN_SESSION_COOKIE,
+    ADMIN_SESSION_HASH_NAMESPACE,
     ADMIN_SESSION_HOURS,
     ADMIN_TOKEN_PREFIX,
     is_platform_admin,
     token_hash,
 )
-from app.services.support_sessions import decode_support_token, support_request_is_allowed
+from app.services.support_sessions import (
+    SUPPORT_SESSION_HASH_NAMESPACE,
+    decode_support_token,
+    support_request_is_allowed,
+)
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -45,9 +50,14 @@ async def get_current_auth_session(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired") from exc
 
+    session_hash = (
+        token_hash(token, SUPPORT_SESSION_HASH_NAMESPACE)
+        if support_claims is not None
+        else token_hash(token)
+    )
     auth_session = await session.scalar(
         select(AuthSession).where(
-            AuthSession.token_hash == token_hash(token),
+            AuthSession.token_hash == session_hash,
             AuthSession.expires_at > datetime.now(UTC),
         )
     )
@@ -89,7 +99,7 @@ async def get_current_admin_auth_session(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin authentication required")
     auth_session = await session.scalar(
         select(AuthSession).where(
-            AuthSession.token_hash == token_hash(token),
+            AuthSession.token_hash == token_hash(token, ADMIN_SESSION_HASH_NAMESPACE),
             AuthSession.expires_at > datetime.now(UTC),
         )
     )
