@@ -64,9 +64,12 @@ async def create_auth_session(
     hash_namespace: str = "",
 ) -> str:
     token = f"{token_prefix}{secrets.token_urlsafe(32)}"
+    effective_namespace = hash_namespace or (
+        ADMIN_SESSION_HASH_NAMESPACE if token_prefix == ADMIN_TOKEN_PREFIX else ""
+    )
     auth_session = AuthSession(
         user_id=user.id,
-        token_hash=_hash_token(token, hash_namespace),
+        token_hash=_hash_token(token, effective_namespace),
         expires_at=datetime.now(UTC) + (ttl or timedelta(days=SESSION_DAYS)),
     )
     session.add(auth_session)
