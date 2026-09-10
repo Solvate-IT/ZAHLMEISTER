@@ -4,7 +4,7 @@ import Link from "next/link";
 import {useEffect,useMemo,useState} from "react";
 import {useRouter,useSearchParams} from "next/navigation";
 import {AdminApiError,adminApi} from "@/lib/adminApi";
-import type {AccountUser,PlatformAdminSummary,PlatformCustomer,PlatformCustomerDetail} from "@/lib/types";
+import type {AccountUser,PlatformAdminSummary,PlatformCustomer,PlatformCustomerDetail,PlatformCustomerUser} from "@/lib/types";
 import {Brand} from "./Brand";
 import {LocaleSelect} from "./LocaleSelect";
 import {PasswordInput} from "./PasswordInput";
@@ -96,6 +96,32 @@ export function PlatformAdmin(){
     if(!window.confirm(t("adminRevokeProConfirm")))return;
     try{await adminApi.revokeAdminPro(customer.organization_id);await load()}catch{setNotice(t("requestFailed"))}
   }
+  async function startSupport(customer:PlatformCustomer,user:PlatformCustomerUser){
+    if(!user.is_active)return;
+    const reason=window.prompt(t("adminSupportReason"))?.trim();
+    if(!reason)return;
+    if(reason.length<3){setNotice(t("adminSupportReasonRequired"));return}
+    const supportTab=window.open("about:blank","_blank");
+    if(!supportTab){setNotice(t("adminSupportPopupBlocked"));return}
+    supportTab.opener=null;
+    try{
+      const support=await adminApi.startSupport(customer.organization_id,user.id,reason);
+      const fragment=new URLSearchParams({
+        access_token:support.access_token,
+        expires_at:support.expires_at,
+        user_id:support.user_id,
+        user_name:support.user_name,
+        user_email:support.user_email,
+        organization_id:support.organization_id,
+        organization_name:support.organization_name,
+      });
+      supportTab.location.replace(`/support-access#${fragment.toString()}`);
+    }catch(error){
+      supportTab.close();
+      if(error instanceof AdminApiError&&error.status===401){setAccess("login");setNotice("");return}
+      setNotice(t("adminSupportOpenError"));
+    }
+  }
   function openCustomer(id:string){router.push(`/admin?customer=${encodeURIComponent(id)}`)}
 
   if(access==="checking"||(access==="authorized"&&loading))return <AdminFrame><Loading/></AdminFrame>;
@@ -105,7 +131,7 @@ export function PlatformAdmin(){
   return <div className="page-bg">
     <header className="topbar"><Link href="/app"><Brand compact/></Link><div className="top-actions"><LocaleSelect/><Link className="button secondary small" href="/app">{t("backToApp")}</Link></div></header>
     <main className="container section">
-      {customerId?<CustomerDetail detail={detail} notice={notice} onBack={()=>router.push("/admin")} onRename={rename} onToggleApi={toggleApi} onGrantPro={grantPro} onRevokePro={revokePro} onReload={load}/>:<>
+      {customerId?<CustomerDetail detail={detail} notice={notice} onBack={()=>router.push("/admin")} onRename={rename} onToggleApi={toggleApi} onGrantPro={grantPro} onRevokePro={revokePro} onStartSupport={startSupport} onReload={load}/>:<>
         <div className="page-title"><div><h1>{t("platformAdmin")}</h1><p className="muted">{t("platformAdminHint")}</p></div></div>
         {notice&&<div className="notice">{notice}</div>}
         {summary&&<div className="grid-4"><Metric label={t("adminCustomers")} value={summary.customers}/><Metric label={t("adminFreeCustomers")} value={summary.free_customers}/><Metric label={t("adminProCustomers")} value={summary.pro_customers}/><Metric label={t("adminActiveUsers")} value={summary.active_users}/></div>}
@@ -145,7 +171,7 @@ function AdminLogin({onAuthenticated}:{onAuthenticated:(user:AccountUser)=>void}
   </div>;
 }
 
-function CustomerDetail({detail,notice,onBack,onRename,onToggleApi,onGrantPro,onRevokePro,onReload}:{detail:PlatformCustomerDetail|null;notice:string;onBack:()=>void;onRename:(c:PlatformCustomer)=>void;onToggleApi:(c:PlatformCustomer)=>void;onGrantPro:(c:PlatformCustomer)=>void;onRevokePro:(c:PlatformCustomer)=>void;onReload:()=>void}){
+function CustomerDetail({detail,notice,onBack,onRename,onToggleApi,onGrantPro,onRevokePro,onStartSupport,onReload}:{detail:PlatformCustomerDetail|null;notice:string;onBack:()=>void;onRename:(c:PlatformCustomer)=>void;onToggleApi:(c:PlatformCustomer)=>void;onGrantPro:(c:PlatformCustomer)=>void;onRevokePro:(c:PlatformCustomer)=>void;onStartSupport:(c:PlatformCustomer,u:PlatformCustomerUser)=>void;onReload:()=>void}){
   const {t,locale}=useI18n();
   if(!detail)return <><button className="button secondary small" onClick={onBack}>{t("adminBackToCustomers")}</button>{notice&&<div className="notice error">{notice}</div>}</>;
   const date=(value?:string|null)=>value?new Date(value).toLocaleString(locale):"—";
@@ -155,7 +181,7 @@ function CustomerDetail({detail,notice,onBack,onRename,onToggleApi,onGrantPro,on
     <div className="grid-4"><Metric label={t("adminPlan")} value={detail.plan.toUpperCase()}/><Metric label={t("users")} value={detail.user_count}/><Metric label={t("participants")} value={detail.participants}/><Metric label={t("collections")} value={detail.collections}/></div>
     <section className="card" style={{marginTop:20}}><h3>{t("adminCustomerOverview")}</h3><div className="grid-4"><Info label={t("language")} value={detail.locale}/><Info label={t("currency")} value={detail.currency}/><Info label={t("adminApiStatus")} value={detail.api_enabled?t("active"):t("statusDisabled")}/><Info label={t("lastLogin")} value={date(detail.last_login_at)}/></div><div className="actions" style={{marginTop:16}}><button className="button secondary" onClick={()=>onToggleApi(detail)}>{detail.api_enabled?t("adminDisableApi"):t("adminEnableApi")}</button>{detail.plan==="free"?<button className="button" onClick={()=>onGrantPro(detail)}>{t("adminGrantPro")}</button>:detail.billing_provider==="admin"?<button className="button ghost danger-text" onClick={()=>onRevokePro(detail)}>{t("adminRevokePro")}</button>:null}</div></section>
     <section className="card" style={{marginTop:20}}><h3>{t("adminBilling")}</h3><div className="grid-4"><Info label={t("adminBillingProvider")} value={detail.billing_provider??"—"}/><Info label={t("status")} value={detail.subscription_status??"—"}/><Info label={t("adminExpiresAt")} value={date(detail.subscription_expires_at)}/><Info label={t("adminSubscriptionCount")} value={String(detail.subscriptions.length)}/></div>{detail.subscriptions.length===0?<Empty text={t("adminNoSubscriptions")}/>:<div className="table-wrap" style={{marginTop:16}}><table className="table"><thead><tr><th>{t("adminBillingProvider")}</th><th>{t("adminProduct")}</th><th>{t("status")}</th><th>{t("adminPurchasedAt")}</th><th>{t("adminExpiresAt")}</th><th>{t("adminAutoRenew")}</th><th>{t("adminLastVerified")}</th></tr></thead><tbody>{detail.subscriptions.map(s=><tr key={s.id}><td>{s.provider}<div className="muted">{s.environment??"—"}</div></td><td>{s.product_id}</td><td><span className={`status-pill ${s.status==="active"||s.status==="grace_period"?"paid":""}`}>{s.status}</span></td><td>{date(s.purchased_at||s.created_at)}</td><td>{date(s.expires_at)}</td><td>{s.auto_renew===null||s.auto_renew===undefined?"—":s.auto_renew?t("yes"):t("no")}</td><td>{date(s.last_verified_at)}</td></tr>)}</tbody></table></div>}</section>
-    <section className="card" style={{marginTop:20}}><h3>{t("adminUsers")}</h3>{detail.users.length===0?<Empty/>:<div className="table-wrap"><table className="table"><thead><tr><th>{t("name")}</th><th>{t("email")}</th><th>{t("status")}</th><th>{t("adminEmailVerified")}</th><th>{t("adminCreatedAt")}</th><th>{t("lastLogin")}</th></tr></thead><tbody>{detail.users.map(u=><tr key={u.id}><td>{u.display_name}</td><td>{u.email}</td><td>{u.is_active?t("active"):t("statusDisabled")}</td><td>{u.email_verified?t("yes"):t("no")}</td><td>{date(u.created_at)}</td><td>{date(u.last_login_at)}</td></tr>)}</tbody></table></div>}</section>
+    <section className="card" style={{marginTop:20}}><h3>{t("adminUsers")}</h3><p className="muted">{t("adminSupportHint")}</p>{detail.users.length===0?<Empty/>:<div className="table-wrap"><table className="table"><thead><tr><th>{t("name")}</th><th>{t("email")}</th><th>{t("status")}</th><th>{t("adminEmailVerified")}</th><th>{t("adminCreatedAt")}</th><th>{t("lastLogin")}</th><th>{t("actions")}</th></tr></thead><tbody>{detail.users.map(u=><tr key={u.id}><td>{u.display_name}</td><td>{u.email}</td><td>{u.is_active?t("active"):t("statusDisabled")}</td><td>{u.email_verified?t("yes"):t("no")}</td><td>{date(u.created_at)}</td><td>{date(u.last_login_at)}</td><td>{u.is_active?<button className="button secondary small" onClick={()=>onStartSupport(detail,u)}>{t("adminViewAsUser")}</button>:"—"}</td></tr>)}</tbody></table></div>}</section>
   </>;
 }
 
