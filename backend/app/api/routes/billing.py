@@ -16,6 +16,8 @@ from app.schemas.billing import (
     BillingProfileRead,
     BillingProfileWrite,
     BillingPurchaseContextRead,
+    GooglePlayBillingConfigRead,
+    GooglePlayPurchaseVerifyWrite,
     MollieAutoRenewWrite,
     MollieBillingCheckoutRead,
     MollieBillingConfigRead,
@@ -25,6 +27,14 @@ from app.services.billing_tax import (
     BillingTaxInvalidVatNumber,
     BillingTaxUnsupportedJurisdiction,
     BillingTaxValidationUnavailable,
+)
+from app.services.google_play_billing import (
+    GooglePlayBillingUnavailable,
+    GooglePlayBillingVerificationError,
+    google_play_config,
+    process_google_rtdn,
+    sync_google_subscription,
+    verify_google_purchase,
 )
 from app.services.mollie_billing import (
     MollieBillingConflict,
@@ -120,6 +130,86 @@ async def get_purchase_context(
             detail="Unsupported billing provider",
         ) from exc
     return BillingPurchaseContextRead.model_validate(context)
+
+
+@router.get("/google/config", response_model=GooglePlayBillingConfigRead)
+async def google_config(_: User = Depends(get_current_user)) -> GooglePlayBillingConfigRead:
+    return GooglePlayBillingConfigRead.model_validate(google_play_config())
+
+
+@router.post("/google/verify", response_model=BillingEntitlementRead)
+async def google_verify(
+    payload: GooglePlayPurchaseVerifyWrite,
+    user: User = Depends(get_current_user),
+) -> BillingEntitlementRead:
+    try:
+        async with SessionLocal.begin() as session:
+            await verify_google_purchase(session, user.organization_id, payload.purchase_token)
+            item = await entitlement_for_organization(session, user.organization_id)
+    except GooglePlayBillingUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google Play billing is unavailable",
+        ) from exc
+    except GooglePlayBillingVerificationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The Google Play purchase could not be verified",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return _entitlement_read(item)
+
+
+@router.post("/google/sync", response_model=BillingEntitlementRead)
+async def google_sync(user: User = Depends(get_current_user)) -> BillingEntitlementRead:
+    try:
+        async with SessionLocal.begin() as session:
+            await sync_google_subscription(session, user.organization_id)
+            item = await entitlement_for_organization(session, user.organization_id)
+    except GooglePlayBillingUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google Play billing is unavailable",
+        ) from exc
+    except GooglePlayBillingVerificationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The Google Play subscription could not be verified",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return _entitlement_read(item)
+
+
+@router.post(
+    "/google/rtdn",
+    status_code=status.HTTP_204_NO_CONTENT,
+    include_in_schema=False,
+)
+async def google_rtdn(
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> None:
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook")
+    try:
+        async with SessionLocal.begin() as session:
+            await process_google_rtdn(session, payload, authorization)
+    except GooglePlayBillingUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google Play verification temporarily unavailable",
+        ) from exc
+    except GooglePlayBillingVerificationError as exc:
+        logger.warning("Rejected invalid Google Play RTDN webhook")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook") from exc
+    except ValueError:
+        logger.exception("Google Play RTDN could not update the account entitlement")
 
 
 @router.get("/profile", response_model=BillingProfileRead | None)
