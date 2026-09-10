@@ -42,12 +42,16 @@ from app.services.communications import test_smtp_imap
 from app.services.infobip import (
     connection_is_active,
     connection_webhook_url,
+    ensure_event_subscription,
     exchange_oauth_code,
     oauth_authorization_url,
     oauth_connection_config,
+    remove_all_event_subscriptions,
+    remove_event_subscription,
     test_connection as test_infobip_connection,
     validate_api_key,
     verify_oauth_state,
+    webhook_subscriptions_available,
 )
 from app.services.secrets import decrypt_config, encrypt_config
 
@@ -269,13 +273,17 @@ async def finish_infobip_oauth(code: str, state: str):
             organization_id=organization.id,
             provider="infobip",
         )
+        old_config = decrypt_config(connection.encrypted_config) if existing else {}
         if existing is None:
             session.add(connection)
         connection.auth_type = "oauth"
         connection.status = "connected"
         connection.account_label = str(payload.get("email") or payload.get("username") or "Infobip")
         connection.account_key = str(payload.get("accountKey") or "") or None
-        connection.encrypted_config = encrypt_config(oauth_connection_config(payload))
+        new_config = oauth_connection_config(payload)
+        if isinstance(old_config.get("subscriptions"), dict):
+            new_config["subscriptions"] = old_config["subscriptions"]
+        connection.encrypted_config = encrypt_config(new_config)
         connection.webhook_key = connection.webhook_key or secrets.token_urlsafe(32)
         connection.connected_at = datetime.now(UTC)
         connection.last_error = None
@@ -439,9 +447,19 @@ async def disconnect_connection(
     organization: Organization = Depends(get_organization),
 ) -> None:
     async with SessionLocal.begin() as session:
-        connection = await session.get(CommunicationConnection, connection_id)
+        connection = await session.get(CommunicationConnection, connection_id, with_for_update=True)
         if connection is None or connection.organization_id != organization.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
+        if connection.provider == "infobip":
+            try:
+                await remove_all_event_subscriptions(session, connection)
+            except Exception as exc:
+                connection.status = "error"
+                connection.last_error = str(exc)[:2000]
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Infobip webhook subscriptions could not be removed; the connection was kept",
+                ) from exc
         settings_rows = (
             await session.execute(
                 select(CommunicationChannelSetting).where(
@@ -499,6 +517,23 @@ async def test_connection_endpoint(
                 if connection is None or connection.organization_id != organization.id:
                     raise ValueError("Connection not found")
                 await test_infobip_connection(session, connection)
+                rows = (
+                    await session.execute(
+                        select(CommunicationChannelSetting).where(
+                            CommunicationChannelSetting.organization_id == organization.id,
+                            CommunicationChannelSetting.connection_id == connection.id,
+                            CommunicationChannelSetting.provider == "infobip",
+                            CommunicationChannelSetting.mode == "internal",
+                            CommunicationChannelSetting.channel.in_(("sms", "whatsapp")),
+                        )
+                    )
+                ).scalars().all()
+                for row in rows:
+                    if row.sender:
+                        await ensure_event_subscription(session, connection, row.channel, row.sender)
+                details["webhooks"] = (
+                    "configured" if webhook_subscriptions_available() else "requires public HTTPS"
+                )
         elif provider == "microsoft365":
             details = await microsoft365.test_connection(connection_id)
         else:
@@ -563,6 +598,7 @@ async def test_channel_endpoint(
         config = decrypt_config(stored.encrypted_config)
         provider = canonical_internal_provider(channel, stored.provider, config)
         connection_id = stored.connection_id
+        sender = stored.sender
 
     details: dict[str, str] = {}
     try:
@@ -576,6 +612,11 @@ async def test_channel_endpoint(
                 if connection is None or connection.organization_id != organization.id:
                     raise ValueError("Infobip connection missing")
                 await test_infobip_connection(session, connection)
+                if channel in {"sms", "whatsapp"} and sender:
+                    await ensure_event_subscription(session, connection, channel, sender)
+                    details["webhooks"] = (
+                        "configured" if webhook_subscriptions_available() else "requires public HTTPS"
+                    )
                 connection.status = "connected"
                 connection.last_error = None
                 connection.last_tested_at = tested_at
@@ -653,7 +694,9 @@ async def update_setting(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=f"Connect a {name} account first",
                 )
-            connection = await session.get(CommunicationConnection, payload.connection_id)
+            connection = await session.get(
+                CommunicationConnection, payload.connection_id, with_for_update=True
+            )
             if (
                 connection is None
                 or connection.organization_id != organization.id
@@ -699,6 +742,36 @@ async def update_setting(
 
         old_provider = canonical_internal_provider(channel, stored.provider, existing)
         old_connection_id = stored.connection_id
+        old_sender = stored.sender
+        if old_provider == "infobip" and old_connection_id is not None:
+            replacing_infobip_route = (
+                provider != "infobip"
+                or connection is None
+                or connection.id != old_connection_id
+                or (payload.sender or "").strip() != (old_sender or "").strip()
+            )
+            if replacing_infobip_route:
+                old_connection = await session.get(
+                    CommunicationConnection, old_connection_id, with_for_update=True
+                )
+                if old_connection is not None and old_connection.organization_id == organization.id:
+                    try:
+                        await remove_event_subscription(session, old_connection, channel)
+                    except Exception as exc:
+                        raise HTTPException(
+                            status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="The previous Infobip webhook subscription could not be removed",
+                        ) from exc
+
+        if provider == "infobip" and connection is not None and payload.sender:
+            try:
+                await ensure_event_subscription(session, connection, channel, payload.sender)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Infobip webhook subscription could not be configured",
+                ) from exc
+
         stored.mode = payload.mode
         stored.provider = provider
         stored.connection_id = connection.id if connection else None
