@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.routes.account import router as account_router
 from app.api.routes.admin import router as admin_router
+from app.api.routes.admin_support import router as admin_support_router
 from app.api.routes.api_access import router as api_access_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.bank_imports import router as bank_imports_router
@@ -20,12 +21,15 @@ from app.api.routes.payment_settings import router as payment_settings_router
 from app.api.routes.public_contact import router as public_contact_router
 from app.api.routes.public_payments import router as public_payments_router
 from app.api.routes.reports import router as reports_router
+from app.api.routes.support import router as support_router
 from app.api.routes.webhooks import router as webhooks_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
 api_router.include_router(auth_router)
+api_router.include_router(support_router)
 api_router.include_router(admin_router)
+api_router.include_router(admin_support_router)
 api_router.include_router(account_router)
 api_router.include_router(api_access_router)
 api_router.include_router(billing_router)
