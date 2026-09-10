@@ -33,6 +33,8 @@ write_secret_if_missing() {
 
 secure_internal_secret_permissions() {
   local environment="$1" target_dir="$2"
+  chmod 0755 "$target_dir"
+
   if [[ "$environment" == "production" ]]; then
     if [[ "$(id -u)" == "0" ]]; then
       chown -R 10001:10001 "$target_dir"
@@ -40,11 +42,13 @@ secure_internal_secret_permissions() {
       echo "Production internal secrets must be initialized by root or runtime user 10001:10001." >&2
       return 1
     fi
-    chmod 0750 "$target_dir"
     find "$target_dir" -maxdepth 1 -type f -exec chmod 0640 {} +
+    # PostgreSQL runs under its image-specific UID and only needs this one value.
+    chmod 0644 "$target_dir/postgres_password"
   else
-    chmod 0700 "$target_dir"
-    find "$target_dir" -maxdepth 1 -type f -exec chmod 0600 {} +
+    # Development containers use image-specific users as well. The directory is
+    # local, ignored by Git and contains machine-local generated values only.
+    find "$target_dir" -maxdepth 1 -type f -exec chmod 0644 {} +
   fi
 }
 
