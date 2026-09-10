@@ -62,6 +62,7 @@ async def get_current_auth_session(
         if (
             target_user is None
             or not target_user.is_active
+            or is_platform_admin(target_user)
             or target_user.organization_id != support_claims.organization_id
             or admin_user is None
             or not is_platform_admin(admin_user)
