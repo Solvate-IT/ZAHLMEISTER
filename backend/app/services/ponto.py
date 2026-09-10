@@ -10,7 +10,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode, urlparse, urlunparse
 
 import httpx
 
@@ -168,6 +168,12 @@ def _basic_auth() -> str:
     return "Basic " + base64.b64encode(raw).decode()
 
 
+def _revoke_url() -> str:
+    token = urlparse(settings.ponto_connect_token_url.strip())
+    path = token.path.rsplit("/", 1)[0] + "/revoke"
+    return urlunparse((token.scheme, token.netloc, path, "", "", ""))
+
+
 async def _token_request(data: dict[str, str]) -> dict[str, Any]:
     async with httpx.AsyncClient(verify=_ssl_context(), timeout=30) as client:
         response = await client.post(
@@ -184,6 +190,31 @@ async def _token_request(data: dict[str, str]) -> dict[str, Any]:
     if "access_token" not in payload:
         raise ValueError("Ponto token response did not contain an access token")
     return payload
+
+
+async def revoke_connection(connection: BankSyncConnection) -> None:
+    """Revoke the remote Ponto refresh token before local credentials are removed."""
+    config = decrypt_config(connection.encrypted_config)
+    stored_environment = str(config.get("ponto_environment") or "")
+    if stored_environment and stored_environment != settings.ponto_connect_environment:
+        raise ValueError("Ponto connection belongs to a different environment; reconnect it")
+    refresh_token = str(config.get("refresh_token") or "").strip()
+    if not refresh_token:
+        raise ValueError(
+            "Ponto refresh token is missing; revoke the integration in Ponto before disconnecting it locally"
+        )
+    async with httpx.AsyncClient(verify=_ssl_context(), timeout=30) as client:
+        response = await client.post(
+            _revoke_url(),
+            data={"token": refresh_token},
+            headers={
+                "Authorization": _basic_auth(),
+                "Accept": "application/vnd.api+json, application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+    if response.status_code not in {200, 204}:
+        response.raise_for_status()
 
 
 async def exchange_code(connection: BankSyncConnection, code: str) -> None:
@@ -268,14 +299,18 @@ def _safe_api_url(path_or_url: str) -> str:
     base = settings.ponto_connect_api_url.rstrip("/")
     url = (
         path_or_url
-        if path_or_url.startswith("https://")
+        if path_or_url.startswith(("http://", "https://"))
         else f"{base}/{path_or_url.lstrip('/')}"
     )
     parsed = urlparse(url)
     base_parsed = urlparse(base)
-    if parsed.scheme != "https" or parsed.hostname != base_parsed.hostname:
+    if parsed.hostname != base_parsed.hostname or not parsed.path.startswith(base_parsed.path.rstrip("/") + "/"):
         raise ValueError("Ponto API returned an unexpected pagination URL")
-    return url
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("Ponto API returned an unexpected pagination URL")
+    # The API is HTTPS-only, while some Ponto v2 pagination examples still expose
+    # http:// links. Upgrade same-host links rather than following plaintext HTTP.
+    return urlunparse(("https", parsed.netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
 
 
 async def _get(connection: BankSyncConnection, path_or_url: str) -> dict[str, Any]:
