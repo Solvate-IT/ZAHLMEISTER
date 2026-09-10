@@ -24,6 +24,25 @@ class BillingPurchaseContextRead(BaseModel):
     reason: str | None = None
 
 
+class GooglePlayBillingConfigRead(BaseModel):
+    available: bool
+    package_name: str
+    product_id: str
+    base_plan_id: str
+
+
+class GooglePlayPurchaseVerifyWrite(BaseModel):
+    purchase_token: str = Field(min_length=1, max_length=4096)
+
+    @field_validator("purchase_token")
+    @classmethod
+    def clean_purchase_token(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Purchase token must not be empty")
+        return value
+
+
 class MollieBillingConfigRead(BaseModel):
     available: bool
     product_id: str
