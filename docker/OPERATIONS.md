@@ -6,27 +6,22 @@ Production runs PostgreSQL, FastAPI/worker and the static Next.js frontend in Do
 
 ## Environment configuration
 
-Tracked configuration lives in `.env.development` and `.env.production`. Both files must expose the same configuration keys; environment-specific values may differ. Secrets and installation-specific overrides belong only in the ignored `.env`.
+Tracked configuration lives in `.env.development` and `.env.production`. Both files must expose the same configuration keys and the same private-key markers; environment-specific values may differ.
 
-`.env` must contain:
+The ignored `.env` contains only:
 
-```env
-ENVIRONMENT=development
-```
+- `ENVIRONMENT=development` or `ENVIRONMENT=production`
+- private/secret values whose keys are explicitly marked in both tracked environment files as `# KEY=  # set inside .env`
 
-or:
+Normal configuration must not be duplicated in `.env`. The shared loader rejects unexpected active keys there.
 
-```env
-ENVIRONMENT=production
-```
+The Docker scripts load `.env.${ENVIRONMENT}` first and `.env` second, so approved private values override the tracked configuration. Existing `*_FILE` secret mechanisms remain supported.
 
-The Docker scripts load `.env.${ENVIRONMENT}` first and `.env` second, so private values override the tracked defaults. Secret keys remain documented in both tracked environment files as comments such as `# MOLLIE_BILLING_API_KEY=  # set inside .env`. Existing `*_FILE` secret mechanisms remain supported.
-
-`manage.sh`, pre-deployment and maintenance scripts share `scripts/env.sh`, which also fails when `.env.development` and `.env.production` have different key sets.
+`manage.sh`, pre-deployment and maintenance scripts share `scripts/env.sh`. It fails when `.env.development` and `.env.production` have different key sets or private markers, or when `.env` contains non-private configuration.
 
 ## Production start
 
-1. Set `ENVIRONMENT=production` and production-specific private values in `.env`.
+1. Set `ENVIRONMENT=production` and required private values in `.env`.
 2. Configure required secret files under `secrets/production/` where `*_FILE` is used.
 3. Run `./predeploy.sh`.
 4. Run `./manage.sh` and choose **Start**.
@@ -57,26 +52,3 @@ Zahlmeister currently uses an idempotent SQLAlchemy bootstrap as the schema sour
 ## Pre-deployment checks
 
 `./predeploy.sh` validates environment parity, Git tracking and Docker Compose, builds the actual production Dockerfiles, runs backend lint/tests and frontend build checks, inspects final runtime images and performs production-style smoke tests. Important runtime files are checked with `git ls-files` so local untracked files cannot hide packaging errors.
-
-## Native apps
-
-Native apps are built from `mobile/` because Android/iOS are store artifacts rather than production Docker images:
-
-```bash
-../mobile/tool/bootstrap_mobile.sh app.example.com https://app.example.com/api/v1
-```
-
-Android Studio/Xcode handle signing and store builds.
-
-## Backup / restore
-
-Maintenance scripts remain available under `scripts/backup.sh` and `scripts/restore.sh`. They use the same layered ENV logic as the main Docker workflow. Restore is destructive and requires `--force`.
-
-## Monitoring
-
-- `/api/v1/health`: process liveness.
-- `/api/v1/ready`: database, production configuration and worker heartbeat.
-- `/api/v1/health/metrics`: protected operational metrics.
-- `scripts/ops-status.sh`: local operational status.
-
-Production backend/worker logs use structured JSON. Secrets, request bodies and sensitive credentials must never be logged.
