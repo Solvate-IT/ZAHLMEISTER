@@ -3,7 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-ENV_FILE="${PREDEPLOY_ENV_FILE:-$SCRIPT_DIR/.env}"
+DOCKER_DIR="$SCRIPT_DIR"
+source "$SCRIPT_DIR/scripts/env.sh"
+
 PROD_FILE="$SCRIPT_DIR/compose.prod.yml"
 IMAGE_TAG="${IMAGE_TAG:-predeploy}"
 BACKEND_TEST_IMAGE="zahlmeister-backend-test:${IMAGE_TAG}"
@@ -28,14 +30,10 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-if [[ ! -f "$ENV_FILE" ]]; then
-  cp "$SCRIPT_DIR/.env.example" "$ENV_FILE"
-fi
-
 cd "$PROJECT_DIR"
 
 echo "== Zahlmeister pre-deployment checks =="
-echo "The same script is used locally and by the main-branch CI workflow."
+echo "Environment: $ENVIRONMENT"
 
 required_files=(
   "backend/pyproject.toml"
@@ -47,16 +45,18 @@ required_files=(
   "backend/tests/test_channel_strategy.py"
   "backend/tests/test_integrations.py"
   "frontend/package.json"
+  "frontend/package-lock.json"
   "frontend/next.config.ts"
   "frontend/tsconfig.json"
   "frontend/src/lib/i18n.tsx"
   "frontend/src/lib/native.ts"
   "frontend/public/manifest.webmanifest"
   "mobile/package.json"
+  "mobile/package-lock.json"
   "mobile/capacitor.config.ts"
   "mobile/tool/bootstrap_mobile.sh"
-  "docker/.env.example"
-  "docker/.env.production.example"
+  "docker/.env.development"
+  "docker/.env.production"
   "docker/compose.yml"
   "docker/compose.prod.yml"
   "docker/backend.Dockerfile"
@@ -64,6 +64,7 @@ required_files=(
   "docker/nginx.conf"
   "docker/manage.sh"
   "docker/predeploy.sh"
+  "docker/scripts/env.sh"
 )
 
 echo
@@ -85,10 +86,10 @@ echo "[2/11] Checking Git tracking and packaging inputs..."
 
   runtime_paths=(
     backend/app backend/locales backend/pyproject.toml
-    frontend/src frontend/public frontend/package.json frontend/next.config.ts frontend/tsconfig.json
-    mobile/assets mobile/mobile-links mobile/tool mobile/package.json mobile/capacitor.config.ts
-    docker/backend.Dockerfile docker/frontend.Dockerfile docker/compose.yml docker/compose.prod.yml
-    docker/nginx.conf docker/manage.sh docker/predeploy.sh docker/scripts
+    frontend/src frontend/public frontend/package.json frontend/package-lock.json frontend/next.config.ts frontend/tsconfig.json
+    mobile/assets mobile/mobile-links mobile/tool mobile/package.json mobile/package-lock.json mobile/capacitor.config.ts
+    docker/.env.development docker/.env.production docker/backend.Dockerfile docker/frontend.Dockerfile
+    docker/compose.yml docker/compose.prod.yml docker/nginx.conf docker/manage.sh docker/predeploy.sh docker/scripts
   )
   untracked="$(git status --porcelain --untracked-files=all -- "${runtime_paths[@]}" | awk 'substr($0,1,2)=="??" {print substr($0,4)}')"
   if [[ -n "$untracked" ]]; then
@@ -102,16 +103,17 @@ echo "[2/11] Git tracking check skipped (not inside a Git work tree)."
 fi
 
 echo
-echo "[3/11] Validating Compose, scripts and production defaults..."
-docker compose --env-file "$ENV_FILE" -f "$PROD_FILE" config -q
-docker compose --env-file "$ENV_FILE" -f "$SCRIPT_DIR/compose.yml" config -q
+echo "[3/11] Validating environment parity, Compose and scripts..."
+check_env_parity
+docker compose "${COMPOSE_ENV_ARGS[@]}" -f "$PROD_FILE" config -q
+docker compose "${COMPOSE_ENV_ARGS[@]}" -f "$SCRIPT_DIR/compose.yml" config -q
 bash -n "$SCRIPT_DIR/manage.sh" "$SCRIPT_DIR/predeploy.sh" "$SCRIPT_DIR"/scripts/*.sh "$PROJECT_DIR/mobile/tool/bootstrap_mobile.sh"
-if grep -q 'Mail.ReadWrite' "$SCRIPT_DIR/compose.prod.yml" "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env.production.example"; then
+if grep -q 'Mail.ReadWrite' "$SCRIPT_DIR/compose.prod.yml" "$SCRIPT_DIR/.env.development" "$SCRIPT_DIR/.env.production"; then
   echo "Microsoft 365 configuration still requests Mail.ReadWrite." >&2
   exit 1
 fi
-grep -q '^OAUTH_CALLBACK_BASE_URL=' "$SCRIPT_DIR/.env.production.example"
-grep -q '^PONTO_CONNECT_ENVIRONMENT=live$' "$SCRIPT_DIR/.env.production.example"
+grep -q '^OAUTH_CALLBACK_BASE_URL=' "$SCRIPT_DIR/.env.production"
+grep -q '^PONTO_CONNECT_ENVIRONMENT=live$' "$SCRIPT_DIR/.env.production"
 
 echo
 echo "[4/11] Building backend test image and running backend tests..."
@@ -152,12 +154,10 @@ docker build --target test -f "$SCRIPT_DIR/frontend.Dockerfile" -t "$FRONTEND_TE
 
 echo
 echo "[7/11] Building the actual production images..."
-IMAGE_TAG="$IMAGE_TAG" docker compose --env-file "$ENV_FILE" -f "$PROD_FILE" build backend frontend
+IMAGE_TAG="$IMAGE_TAG" docker compose "${COMPOSE_ENV_ARGS[@]}" -f "$PROD_FILE" build backend frontend
 
-APP_RUNTIME_UID_VALUE="$(sed -n 's/^APP_RUNTIME_UID=//p' "$ENV_FILE" | tail -n 1 | tr -d '"')"
-APP_RUNTIME_UID_VALUE="${APP_RUNTIME_UID_VALUE:-10001}"
-APP_RUNTIME_GID_VALUE="$(sed -n 's/^APP_RUNTIME_GID=//p' "$ENV_FILE" | tail -n 1 | tr -d '"')"
-APP_RUNTIME_GID_VALUE="${APP_RUNTIME_GID_VALUE:-10001}"
+APP_RUNTIME_UID_VALUE="$(env_value APP_RUNTIME_UID 10001)"
+APP_RUNTIME_GID_VALUE="$(env_value APP_RUNTIME_GID 10001)"
 
 echo
 echo "[8/11] Checking final runtime images..."
@@ -309,18 +309,12 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   fi
   if git ls-files | grep -E '\.(pem|key|p12|pfx|crt|cer)$' | grep -q .; then
     echo "Certificate/private-key material must not be tracked by Git." >&2
-    git ls-files | grep -E '\.(pem|key|p12|pfx|crt|cer)$' >&2 || true
     exit 1
   fi
   if git grep -nE 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY' -- . >/dev/null 2>&1; then
     echo "A private key marker exists in tracked repository content." >&2
-    git grep -nE 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY' -- . >&2 || true
     exit 1
   fi
-fi
-
-if [[ ! -f frontend/package-lock.json || ! -f mobile/package-lock.json ]]; then
-  echo "WARNING: npm lockfiles are missing; Node dependency resolution is not yet fully reproducible." >&2
 fi
 
 echo
