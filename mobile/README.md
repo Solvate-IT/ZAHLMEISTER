@@ -25,4 +25,4 @@ npm run prepare:google-play
 
 Zahlmeister Pro is a digital subscription and therefore uses Google Play Billing inside the Android app. The setup, product/base-plan contract, backend service account, real-time developer notifications, test matrix and Play Store release handoff are documented in [`PLAY_STORE.md`](./PLAY_STORE.md).
 
-Before store release, publish the association files documented under `mobile-links/`, configure Android/iOS signing, and commit the generated native projects after the first successful bootstrap so subsequent native customizations are reviewable.
+Before store release, configure Android/iOS signing and commit the generated native projects after the first successful bootstrap so subsequent native customizations are reviewable.
