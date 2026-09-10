@@ -12,9 +12,11 @@ from app.services.auth import (
     ADMIN_REQUEST_HEADER,
     ADMIN_SESSION_COOKIE,
     ADMIN_SESSION_HOURS,
+    ADMIN_TOKEN_PREFIX,
     is_platform_admin,
     token_hash,
 )
+from app.services.support_sessions import decode_support_token, support_request_is_allowed
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -25,22 +27,55 @@ async def get_session():
 
 
 async def get_current_auth_session(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     session: AsyncSession = Depends(get_session),
 ) -> AuthSession:
+    request.state.support_session = None
     if credentials is None or credentials.scheme.casefold() != "bearer":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required"
         )
 
+    token = credentials.credentials
+    if token.startswith(ADMIN_TOKEN_PREFIX):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
+    try:
+        support_claims = decode_support_token(token)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired") from exc
+
     auth_session = await session.scalar(
         select(AuthSession).where(
-            AuthSession.token_hash == token_hash(credentials.credentials),
+            AuthSession.token_hash == token_hash(token),
             AuthSession.expires_at > datetime.now(UTC),
         )
     )
     if auth_session is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
+
+    if support_claims is not None:
+        if auth_session.user_id != support_claims.user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
+        target_user = await session.get(User, support_claims.user_id)
+        admin_user = await session.get(User, support_claims.admin_user_id)
+        if (
+            target_user is None
+            or not target_user.is_active
+            or target_user.organization_id != support_claims.organization_id
+            or admin_user is None
+            or not is_platform_admin(admin_user)
+        ):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
+        if auth_session.expires_at > support_claims.expires_at + timedelta(seconds=1):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
+        if not support_request_is_allowed(request.method, request.url.path):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Support view is read-only",
+            )
+        request.state.support_session = support_claims
+
     return auth_session
 
 
@@ -49,7 +84,7 @@ async def get_current_admin_auth_session(
     session: AsyncSession = Depends(get_session),
 ) -> AuthSession:
     token = request.cookies.get(ADMIN_SESSION_COOKIE)
-    if not token:
+    if not token or not token.startswith(ADMIN_TOKEN_PREFIX):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin authentication required")
     auth_session = await session.scalar(
         select(AuthSession).where(
