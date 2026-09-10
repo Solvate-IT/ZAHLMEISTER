@@ -6,6 +6,18 @@ export class AdminApiError extends Error{
   constructor(message:string,public status:number){super(message)}
 }
 
+export interface PlatformSupportSession{
+  access_token:string;
+  expires_in:number;
+  expires_at:string;
+  user_id:string;
+  user_name:string;
+  user_email:string;
+  organization_id:string;
+  organization_name:string;
+  read_only:true;
+}
+
 function base():string{
   const configured=process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/,"");
   if(configured)return configured;
@@ -50,4 +62,5 @@ export const adminApi={
   updateCustomer:(id:string,payload:{organization_name?:string;api_enabled?:boolean})=>request<PlatformCustomer>(`/admin/customers/${id}`,{method:"PATCH",body:JSON.stringify(payload)}),
   grantPro:(id:string,expires_at:string|null=null)=>request<PlatformCustomer>(`/admin/customers/${id}/grant-pro`,{method:"POST",body:JSON.stringify({expires_at})}),
   revokeAdminPro:(id:string)=>request<PlatformCustomer>(`/admin/customers/${id}/revoke-admin-pro`,{method:"POST"}),
+  startSupport:(organizationId:string,userId:string,reason:string)=>request<PlatformSupportSession>(`/admin/customers/${organizationId}/users/${userId}/support-session`,{method:"POST",body:JSON.stringify({reason})}),
 };
