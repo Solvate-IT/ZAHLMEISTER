@@ -4,8 +4,9 @@ from uuid import uuid4
 import pytest
 
 from app.core.config import settings
-from app.services.auth import ADMIN_TOKEN_PREFIX
+from app.services.auth import ADMIN_SESSION_HASH_NAMESPACE, ADMIN_TOKEN_PREFIX, token_hash
 from app.services.support_sessions import (
+    SUPPORT_SESSION_HASH_NAMESPACE,
     SUPPORT_SESSION_MINUTES,
     build_support_token,
     decode_support_token,
@@ -83,5 +84,14 @@ def test_support_requests_are_read_only_except_explicit_logout() -> None:
     assert not support_request_is_allowed("DELETE", "/api/v1/participant-lists/123")
 
 
-def test_platform_admin_tokens_have_a_dedicated_namespace() -> None:
+def test_admin_and_support_session_hashes_are_domain_separated() -> None:
+    token = "same-secret-token"
+
     assert ADMIN_TOKEN_PREFIX == "zma1."
+    assert ADMIN_SESSION_HASH_NAMESPACE == "admin"
+    assert SUPPORT_SESSION_HASH_NAMESPACE == "support"
+    assert token_hash(token) != token_hash(token, ADMIN_SESSION_HASH_NAMESPACE)
+    assert token_hash(token) != token_hash(token, SUPPORT_SESSION_HASH_NAMESPACE)
+    assert token_hash(token, ADMIN_SESSION_HASH_NAMESPACE) != token_hash(
+        token, SUPPORT_SESSION_HASH_NAMESPACE
+    )
