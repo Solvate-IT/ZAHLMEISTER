@@ -244,6 +244,15 @@ def _subscription_marker(config: dict[str, Any], channel: str) -> dict[str, Any]
     return value if isinstance(value, dict) else None
 
 
+def _webhook_basic_password(connection: CommunicationConnection) -> str:
+    if not connection.webhook_key:
+        raise ValueError("Infobip webhook key is missing")
+    material = f"infobip-webhook-auth:{connection.webhook_key}".encode("utf-8")
+    return _b64url(
+        hmac.new(settings.app_secret.encode("utf-8"), material, hashlib.sha256).digest()
+    )
+
+
 async def _subscription_request(
     method: str,
     url: str,
@@ -299,11 +308,12 @@ async def ensure_event_subscription(
         if response.status_code != 404:
             response.raise_for_status()
 
-    if marker:
-        await remove_event_subscription(session, connection, channel)
-        authorization, base_url = await authorization_for_connection(session, connection)
-        config = decrypt_config(connection.encrypted_config)
-        endpoint = f"{base_url}/subscriptions/1/subscription/{channel.upper()}"
+    # The IDs are deterministic. Clean them even when local metadata was lost so
+    # reconnects and interrupted setup runs can self-heal instead of getting stuck
+    # behind an Infobip 409 conflict.
+    await remove_event_subscription(session, connection, channel)
+    authorization, base_url = await authorization_for_connection(session, connection)
+    endpoint = f"{base_url}/subscriptions/1/subscription/{channel.upper()}"
 
     webhook_url = connection_webhook_url(connection.webhook_key)
     payload = {
@@ -319,7 +329,7 @@ async def ensure_event_subscription(
                 "type": "BASIC",
                 "credentials": {
                     "username": INFOBIP_WEBHOOK_USERNAME,
-                    "password": connection.webhook_key,
+                    "password": _webhook_basic_password(connection),
                 },
             },
         },
@@ -360,14 +370,13 @@ async def remove_event_subscription(
         return
     config = decrypt_config(connection.encrypted_config)
     marker = _subscription_marker(config, channel)
-    if marker is None:
-        return
 
     authorization, base_url = await authorization_for_connection(session, connection)
     subscription_id, profile_id, auth_id = _subscription_ids(connection, channel)
-    subscription_id = str(marker.get("subscription_id") or subscription_id)
-    profile_id = str(marker.get("profile_id") or profile_id)
-    auth_id = str(marker.get("auth_id") or auth_id)
+    if marker:
+        subscription_id = str(marker.get("subscription_id") or subscription_id)
+        profile_id = str(marker.get("profile_id") or profile_id)
+        auth_id = str(marker.get("auth_id") or auth_id)
     urls = (
         f"{base_url}/subscriptions/1/subscription/{channel.upper()}/{quote(subscription_id, safe='')}",
         f"{base_url}/subscriptions/1/profiles/{quote(profile_id, safe='')}",
@@ -394,13 +403,8 @@ async def remove_all_event_subscriptions(
     session: AsyncSession,
     connection: CommunicationConnection,
 ) -> None:
-    config = decrypt_config(connection.encrypted_config)
-    subscriptions = config.get("subscriptions")
-    if not isinstance(subscriptions, dict):
-        return
-    for channel in tuple(subscriptions):
-        if channel in INFOBIP_SUBSCRIPTION_EVENTS:
-            await remove_event_subscription(session, connection, channel)
+    for channel in INFOBIP_SUBSCRIPTION_EVENTS:
+        await remove_event_subscription(session, connection, channel)
 
 
 def verify_webhook_basic_authorization(
@@ -424,7 +428,7 @@ def verify_webhook_basic_authorization(
     except (ValueError, UnicodeDecodeError):
         return False
     return hmac.compare_digest(username, INFOBIP_WEBHOOK_USERNAME) and hmac.compare_digest(
-        password, connection.webhook_key
+        password, _webhook_basic_password(connection)
     )
 
 
