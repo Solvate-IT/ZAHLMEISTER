@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.api.deps import get_organization
 from app.core.config import settings
@@ -206,7 +206,11 @@ async def get_accounts(organization: Organization = Depends(get_organization)) -
         rows = (
             await session.execute(
                 select(BankSyncAccount)
-                .where(BankSyncAccount.organization_id == organization.id)
+                .join(BankSyncConnection, BankSyncConnection.id == BankSyncAccount.connection_id)
+                .where(
+                    BankSyncAccount.organization_id == organization.id,
+                    BankSyncConnection.status != "disconnected",
+                )
                 .order_by(BankSyncAccount.name, BankSyncAccount.iban)
             )
         ).scalars().all()
@@ -262,8 +266,22 @@ async def disconnect(organization: Organization = Depends(get_organization)) -> 
         )
         if item is None or item.status == "disconnected":
             return
+        try:
+            await ponto.revoke_connection(item)
+        except Exception as exc:
+            item.status = "error"
+            item.last_error = str(exc)[:2000]
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Ponto could not be disconnected remotely; no local credentials were removed",
+            ) from exc
+
+        await session.execute(
+            delete(BankSyncAccount).where(BankSyncAccount.connection_id == item.id)
+        )
         item.status = "disconnected"
         item.encrypted_config = None
         item.connected_at = None
+        item.last_sync_at = None
         item.last_tested_at = None
         item.last_error = None
