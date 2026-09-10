@@ -2,17 +2,9 @@
 
 import {useState} from "react";
 import {useRouter} from "next/navigation";
-import {clearSupportSession,getSupportSessionInfo,readToken} from "@/lib/session";
+import {clearSupportSession,getSupportSessionInfo} from "@/lib/session";
+import {endSupportSessionRemote} from "@/lib/support";
 import {useI18n} from "@/lib/i18n";
-
-function apiBase():string{
-  const configured=process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/,"");
-  if(configured)return configured;
-  if(typeof window==="undefined")return "/api/v1";
-  return ["localhost","127.0.0.1"].includes(window.location.hostname)
-    ?"http://localhost:8000/api/v1"
-    :`${window.location.origin}/api/v1`;
-}
 
 export function SupportSessionBanner(){
   const router=useRouter();
@@ -25,14 +17,7 @@ export function SupportSessionBanner(){
   async function endSupport(){
     setBusy(true);setError("");
     try{
-      const token=await readToken();
-      if(token){
-        const response=await fetch(`${apiBase()}/auth/support-logout`,{
-          method:"POST",
-          headers:{Authorization:`Bearer ${token}`},
-        });
-        if(!response.ok&&response.status!==401)throw new Error("support logout failed");
-      }
+      await endSupportSessionRemote();
       clearSupportSession();
       router.replace("/admin");
       router.refresh();
