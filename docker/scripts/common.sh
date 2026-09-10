@@ -3,17 +3,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-ENV_FILE="${ZM_ENV_FILE:-$DOCKER_DIR/.env}"
-COMPOSE_FILE="${ZM_COMPOSE_FILE:-$DOCKER_DIR/compose.yml}"
+source "$SCRIPT_DIR/env.sh"
+
+COMPOSE_FILE="${ZM_COMPOSE_FILE:-$COMPOSE_FILE}"
 BACKUP_DIR="${ZM_BACKUP_DIR:-$DOCKER_DIR/backups}"
 
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "Environment file not found: $ENV_FILE" >&2
-  exit 1
-fi
-
 compose() {
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  docker compose "${COMPOSE_ENV_ARGS[@]}" -f "$COMPOSE_FILE" "$@"
 }
 
 mkdir -p "$BACKUP_DIR"
