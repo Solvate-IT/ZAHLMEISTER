@@ -68,3 +68,19 @@ class PlatformCustomerUpdate(BaseModel):
 
 class PlatformGrantProRequest(BaseModel):
     expires_at: datetime | None = None
+
+
+class PlatformSupportSessionCreate(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class PlatformSupportSessionRead(BaseModel):
+    access_token: str
+    expires_in: int
+    expires_at: datetime
+    user_id: str
+    user_name: str
+    user_email: str
+    organization_id: str
+    organization_name: str
+    read_only: bool = True
