@@ -31,6 +31,7 @@ from app.services.account_mail import password_reset_mail, verification_mail
 from app.services.auth import (
     ADMIN_SESSION_COOKIE,
     ADMIN_SESSION_HOURS,
+    ADMIN_TOKEN_PREFIX,
     auth_response,
     create_auth_session,
     hash_password,
@@ -208,6 +209,7 @@ async def admin_login(payload: LoginRequest, response: Response) -> UserRead:
                     session,
                     user,
                     ttl=timedelta(hours=ADMIN_SESSION_HOURS),
+                    token_prefix=ADMIN_TOKEN_PREFIX,
                 )
                 session.add(
                     PlatformAdminAudit(
