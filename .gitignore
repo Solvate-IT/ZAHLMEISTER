@@ -13,6 +13,8 @@
 !**/.env.development
 !**/.env.production
 
+docker/secrets/**/google_play_service_account.json
+
 # Certificates / private keys
 *.pem
 *.key
