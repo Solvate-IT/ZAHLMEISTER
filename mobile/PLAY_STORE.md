@@ -17,28 +17,33 @@ The shared product contract is:
 - Android package: `at.solvate.zahlmeister`
 
 Do not rename the product ID after publishing. Backend, frontend and Play Console must use the same
-identifier. The customer-facing price displayed in Android must come from Google Play ProductDetails,
+identifier. The customer-facing price displayed in Android comes from Google Play ProductDetails,
 not from the web/Mollie tariff response.
 
 ## 1. Generate and open Android project
 
-From the repository root:
+From the repository root, substitute the real production app host and API URL:
 
 ```bash
-./mobile/tool/bootstrap_mobile.sh zahlmeister.solvate.at https://zahlmeister.solvate.at/api/v1
+./mobile/tool/bootstrap_mobile.sh <app-host> https://<app-host>/api/v1
 cd mobile
 npm run prepare:google-play
 npm run open:android
 ```
 
-`prepare:google-play` installs `@capgo/native-purchases@8.7.0`, updates the npm lockfile and runs
-`cap sync android`. Review and commit the resulting `mobile/package.json`, `mobile/package-lock.json`
-and generated Android project changes on `development` before releasing.
+`prepare:google-play` installs the reviewed and pinned `@capgo/native-purchases@8.7.0`, removes its
+Android debug statements that would otherwise log purchase credentials/order identifiers, updates the
+npm lockfile, runs `cap sync android`, and runs `cap doctor`. The script fails closed if the reviewed
+plugin source layout changes.
 
-The frontend-side native bridge is already prepared in
-`frontend/src/lib/googlePlayPurchases.ts`. Purchases are started with the Zahlmeister organization
-UUID as the obfuscated Google Play account identifier and with automatic client-side acknowledgement
-disabled. The backend verifies the purchase first and acknowledges it server-side.
+Review and commit the resulting `mobile/package.json`, `mobile/package-lock.json` and generated Android
+project changes on `development` before releasing.
+
+The frontend-side purchase UI and native bridge are already prepared in
+`frontend/src/components/workspace/BillingPage.tsx` and `frontend/src/lib/googlePlayPurchases.ts`.
+Purchases use the Zahlmeister organization UUID as the obfuscated Google Play account identifier and
+have automatic client-side acknowledgement disabled. The backend verifies the purchase first and then
+acknowledges it server-side.
 
 ## 2. Play Console subscription
 
@@ -52,8 +57,8 @@ under Monetize with Play > Products > Subscriptions:
 5. Do not add introductory/free-trial offers unless the application UI and backend rules are updated
    intentionally for them. The prepared client selects the ordinary base-plan offer first.
 
-The Android UI must clearly show Play's localized price and yearly billing frequency before purchase,
-and must provide access to Google Play subscription management/cancellation.
+The prepared Android UI reads Play's localized price and provides access to Google Play subscription
+management/cancellation.
 
 ## 3. Google Play Developer API service account
 
@@ -94,8 +99,9 @@ POST /api/v1/billing/google/rtdn       (Google Pub/Sub only)
 ```
 
 `POST /billing/google/verify` accepts only the purchase token from the authenticated app. Product,
-account, price, status, expiry and renewal state are read from Google server-side and are not trusted
-from the device.
+account, status, expiry and renewal state are read from Google server-side and are not trusted from
+the device. The raw purchase token is stored only encrypted and is represented in ordinary database
+references by a SHA-256-derived identifier.
 
 ## 4. Real-time developer notifications
 
@@ -103,37 +109,36 @@ Configure Google Play Real-time developer notifications (RTDN) with Google Cloud
 authenticated push subscription to:
 
 ```text
-https://zahlmeister.solvate.at/api/v1/billing/google/rtdn
+<OAUTH_CALLBACK_BASE_URL>/api/v1/billing/google/rtdn
 ```
 
-Configure Pub/Sub push authentication with the same dedicated service account used for the Android
-Publisher API and use the push endpoint above as the OIDC audience. Ensure the Pub/Sub service agent
-is allowed to mint an identity token for that service account.
+`OAUTH_CALLBACK_BASE_URL` is the externally reachable backend base URL configured for the production
+installation. Configure Pub/Sub push authentication with the dedicated service account and use the
+exact push endpoint above as the OIDC audience. The backend validates the Google-signed OIDC token,
+its audience and service-account identity before processing the notification.
 
-The backend verifies the Google-signed OIDC token, package name and purchase against the Google Play
-Developer API. Cancellation, grace period, account hold and expiry therefore update the central
-`StoreSubscription`, so the same state is visible in web, Android and later iOS.
+The backend then re-reads the purchase from the Google Play Developer API. Cancellation, grace period,
+account hold and expiry update the central `StoreSubscription`, so web and Android see the same
+subscription state.
 
 Send a Play Console test notification and confirm HTTP 204 before production rollout.
 
-## 5. Client flow to finish
+## 5. Prepared client flow
 
-The remaining Android UI wiring should use this sequence:
+The Android UI already implements the intended sequence:
 
 1. Load `/billing/purchase-context?provider=google` and `/billing/google/config`.
-2. Only offer a new purchase when `purchase_allowed` and Google billing are available.
-3. Read the localized base-plan price with `getGooglePlayOffer()`.
-4. Start the purchase with `purchaseGooglePlayPro(config, account_token)`.
-5. Send the returned token to `POST /billing/google/verify` as
-   `{"purchase_token":"..."}`.
-6. Refresh `/billing/entitlement`; Pro is granted only after server verification.
-7. On Android app start/resume, query `currentGooglePlayPurchaseTokens()` when necessary and submit an
-   unlinked current purchase to `/billing/google/verify`. For an already linked Google subscription,
-   `/billing/google/sync` can refresh the server state directly.
-8. Use `manageGooglePlaySubscriptions()` for the user's manage/cancel action.
+2. Offer a new purchase only when `purchase_allowed` and Google billing are available.
+3. Read the localized base-plan price from Google Play.
+4. Start the Play purchase with the account UUID attached as the obfuscated account identifier.
+5. Send the returned purchase token to `POST /billing/google/verify`.
+6. Grant/show Pro only after the server-side verification result.
+7. Restore an existing current purchase for the same Zahlmeister account when the Android billing
+   screen is opened; already linked subscriptions can be refreshed via `/billing/google/sync`.
+8. Open native Google Play subscription management for cancellation/management.
 
-Do not acknowledge a new purchase in the app before backend verification. The backend acknowledges a
-verified Play purchase. If verification fails, do not grant Pro locally.
+Do not add a direct Mollie/Google Pay checkout to the Android app for Pro. Do not acknowledge a new
+purchase in the app before backend verification.
 
 ## 6. Test matrix before production
 
@@ -142,7 +147,7 @@ Use a Play Console internal testing track and license testers. At minimum verify
 - clean installation and login;
 - annual Pro product and localized price load correctly;
 - successful purchase activates the same Zahlmeister account on Android and web;
-- pending purchase does not activate Pro prematurely;
+- a pending purchase does not activate Pro prematurely;
 - reinstall/login restores the existing subscription;
 - cancelling renewal in Google Play leaves Pro active until paid expiry and shows renewal disabled;
 - grace period remains entitled;
@@ -151,7 +156,8 @@ Use a Play Console internal testing track and license testers. At minimum verify
 - a purchase bound to another Zahlmeister organization is rejected;
 - a Mollie/other-provider Pro entitlement cannot accidentally create a second active subscription;
 - server-side acknowledgement succeeds and test purchases are not automatically refunded;
-- no service-account JSON, purchase token or authentication token appears in logs/build artifacts.
+- no service-account JSON, purchase token, order identifier or authentication token appears in logs
+  or build artifacts.
 
 ## 7. Store release
 
