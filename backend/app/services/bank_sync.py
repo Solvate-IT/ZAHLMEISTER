@@ -147,11 +147,13 @@ async def refresh_accounts(session: AsyncSession, connection: BankSyncConnection
         ).scalars().all()
     }
     result: list[BankSyncAccount] = []
+    remote_ids: set[str] = set()
     for item in remote:
         parsed = parse_ponto_account(item)
         external_id = parsed["external_id"]
         if not external_id:
             continue
+        remote_ids.add(external_id)
         account = existing.get(external_id)
         if account is None:
             account = BankSyncAccount(
@@ -164,6 +166,14 @@ async def refresh_accounts(session: AsyncSession, connection: BankSyncConnection
         account.iban = parsed["iban"]
         account.currency = parsed["currency"]
         result.append(account)
+
+    # Ponto's account list is authoritative for the current integration. Remove
+    # accounts that were revoked in Ponto; historical transactions remain intact
+    # because their bank_sync_account_id uses ON DELETE SET NULL.
+    for external_id, account in existing.items():
+        if external_id not in remote_ids:
+            await session.delete(account)
+
     await session.flush()
     return result
 
@@ -303,4 +313,3 @@ async def sync_connection(session: AsyncSession, connection: BankSyncConnection)
         "duplicates": duplicates,
         "synced_at": now,
     }
-
