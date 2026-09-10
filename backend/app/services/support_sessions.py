@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -18,6 +19,7 @@ from app.services.auth import token_hash
 SUPPORT_SESSION_MINUTES = 60
 SUPPORT_TOKEN_PREFIX = "zms1"
 _SUPPORT_CLOCK_SKEW_SECONDS = 60
+_SUPPORT_TOKEN_MAX_LENGTH = 4096
 
 
 @dataclass(frozen=True)
@@ -94,18 +96,22 @@ def decode_support_token(
 ) -> SupportSessionClaims | None:
     if not token.startswith(f"{SUPPORT_TOKEN_PREFIX}."):
         return None
+    if len(token) > _SUPPORT_TOKEN_MAX_LENGTH:
+        raise ValueError("Invalid support session")
     parts = token.split(".")
     if len(parts) != 3:
         raise ValueError("Invalid support session")
     signing_input = f"{parts[0]}.{parts[1]}".encode("ascii")
     try:
         supplied_signature = _b64url_decode(parts[2])
-    except (ValueError, TypeError) as exc:
+    except (ValueError, TypeError, binascii.Error) as exc:
         raise ValueError("Invalid support session") from exc
     if not hmac.compare_digest(_signature(signing_input), supplied_signature):
         raise ValueError("Invalid support session")
     try:
         payload = json.loads(_b64url_decode(parts[1]).decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("Invalid support session")
         if payload.get("typ") != "support" or payload.get("ro") is not True:
             raise ValueError("Invalid support session")
         user_id = UUID(str(payload["uid"]))
@@ -113,7 +119,14 @@ def decode_support_token(
         organization_id = UUID(str(payload["oid"]))
         issued_at = datetime.fromtimestamp(int(payload["iat"]), tz=UTC)
         expires_at = datetime.fromtimestamp(int(payload["exp"]), tz=UTC)
-    except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        binascii.Error,
+    ) as exc:
         raise ValueError("Invalid support session") from exc
 
     current = now or datetime.now(UTC)
@@ -165,4 +178,5 @@ async def create_support_session(
 def support_request_is_allowed(method: str, path: str) -> bool:
     if method.upper() in {"GET", "HEAD", "OPTIONS"}:
         return True
-    return path.rstrip("/").endswith("/auth/support-logout")
+    normalized = path.rstrip("/")
+    return normalized in {"/auth/support-logout", "/api/v1/auth/support-logout"}
