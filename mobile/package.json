@@ -8,7 +8,7 @@
     "open:ios": "cap open ios",
     "android": "cap run android",
     "ios": "cap run ios",
-    "prepare:google-play": "./tool/prepare_google_play_billing.sh"
+    "prepare:google-play": "bash ./tool/prepare_google_play_billing.sh"
   },
   "dependencies": {
     "@capacitor/android": "8.5.1",
