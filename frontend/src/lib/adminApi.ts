@@ -1,14 +1,9 @@
 "use client";
 
-import type {AccountUser,PlatformAdminSummary,PlatformCustomer,PlatformCustomerUser,PlatformSubscription} from "@/lib/types";
+import type {AccountUser,PlatformAdminSummary,PlatformCustomer,PlatformCustomerDetail} from "@/lib/types";
 
 export class AdminApiError extends Error{
   constructor(message:string,public status:number){super(message)}
-}
-
-export interface PlatformCustomerDetail extends PlatformCustomer{
-  users:PlatformCustomerUser[];
-  subscriptions:PlatformSubscription[];
 }
 
 export interface PlatformSupportSession{
