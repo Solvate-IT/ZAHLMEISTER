@@ -58,7 +58,7 @@ def test_support_browser_context_does_not_replace_normal_customer_session() -> N
     assert "window.sessionStorage.setItem(SUPPORT_TOKEN_KEY" in session
     assert "window.localStorage.getItem(TOKEN_KEY)" in session
     assert "supportToken() ?? window.localStorage.getItem(TOKEN_KEY)" in session
-    assert 'history.replaceState(null,"","/support-access")' in entry
+    assert 'window.history.replaceState(null,"","/support-access")' in entry
     assert 'router.replace("/app")' in entry
     assert 'router.replace(support?"/admin":"/?auth=login")' in workspace
 
