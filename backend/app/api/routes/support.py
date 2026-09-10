@@ -30,8 +30,10 @@ async def support_logout(
                 action="support.impersonation_end",
                 details_json=json.dumps(
                     {
+                        "organization_id": str(claims.organization_id),
                         "target_user_id": str(claims.user_id),
                         "read_only": True,
+                        "expires_at": claims.expires_at.isoformat(),
                     },
                     separators=(",", ":"),
                 ),
