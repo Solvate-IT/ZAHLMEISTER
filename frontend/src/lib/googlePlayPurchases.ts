@@ -33,6 +33,11 @@ export interface GooglePlayOffer {
   currency:string;
 }
 
+export interface GooglePlayPurchaseResult {
+  purchaseToken:string|null;
+  completed:boolean;
+}
+
 export function isGooglePlayBillingRuntime():boolean{
   return typeof window!=="undefined"&&Capacitor.getPlatform()==="android"&&Capacitor.isPluginAvailable("NativePurchases");
 }
@@ -53,7 +58,7 @@ export async function getGooglePlayOffer(config:GooglePlayBillingConfig):Promise
   return {price:product.priceString,currency:product.currencyCode};
 }
 
-export async function purchaseGooglePlayPro(config:GooglePlayBillingConfig,accountToken:string):Promise<string>{
+export async function purchaseGooglePlayPro(config:GooglePlayBillingConfig,accountToken:string):Promise<GooglePlayPurchaseResult>{
   const product=await selectedOffer(config);
   const transaction=await NativePurchases.purchaseProduct({
     productIdentifier:config.product_id,
@@ -63,8 +68,7 @@ export async function purchaseGooglePlayPro(config:GooglePlayBillingConfig,accou
     appAccountToken:accountToken,
     autoAcknowledgePurchases:false,
   });
-  if(transaction.purchaseState!=="1"||!transaction.purchaseToken)throw new Error("Google Play purchase is not completed yet");
-  return transaction.purchaseToken;
+  return {purchaseToken:transaction.purchaseToken??null,completed:transaction.purchaseState==="1"};
 }
 
 export async function currentGooglePlayPurchaseTokens(config:GooglePlayBillingConfig,accountToken:string):Promise<string[]>{
