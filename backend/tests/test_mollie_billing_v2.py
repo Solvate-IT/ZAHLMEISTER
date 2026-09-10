@@ -5,7 +5,9 @@ from uuid import uuid4
 import pytest
 
 from app.models.billing import BillingCycle, BillingInvoice, BillingPaymentTransaction
+from app.models.platform import StoreSubscription
 from app.services import mollie_billing_core as core
+from app.services.mollie_billing_preferences import _can_reactivate
 from app.services.mollie_billing_webhooks import verify_sales_invoice_signature
 
 
@@ -147,6 +149,36 @@ def test_paid_receipt_model_links_payment_and_cycle() -> None:
     assert invoice.billing_cycle_id == cycle.id
     assert invoice.payment_transaction_id == transaction.id
     assert invoice.net_amount + invoice.tax_amount == invoice.gross_amount
+
+
+def test_cancelled_paid_subscription_can_reenable_renewal_with_stored_mandate() -> None:
+    now = datetime.now(UTC)
+    subscription = StoreSubscription(
+        organization_id=uuid4(),
+        provider="mollie",
+        product_id="zahlmeister.pro.yearly",
+        status="cancelled",
+        auto_renew=False,
+        expires_at=now + timedelta(days=30),
+    )
+    assert _can_reactivate(
+        subscription,
+        {"mollie_customer_id": "cst_example", "mandate_id": "mdt_example"},
+        now,
+    ) is True
+
+
+def test_auto_renew_cannot_reactivate_without_a_valid_stored_mandate() -> None:
+    now = datetime.now(UTC)
+    subscription = StoreSubscription(
+        organization_id=uuid4(),
+        provider="mollie",
+        product_id="zahlmeister.pro.yearly",
+        status="cancelled",
+        auto_renew=False,
+        expires_at=now + timedelta(days=30),
+    )
+    assert _can_reactivate(subscription, {"mollie_customer_id": "cst_example"}, now) is False
 
 
 def test_multiple_webhook_signatures_accept_any_matching_signature(
