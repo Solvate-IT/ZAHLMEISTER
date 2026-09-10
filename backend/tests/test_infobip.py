@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from app.schemas.communications import CommunicationConnectionUpdate
 from app.services.infobip import (
     INFOBIP_WHATSAPP_TEMPLATE_NAME,
+    _webhook_basic_password,
     ensure_event_subscription,
     sign_oauth_state,
     verify_oauth_state,
@@ -127,7 +128,7 @@ async def test_infobip_messages_api_uses_approved_whatsapp_template(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_infobip_whatsapp_rejects_unapproved_custom_message(monkeypatch) -> None:
+async def test_infobip_whatsapp_rejects_unapproved_custom_message() -> None:
     from app.services.infobip import send_infobip_message
 
     content = CanonicalMessage(
@@ -149,14 +150,16 @@ async def test_infobip_whatsapp_rejects_unapproved_custom_message(monkeypatch) -
 
 
 @pytest.mark.asyncio
-async def test_infobip_subscription_uses_resource_and_basic_auth(monkeypatch) -> None:
+async def test_infobip_subscription_uses_resource_and_isolated_basic_auth(monkeypatch) -> None:
     calls = []
 
     class Response:
-        status_code = 201
+        def __init__(self, status_code: int):
+            self.status_code = status_code
 
         def raise_for_status(self):
-            return None
+            if self.status_code >= 400 and self.status_code != 404:
+                raise AssertionError(self.status_code)
 
     class Session:
         async def flush(self):
@@ -167,7 +170,7 @@ async def test_infobip_subscription_uses_resource_and_basic_auth(monkeypatch) ->
 
     async def fake_request(method, url, authorization, *, json_body=None):
         calls.append((method, url, authorization, json_body))
-        return Response()
+        return Response(201 if method == "POST" else 404)
 
     monkeypatch.setattr("app.services.infobip.settings.public_app_url", "https://zahlmeister.example")
     monkeypatch.setattr("app.services.infobip.authorization_for_connection", fake_authorization)
@@ -180,32 +183,39 @@ async def test_infobip_subscription_uses_resource_and_basic_auth(monkeypatch) ->
     )
 
     assert await ensure_event_subscription(Session(), connection, "whatsapp", "436601234567") is True
-    assert calls[0][0] == "POST"
-    assert calls[0][1].endswith("/subscriptions/1/subscription/WHATSAPP")
-    payload = calls[0][3]
+    assert [call[0] for call in calls[:3]] == ["DELETE", "DELETE", "DELETE"]
+    post = next(call for call in calls if call[0] == "POST")
+    assert post[1].endswith("/subscriptions/1/subscription/WHATSAPP")
+    payload = post[3]
     assert payload["events"] == ["DELIVERY", "SEEN", "INBOUND_MESSAGE"]
     assert payload["resources"] == ["436601234567"]
     assert payload["profile"]["webhook"]["notifyUrl"].endswith(
         "/api/v1/webhooks/infobip/very-long-random-webhook-key"
     )
     assert payload["profile"]["security"]["type"] == "BASIC"
+    password = payload["profile"]["security"]["credentials"]["password"]
+    assert password == _webhook_basic_password(connection)
+    assert password != connection.webhook_key
     stored = decrypt_config(connection.encrypted_config)
     assert stored["subscriptions"]["whatsapp"]["sender"] == "436601234567"
 
 
 def test_infobip_managed_webhook_requires_matching_basic_auth() -> None:
-    key = "some-random-webhook-secret"
     connection = SimpleNamespace(
-        webhook_key=key,
+        webhook_key="some-random-webhook-secret",
         encrypted_config=encrypt_config(
             {"subscriptions": {"whatsapp": {"subscription_id": "sub"}}}
         ),
     )
-    encoded = base64.b64encode(f"zahlmeister:{key}".encode()).decode()
+    password = _webhook_basic_password(connection)
+    encoded = base64.b64encode(f"zahlmeister:{password}".encode()).decode()
     assert verify_webhook_basic_authorization(f"Basic {encoded}", connection) is True
     assert verify_webhook_basic_authorization(None, connection) is False
-    wrong = base64.b64encode(b"zahlmeister:wrong").decode()
-    assert verify_webhook_basic_authorization(f"Basic {wrong}", connection) is False
+    assert password != connection.webhook_key
+    leaked_path_secret = base64.b64encode(
+        f"zahlmeister:{connection.webhook_key}".encode()
+    ).decode()
+    assert verify_webhook_basic_authorization(f"Basic {leaked_path_secret}", connection) is False
 
 
 @pytest.mark.asyncio
