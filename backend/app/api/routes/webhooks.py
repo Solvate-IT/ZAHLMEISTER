@@ -17,6 +17,7 @@ from app.models.entities import (
 )
 from app.services.channel_strategy import set_channel_knowledge
 from app.services.communications import normalize_phone
+from app.services.infobip import verify_webhook_basic_authorization
 from app.services.message_dispatch import queue_failed_channel_fallback
 from app.services.mollie import mollie_provider
 
@@ -398,6 +399,8 @@ async def _update_delivery(
 @router.post("/infobip/{webhook_key}", status_code=204)
 async def infobip_webhook(webhook_key: str, request: Request) -> Response:
     connection = await _connection(webhook_key)
+    if not verify_webhook_basic_authorization(request.headers.get("authorization"), connection):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook authentication")
     try:
         payload = await request.json()
     except Exception as exc:
