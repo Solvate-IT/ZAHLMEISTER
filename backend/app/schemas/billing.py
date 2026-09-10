@@ -39,6 +39,10 @@ class MollieBillingCheckoutRead(BaseModel):
     resumed: bool
 
 
+class MollieAutoRenewWrite(BaseModel):
+    enabled: bool
+
+
 class BillingProfileWrite(BaseModel):
     customer_type: Literal["consumer", "business"]
     given_name: str | None = Field(default=None, max_length=120)
