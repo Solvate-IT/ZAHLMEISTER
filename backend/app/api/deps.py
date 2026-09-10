@@ -113,7 +113,7 @@ async def get_current_user(
     session: AsyncSession = Depends(get_session),
 ) -> User:
     user = await session.get(User, auth_session.user_id)
-    if user is None or not user.is_active:
+    if user is None or not user.is_active or is_platform_admin(user):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account unavailable")
     return user
 
