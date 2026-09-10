@@ -3,6 +3,7 @@
   "version": "0.19.0",
   "private": true,
   "scripts": {
+    "postinstall": "bash ./tool/harden_native_purchases.sh",
     "sync": "cap sync",
     "open:android": "cap open android",
     "open:ios": "cap open ios",
