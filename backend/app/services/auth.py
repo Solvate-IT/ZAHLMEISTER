@@ -17,6 +17,7 @@ ADMIN_SESSION_HOURS = 8
 ADMIN_SESSION_COOKIE = "zahlmeister_admin_session"
 ADMIN_REQUEST_HEADER = "X-Admin-Request"
 ADMIN_TOKEN_PREFIX = "zma1."
+ADMIN_SESSION_HASH_NAMESPACE = "admin"
 
 
 def normalize_email(email: str) -> str:
@@ -49,8 +50,9 @@ def is_platform_admin(user: User) -> bool:
     )
 
 
-def _hash_token(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+def _hash_token(token: str, namespace: str = "") -> str:
+    value = f"{namespace}:{token}" if namespace else token
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 async def create_auth_session(
@@ -59,11 +61,12 @@ async def create_auth_session(
     *,
     ttl: timedelta | None = None,
     token_prefix: str = "",
+    hash_namespace: str = "",
 ) -> str:
     token = f"{token_prefix}{secrets.token_urlsafe(32)}"
     auth_session = AuthSession(
         user_id=user.id,
-        token_hash=_hash_token(token),
+        token_hash=_hash_token(token, hash_namespace),
         expires_at=datetime.now(UTC) + (ttl or timedelta(days=SESSION_DAYS)),
     )
     session.add(auth_session)
@@ -71,8 +74,8 @@ async def create_auth_session(
     return token
 
 
-def token_hash(token: str) -> str:
-    return _hash_token(token)
+def token_hash(token: str, namespace: str = "") -> str:
+    return _hash_token(token, namespace)
 
 
 def user_read(user: User, organization: Organization) -> UserRead:
