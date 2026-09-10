@@ -1,0 +1,28 @@
+type Messages = Record<string,string>;
+
+export const storeBillingMessages: Record<string,Messages> = {
+  bg:{billingStoreManage:"Управление на абонамента в Google Play",billingStoreSync:"Синхронизиране на абонамента"},
+  cs:{billingStoreManage:"Spravovat předplatné v Google Play",billingStoreSync:"Synchronizovat předplatné"},
+  da:{billingStoreManage:"Administrer abonnement i Google Play",billingStoreSync:"Synkroniser abonnement"},
+  de:{billingStoreManage:"Abo in Google Play verwalten",billingStoreSync:"Abo synchronisieren"},
+  el:{billingStoreManage:"Διαχείριση συνδρομής στο Google Play",billingStoreSync:"Συγχρονισμός συνδρομής"},
+  en:{billingStoreManage:"Manage subscription in Google Play",billingStoreSync:"Sync subscription"},
+  es:{billingStoreManage:"Gestionar suscripción en Google Play",billingStoreSync:"Sincronizar suscripción"},
+  et:{billingStoreManage:"Halda tellimust Google Plays",billingStoreSync:"Sünkrooni tellimus"},
+  fi:{billingStoreManage:"Hallinnoi tilausta Google Playssa",billingStoreSync:"Synkronoi tilaus"},
+  fr:{billingStoreManage:"Gérer l’abonnement dans Google Play",billingStoreSync:"Synchroniser l’abonnement"},
+  ga:{billingStoreManage:"Bainistigh an síntiús in Google Play",billingStoreSync:"Sioncronaigh an síntiús"},
+  hr:{billingStoreManage:"Upravljaj pretplatom u Google Playu",billingStoreSync:"Sinkroniziraj pretplatu"},
+  hu:{billingStoreManage:"Előfizetés kezelése a Google Playen",billingStoreSync:"Előfizetés szinkronizálása"},
+  it:{billingStoreManage:"Gestisci abbonamento in Google Play",billingStoreSync:"Sincronizza abbonamento"},
+  lt:{billingStoreManage:"Tvarkyti prenumeratą „Google Play“",billingStoreSync:"Sinchronizuoti prenumeratą"},
+  lv:{billingStoreManage:"Pārvaldīt abonementu Google Play",billingStoreSync:"Sinhronizēt abonementu"},
+  mt:{billingStoreManage:"Immaniġġja l-abbonament f’Google Play",billingStoreSync:"Issinkronizza l-abbonament"},
+  nl:{billingStoreManage:"Abonnement beheren in Google Play",billingStoreSync:"Abonnement synchroniseren"},
+  pl:{billingStoreManage:"Zarządzaj subskrypcją w Google Play",billingStoreSync:"Synchronizuj subskrypcję"},
+  pt:{billingStoreManage:"Gerir subscrição no Google Play",billingStoreSync:"Sincronizar subscrição"},
+  ro:{billingStoreManage:"Gestionează abonamentul în Google Play",billingStoreSync:"Sincronizează abonamentul"},
+  sk:{billingStoreManage:"Spravovať predplatné v Google Play",billingStoreSync:"Synchronizovať predplatné"},
+  sl:{billingStoreManage:"Upravljanje naročnine v Google Play",billingStoreSync:"Sinhroniziraj naročnino"},
+  sv:{billingStoreManage:"Hantera prenumeration i Google Play",billingStoreSync:"Synkronisera prenumeration"},
+};
