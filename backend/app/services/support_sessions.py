@@ -18,6 +18,7 @@ from app.services.auth import token_hash
 
 SUPPORT_SESSION_MINUTES = 60
 SUPPORT_TOKEN_PREFIX = "zms1"
+SUPPORT_SESSION_HASH_NAMESPACE = "support"
 _SUPPORT_CLOCK_SKEW_SECONDS = 60
 _SUPPORT_TOKEN_MAX_LENGTH = 4096
 
@@ -164,7 +165,7 @@ async def create_support_session(
     )
     auth_session = AuthSession(
         user_id=target_user.id,
-        token_hash=token_hash(token),
+        token_hash=token_hash(token, SUPPORT_SESSION_HASH_NAMESPACE),
         expires_at=expires_at,
     )
     session.add(auth_session)
