@@ -27,6 +27,7 @@ run_tests() { compose run --rm backend pytest -q; }
 
 while true; do
   frontend_port="$(env_value FRONTEND_PORT 3003)"
+  frontend_url="$(env_value PUBLIC_APP_URL "http://localhost:${frontend_port}")"
   mailpit_port="$(env_value MAILPIT_PORT 8028)"
   cat <<EOF
 ------------------------------------------------------------
@@ -44,7 +45,7 @@ while true; do
 10) Tests
  q) Quit
 ------------------------------------------------------------
- Frontend: ${PUBLIC_APP_URL:-http://localhost:${frontend_port}}
+ Frontend: ${frontend_url}
  Backend:  /api/v1/health and /api/v1/ready
  Mailpit:  http://localhost:${mailpit_port} (development only)
 EOF
