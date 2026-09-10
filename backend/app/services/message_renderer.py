@@ -41,6 +41,8 @@ class CanonicalMessage:
     payment_qr_url: str | None = None
     payment_qr_payload: str | None = None
     transport_key: str | None = None
+    language: str = "en"
+    whatsapp_template_values: tuple[str, ...] | None = None
 
     @property
     def payment_qr_included(self) -> bool:
@@ -54,6 +56,12 @@ class CanonicalMessage:
                 "payment_qr_included": self.payment_qr_included,
                 "payment_qr_url": self.payment_qr_url,
                 "payment_qr_payload": self.payment_qr_payload,
+                "language": self.language,
+                "whatsapp_template_values": (
+                    list(self.whatsapp_template_values)
+                    if self.whatsapp_template_values is not None
+                    else None
+                ),
             }
         )
 
@@ -102,11 +110,13 @@ async def render_collection_message(
     requested_locale = (
         participant_locale if isinstance(participant_locale, str) else None
     ) or organization.locale
+    requested_language = normalize_language(requested_locale)
 
     template_body: str | None = None
+    whatsapp_template_compatible = True
     override_translations = deserialize_collection_message_overrides(collection.message_overrides_json)
     if override_translations:
-        requested_language = normalize_language(requested_locale)
+        whatsapp_template_compatible = False
         template_body = override_translations.get(requested_language)
         if template_body is None:
             raise ValueError(
@@ -117,6 +127,7 @@ async def render_collection_message(
             raise ValueError("A database session is required to load the selected template")
         template = await session.get(MessageTemplate, collection.message_template_id)
         if template is not None:
+            whatsapp_template_compatible = bool(template.is_default)
             template_body = template_body_for_locale(
                 normalize_translations(template.translations_json),
                 requested_locale,
@@ -126,6 +137,7 @@ async def render_collection_message(
 
     include_link, include_qr = _message_options(collection, organization)
     if not include_link:
+        whatsapp_template_compatible = False
         body = "\n".join(
             line for line in body.splitlines() if "{{payment_link}}" not in line
         )
@@ -162,6 +174,20 @@ async def render_collection_message(
                 settings.public_app_url, collection_participant.public_token
             )
 
+    # Business-initiated WhatsApp messages require a Meta-approved template. The
+    # provider template mirrors Zahlmeister's protected default payment request and
+    # therefore can only be used when that canonical template is still intact.
+    whatsapp_values = None
+    if whatsapp_template_compatible:
+        whatsapp_values = (
+            values["contact"],
+            values["amount"],
+            values["collection_name"],
+            values["payment_link"],
+            values["payment_reference"],
+            values["name"],
+        )
+
     return CanonicalMessage(
         subject=collection.name,
         text=text,
@@ -169,6 +195,8 @@ async def render_collection_message(
         payment_qr_requested=include_qr,
         payment_qr_url=qr_url,
         payment_qr_payload=qr_payload,
+        language=requested_language,
+        whatsapp_template_values=whatsapp_values,
     )
 
 
@@ -183,6 +211,12 @@ def canonical_from_stored_message(message: CommunicationMessage) -> CanonicalMes
         metadata = {}
     if not isinstance(metadata, dict):
         metadata = {}
+    raw_template_values = metadata.get("whatsapp_template_values")
+    template_values = (
+        tuple(str(item) for item in raw_template_values)
+        if isinstance(raw_template_values, list)
+        else None
+    )
     return CanonicalMessage(
         subject=message.subject or "",
         text=message.body,
@@ -193,4 +227,6 @@ def canonical_from_stored_message(message: CommunicationMessage) -> CanonicalMes
             str(metadata["payment_qr_payload"]) if metadata.get("payment_qr_payload") else None
         ),
         transport_key=str(message.id),
+        language=str(metadata.get("language") or "en"),
+        whatsapp_template_values=template_values,
     )
