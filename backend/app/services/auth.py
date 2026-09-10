@@ -16,6 +16,7 @@ SESSION_DAYS = 30
 ADMIN_SESSION_HOURS = 8
 ADMIN_SESSION_COOKIE = "zahlmeister_admin_session"
 ADMIN_REQUEST_HEADER = "X-Admin-Request"
+ADMIN_TOKEN_PREFIX = "zma1."
 
 
 def normalize_email(email: str) -> str:
@@ -57,8 +58,9 @@ async def create_auth_session(
     user: User,
     *,
     ttl: timedelta | None = None,
+    token_prefix: str = "",
 ) -> str:
-    token = secrets.token_urlsafe(32)
+    token = f"{token_prefix}{secrets.token_urlsafe(32)}"
     auth_session = AuthSession(
         user_id=user.id,
         token_hash=_hash_token(token),
