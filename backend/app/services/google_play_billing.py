@@ -13,6 +13,7 @@ from urllib.parse import quote
 from uuid import UUID
 
 import httpx
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from sqlalchemy import select
@@ -60,7 +61,16 @@ def google_play_credentials_available() -> bool:
 
 
 def google_play_rtdn_audience() -> str:
-    return f"{settings.public_app_url.rstrip('/')}/api/v1/billing/google/rtdn"
+    return f"{settings.oauth_callback_base.rstrip('/')}/api/v1/billing/google/rtdn"
+
+
+def google_play_config() -> dict[str, object]:
+    return {
+        "available": google_play_credentials_available(),
+        "package_name": GOOGLE_PLAY_PACKAGE_NAME,
+        "product_id": GOOGLE_PLAY_PRODUCT_ID,
+        "base_plan_id": GOOGLE_PLAY_BASE_PLAN_ID,
+    }
 
 
 def _load_service_account() -> dict[str, str]:
@@ -335,12 +345,13 @@ class GooglePlayClient:
                 padding.PKCS1v15(),
                 hashes.SHA256(),
             )
-        except ValueError as exc:
+        except (InvalidSignature, ValueError) as exc:
             raise GooglePlayBillingVerificationError("Invalid Pub/Sub authentication") from exc
 
         now = int(time.time())
         issuer = str(claims.get("iss") or "")
         audience = claims.get("aud")
+        audiences = {str(item) for item in audience} if isinstance(audience, list) else {str(audience)}
         email = str(claims.get("email") or "")
         try:
             expires_at = int(claims.get("exp", 0))
@@ -350,7 +361,7 @@ class GooglePlayClient:
         credentials = _load_service_account()
         if issuer not in {"accounts.google.com", "https://accounts.google.com"}:
             raise GooglePlayBillingVerificationError("Invalid Pub/Sub authentication")
-        if audience != google_play_rtdn_audience():
+        if google_play_rtdn_audience() not in audiences:
             raise GooglePlayBillingVerificationError("Invalid Pub/Sub audience")
         if email != credentials["client_email"] or claims.get("email_verified") is not True:
             raise GooglePlayBillingVerificationError("Invalid Pub/Sub service account")
@@ -445,7 +456,9 @@ async def sync_google_subscription(
 
     token = purchase_token
     if not token and subscription is not None:
-        token = str(decrypt_config(subscription.verification_data_encrypted).get("purchase_token") or "")
+        token = str(
+            decrypt_config(subscription.verification_data_encrypted).get("purchase_token") or ""
+        )
     token = (token or "").strip()
     if not token:
         raise GooglePlayBillingVerificationError("Stored Google Play purchase token is missing")
@@ -496,3 +509,35 @@ def decode_rtdn_payload(payload: dict[str, Any]) -> tuple[str | None, str | None
     if not purchase_token:
         raise GooglePlayBillingVerificationError("Google Play notification token is missing")
     return str(message.get("messageId") or "") or None, purchase_token
+
+
+async def process_google_rtdn(
+    session: AsyncSession,
+    payload: dict[str, Any],
+    authorization: str | None,
+) -> UUID | None:
+    await google_play_client.verify_pubsub_oidc(authorization)
+    _message_id, purchase_token = decode_rtdn_payload(payload)
+    if purchase_token is None:
+        return None
+
+    provider_payload = await google_play_client.subscription(purchase_token)
+    organization_id = await organization_for_purchase_token(session, purchase_token)
+    if organization_id is None:
+        account_identifier = _account_identifier(provider_payload)
+        try:
+            organization_id = UUID(account_identifier) if account_identifier else None
+        except ValueError:
+            organization_id = None
+    if organization_id is None:
+        logger.info("Ignored Google Play notification for an unlinked purchase")
+        return None
+
+    verified = verified_subscription_from_google(
+        organization_id,
+        purchase_token,
+        provider_payload,
+        require_account_match=True,
+    )
+    await apply_verified_subscription(session, organization_id, verified)
+    return organization_id
