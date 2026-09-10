@@ -1,36 +1,36 @@
 x-backend-environment: &backend-environment
-  DATABASE_URL: ${DATABASE_URL}
   ENVIRONMENT: ${ENVIRONMENT}
-  APP_SECRET: ${APP_SECRET}
-  CORS_ORIGINS: ${CORS_ORIGINS}
-  PUBLIC_APP_URL: ${PUBLIC_APP_URL}
-  OAUTH_CALLBACK_BASE_URL: ${OAUTH_CALLBACK_BASE_URL:-}
+  DATABASE_URL_FILE: /run/secrets/internal/database_url
+  APP_SECRET_FILE: /run/secrets/internal/app_secret
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3003,capacitor://localhost,https://localhost}
+  PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:3003}
+  OAUTH_CALLBACK_BASE_URL: ${OAUTH_CALLBACK_BASE_URL:-http://localhost:8003}
   PLATFORM_ADMIN_EMAILS: ${PLATFORM_ADMIN_EMAILS:-}
   PLATFORM_ADMIN_BOOTSTRAP_EMAIL: ${PLATFORM_ADMIN_BOOTSTRAP_EMAIL:-}
-  PLATFORM_ADMIN_BOOTSTRAP_PASSWORD: ${PLATFORM_ADMIN_BOOTSTRAP_PASSWORD:-}
+  PLATFORM_ADMIN_BOOTSTRAP_PASSWORD_FILE: /run/secrets/internal/platform_admin_password
   PLATFORM_ADMIN_BOOTSTRAP_NAME: ${PLATFORM_ADMIN_BOOTSTRAP_NAME:-Zahlmeister Administration}
-  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_LEVEL: INFO
   LOG_FORMAT: ${LOG_FORMAT:-text}
-  TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
+  TRUST_PROXY_HEADERS: "true"
   READINESS_REQUIRE_WORKER: ${READINESS_REQUIRE_WORKER:-false}
-  WORKER_HEARTBEAT_SECONDS: ${WORKER_HEARTBEAT_SECONDS:-15}
-  WORKER_STALE_SECONDS: ${WORKER_STALE_SECONDS:-60}
-  MONITORING_TOKEN: ${MONITORING_TOKEN:-}
-  JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-7}
-  JOB_RETRY_BASE_SECONDS: ${JOB_RETRY_BASE_SECONDS:-5}
-  JOB_RETRY_MAX_SECONDS: ${JOB_RETRY_MAX_SECONDS:-900}
-  JOB_RETRY_JITTER: ${JOB_RETRY_JITTER:-0.20}
-  JOB_STALE_AFTER_SECONDS: ${JOB_STALE_AFTER_SECONDS:-900}
-  MAIL_DELIVERY_MODE: smtp
+  WORKER_HEARTBEAT_SECONDS: "15"
+  WORKER_STALE_SECONDS: "60"
+  MONITORING_TOKEN_FILE: /run/secrets/internal/monitoring_token
+  JOB_MAX_ATTEMPTS: "7"
+  JOB_RETRY_BASE_SECONDS: "5"
+  JOB_RETRY_MAX_SECONDS: "900"
+  JOB_RETRY_JITTER: "0.20"
+  JOB_STALE_AFTER_SECONDS: "900"
+  MAIL_DELIVERY_MODE: ${MAIL_DELIVERY_MODE:-smtp}
   MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-noreply@zahlmeister.local}
   MAIL_FROM_NAME: ${MAIL_FROM_NAME:-Zahlmeister}
   MAIL_REPLY_DOMAIN: ${MAIL_REPLY_DOMAIN:-}
   CONTACT_RECIPIENT: ${CONTACT_RECIPIENT:-Support@Solvate.at}
-  SMTP_HOST: mailpit
-  SMTP_PORT: 1025
-  SMTP_USERNAME: ""
-  SMTP_PASSWORD: ""
-  SMTP_STARTTLS: "false"
+  SMTP_HOST: ${SMTP_HOST:-mailpit}
+  SMTP_PORT: ${SMTP_PORT:-1025}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_STARTTLS: ${SMTP_STARTTLS:-false}
   PLATFORM_IMAP_HOST: ${PLATFORM_IMAP_HOST:-}
   PLATFORM_IMAP_PORT: ${PLATFORM_IMAP_PORT:-993}
   PLATFORM_IMAP_USERNAME: ${PLATFORM_IMAP_USERNAME:-}
@@ -40,40 +40,38 @@ x-backend-environment: &backend-environment
   PLATFORM_IMAP_FOLDER: ${PLATFORM_IMAP_FOLDER:-INBOX}
   INFOBIP_OAUTH_CLIENT_ID: ${INFOBIP_OAUTH_CLIENT_ID:-}
   INFOBIP_OAUTH_CLIENT_SECRET: ${INFOBIP_OAUTH_CLIENT_SECRET:-}
-  INFOBIP_OAUTH_SCOPES: ${INFOBIP_OAUTH_SCOPES:-api_read message:send subscriptions:manage}
-  INFOBIP_OAUTH_AUTHORIZE_URL: ${INFOBIP_OAUTH_AUTHORIZE_URL:-https://oneapi.infobip.com/exchange/1/oauth/authorize}
-  INFOBIP_OAUTH_TOKEN_URL: ${INFOBIP_OAUTH_TOKEN_URL:-https://oneapi.infobip.com/exchange/1/oauth/token}
-  INFOBIP_DEFAULT_BASE_URL: ${INFOBIP_DEFAULT_BASE_URL:-https://api.infobip.com}
+  INFOBIP_OAUTH_SCOPES: api_read message:send subscriptions:manage
+  INFOBIP_OAUTH_AUTHORIZE_URL: https://oneapi.infobip.com/exchange/1/oauth/authorize
+  INFOBIP_OAUTH_TOKEN_URL: https://oneapi.infobip.com/exchange/1/oauth/token
+  INFOBIP_DEFAULT_BASE_URL: https://api.infobip.com
   MICROSOFT365_CLIENT_ID: ${MICROSOFT365_CLIENT_ID:-}
   MICROSOFT365_CLIENT_SECRET: ${MICROSOFT365_CLIENT_SECRET:-}
-  MICROSOFT365_TENANT: ${MICROSOFT365_TENANT:-organizations}
-  MICROSOFT365_SCOPES: ${MICROSOFT365_SCOPES:-openid profile offline_access User.Read Mail.Read Mail.Send}
-  MICROSOFT365_GRAPH_URL: ${MICROSOFT365_GRAPH_URL:-https://graph.microsoft.com/v1.0}
+  MICROSOFT365_TENANT: organizations
+  MICROSOFT365_SCOPES: openid profile offline_access User.Read Mail.Read Mail.Send
+  MICROSOFT365_GRAPH_URL: https://graph.microsoft.com/v1.0
   PONTO_CONNECT_ENVIRONMENT: ${PONTO_CONNECT_ENVIRONMENT:-sandbox}
   PONTO_CONNECT_CLIENT_ID: ${PONTO_CONNECT_CLIENT_ID:-}
   PONTO_CONNECT_CLIENT_SECRET: ${PONTO_CONNECT_CLIENT_SECRET:-}
-  PONTO_CONNECT_API_URL: ${PONTO_CONNECT_API_URL:-https://api.ibanity.com/ponto-connect}
+  PONTO_CONNECT_API_URL: https://api.ibanity.com/ponto-connect
   PONTO_CONNECT_AUTHORIZE_URL: ${PONTO_CONNECT_AUTHORIZE_URL:-}
-  PONTO_CONNECT_TOKEN_URL: ${PONTO_CONNECT_TOKEN_URL:-https://api.ibanity.com/ponto-connect/oauth2/token}
-  PONTO_CONNECT_SCOPE: ${PONTO_CONNECT_SCOPE:-offline_access ai name}
-  PONTO_CONNECT_CERT_PATH: ${PONTO_CONNECT_CERT_PATH:-/run/secrets/ponto/client.crt}
-  PONTO_CONNECT_KEY_PATH: ${PONTO_CONNECT_KEY_PATH:-/run/secrets/ponto/client.key}
+  PONTO_CONNECT_TOKEN_URL: https://api.ibanity.com/ponto-connect/oauth2/token
+  PONTO_CONNECT_SCOPE: offline_access ai name
+  PONTO_CONNECT_CERT_PATH: /run/secrets/ponto/client.crt
+  PONTO_CONNECT_KEY_PATH: /run/secrets/ponto/client.key
   PONTO_CONNECT_KEY_PASSWORD: ${PONTO_CONNECT_KEY_PASSWORD:-}
   MOLLIE_OAUTH_CLIENT_ID: ${MOLLIE_OAUTH_CLIENT_ID:-}
   MOLLIE_OAUTH_CLIENT_SECRET: ${MOLLIE_OAUTH_CLIENT_SECRET:-}
-  MOLLIE_OAUTH_AUTHORIZE_URL: ${MOLLIE_OAUTH_AUTHORIZE_URL:-https://my.mollie.com/oauth2/authorize}
-  MOLLIE_OAUTH_TOKEN_URL: ${MOLLIE_OAUTH_TOKEN_URL:-https://api.mollie.com/oauth2/tokens}
-  MOLLIE_API_URL: ${MOLLIE_API_URL:-https://api.mollie.com/v2}
-  MOLLIE_OAUTH_SCOPES: ${MOLLIE_OAUTH_SCOPES:-organizations.read profiles.read payments.read payments.write}
+  MOLLIE_OAUTH_AUTHORIZE_URL: https://my.mollie.com/oauth2/authorize
+  MOLLIE_OAUTH_TOKEN_URL: https://api.mollie.com/oauth2/tokens
+  MOLLIE_API_URL: https://api.mollie.com/v2
+  MOLLIE_OAUTH_SCOPES: organizations.read profiles.read payments.read payments.write
   MOLLIE_TEST_MODE: ${MOLLIE_TEST_MODE:-false}
   MOLLIE_BILLING_API_KEY: ${MOLLIE_BILLING_API_KEY:-}
-  MOLLIE_BILLING_API_KEY_FILE: ${MOLLIE_BILLING_API_KEY_FILE:-}
   MOLLIE_BILLING_WEBHOOK_SECRET: ${MOLLIE_BILLING_WEBHOOK_SECRET:-}
-  MOLLIE_BILLING_WEBHOOK_SECRET_FILE: ${MOLLIE_BILLING_WEBHOOK_SECRET_FILE:-}
   MOLLIE_BILLING_ENVIRONMENT: ${MOLLIE_BILLING_ENVIRONMENT:-test}
-  MOLLIE_BILLING_RECOVERY_MAX_PAGES: ${MOLLIE_BILLING_RECOVERY_MAX_PAGES:-100}
-  MOLLIE_BILLING_MAX_RETRIES: ${MOLLIE_BILLING_MAX_RETRIES:-3}
-  MOLLIE_BILLING_GRACE_DAYS: ${MOLLIE_BILLING_GRACE_DAYS:-7}
+  MOLLIE_BILLING_RECOVERY_MAX_PAGES: "100"
+  MOLLIE_BILLING_MAX_RETRIES: "3"
+  MOLLIE_BILLING_GRACE_DAYS: "7"
   BILLING_SELLER_LEGAL_NAME: ${BILLING_SELLER_LEGAL_NAME:-}
   BILLING_SELLER_COUNTRY: ${BILLING_SELLER_COUNTRY:-AT}
   BILLING_SELLER_EMAIL: ${BILLING_SELLER_EMAIL:-}
@@ -85,23 +83,24 @@ x-backend-environment: &backend-environment
   BILLING_SELLER_ORGANIZATION_NUMBER: ${BILLING_SELLER_ORGANIZATION_NUMBER:-}
   BILLING_SELLER_EU_OSS_ENABLED: ${BILLING_SELLER_EU_OSS_ENABLED:-false}
   GOOGLE_TRANSLATE_API_KEY: ${GOOGLE_TRANSLATE_API_KEY:-}
-  GOOGLE_TRANSLATE_API_URL: ${GOOGLE_TRANSLATE_API_URL:-https://translation.googleapis.com/language/translate/v2}
+  GOOGLE_TRANSLATE_API_URL: https://translation.googleapis.com/language/translate/v2
 
 services:
   db:
     image: postgres:17-alpine
     restart: "no"
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: zahlmeister
+      POSTGRES_USER: zahlmeister
+      POSTGRES_PASSWORD_FILE: /run/secrets/internal/postgres_password
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U zahlmeister -d zahlmeister"]
       interval: 5s
       timeout: 5s
       retries: 20
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./secrets/development:/run/secrets/internal:ro
 
   mailpit:
     image: axllent/mailpit:v1.30.0
@@ -125,6 +124,7 @@ services:
     command: ["python", "-m", "app.db.bootstrap"]
     volumes:
       - ../backend:/app
+      - ./secrets/development:/run/secrets/internal:ro
       - ./secrets/ponto:/run/secrets/ponto:ro
 
   backend:
@@ -140,9 +140,10 @@ services:
         condition: service_started
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--no-access-log"]
     ports:
-      - "${BACKEND_PORT}:8000"
+      - "${BACKEND_PORT:-8003}:8000"
     volumes:
       - ../backend:/app
+      - ./secrets/development:/run/secrets/internal:ro
       - ./secrets/ponto:/run/secrets/ponto:ro
 
   worker:
@@ -159,6 +160,7 @@ services:
     command: ["python", "-m", "app.worker"]
     volumes:
       - ../backend:/app
+      - ./secrets/development:/run/secrets/internal:ro
       - ./secrets/ponto:/run/secrets/ponto:ro
 
   frontend:
@@ -167,10 +169,10 @@ services:
       dockerfile: docker/frontend.Dockerfile.dev
     restart: "no"
     environment:
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:${BACKEND_PORT}/api/v1
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:${BACKEND_PORT:-8003}/api/v1
     command: ["sh", "-c", "if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi && npm run dev"]
     ports:
-      - "${FRONTEND_PORT}:3000"
+      - "${FRONTEND_PORT:-3003}:3000"
     volumes:
       - ../frontend:/app
       - frontend_node_modules:/app/node_modules

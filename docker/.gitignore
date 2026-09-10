@@ -1,8 +1,9 @@
 # Runtime secrets
-secrets/ponto/*
-!secrets/ponto/.gitkeep
+secrets/development/*
 secrets/production/*
+secrets/ponto/*
 !secrets/production/.gitkeep
+!secrets/ponto/.gitkeep
 
 # Database backups
 backups/*

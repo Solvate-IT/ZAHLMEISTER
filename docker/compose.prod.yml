@@ -1,90 +1,77 @@
 x-backend-environment: &backend-environment
   ENVIRONMENT: production
-  DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://zahlmeister:invalid@db:5432/zahlmeister}
-  DATABASE_URL_FILE: ${DATABASE_URL_FILE:-}
-  APP_SECRET: ${APP_SECRET:-production-secret-must-be-provided-by-file}
-  APP_SECRET_FILE: ${APP_SECRET_FILE:-}
+  DATABASE_URL_FILE: /run/secrets/internal/database_url
+  APP_SECRET_FILE: /run/secrets/internal/app_secret
   CORS_ORIGINS: ${CORS_ORIGINS}
   PUBLIC_APP_URL: ${PUBLIC_APP_URL}
-  OAUTH_CALLBACK_BASE_URL: ${OAUTH_CALLBACK_BASE_URL:-}
+  OAUTH_CALLBACK_BASE_URL: ${OAUTH_CALLBACK_BASE_URL}
   PLATFORM_ADMIN_EMAILS: ${PLATFORM_ADMIN_EMAILS:-}
   PLATFORM_ADMIN_BOOTSTRAP_EMAIL: ${PLATFORM_ADMIN_BOOTSTRAP_EMAIL:-}
-  PLATFORM_ADMIN_BOOTSTRAP_PASSWORD: ${PLATFORM_ADMIN_BOOTSTRAP_PASSWORD:-}
-  PLATFORM_ADMIN_BOOTSTRAP_PASSWORD_FILE: ${PLATFORM_ADMIN_BOOTSTRAP_PASSWORD_FILE:-}
+  PLATFORM_ADMIN_BOOTSTRAP_PASSWORD_FILE: /run/secrets/internal/platform_admin_password
   PLATFORM_ADMIN_BOOTSTRAP_NAME: ${PLATFORM_ADMIN_BOOTSTRAP_NAME:-Zahlmeister Administration}
-  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_LEVEL: INFO
   LOG_FORMAT: ${LOG_FORMAT:-json}
-  TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
+  TRUST_PROXY_HEADERS: "true"
   READINESS_REQUIRE_WORKER: ${READINESS_REQUIRE_WORKER:-true}
-  WORKER_HEARTBEAT_SECONDS: ${WORKER_HEARTBEAT_SECONDS:-15}
-  WORKER_STALE_SECONDS: ${WORKER_STALE_SECONDS:-60}
-  MONITORING_TOKEN: ${MONITORING_TOKEN:-}
-  MONITORING_TOKEN_FILE: ${MONITORING_TOKEN_FILE:-}
-  JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-7}
-  JOB_RETRY_BASE_SECONDS: ${JOB_RETRY_BASE_SECONDS:-5}
-  JOB_RETRY_MAX_SECONDS: ${JOB_RETRY_MAX_SECONDS:-900}
-  JOB_RETRY_JITTER: ${JOB_RETRY_JITTER:-0.20}
-  JOB_STALE_AFTER_SECONDS: ${JOB_STALE_AFTER_SECONDS:-900}
-  MAIL_DELIVERY_MODE: ${MAIL_DELIVERY_MODE}
+  WORKER_HEARTBEAT_SECONDS: "15"
+  WORKER_STALE_SECONDS: "60"
+  MONITORING_TOKEN_FILE: /run/secrets/internal/monitoring_token
+  JOB_MAX_ATTEMPTS: "7"
+  JOB_RETRY_BASE_SECONDS: "5"
+  JOB_RETRY_MAX_SECONDS: "900"
+  JOB_RETRY_JITTER: "0.20"
+  JOB_STALE_AFTER_SECONDS: "900"
+  MAIL_DELIVERY_MODE: ${MAIL_DELIVERY_MODE:-smtp}
   MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS}
-  MAIL_FROM_NAME: ${MAIL_FROM_NAME}
+  MAIL_FROM_NAME: ${MAIL_FROM_NAME:-Zahlmeister}
   MAIL_REPLY_DOMAIN: ${MAIL_REPLY_DOMAIN:-}
   CONTACT_RECIPIENT: ${CONTACT_RECIPIENT:-Support@Solvate.at}
   SMTP_HOST: ${SMTP_HOST}
-  SMTP_PORT: ${SMTP_PORT}
-  SMTP_USERNAME: ${SMTP_USERNAME}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
   SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-  SMTP_PASSWORD_FILE: ${SMTP_PASSWORD_FILE:-}
-  SMTP_STARTTLS: ${SMTP_STARTTLS}
+  SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
   PLATFORM_IMAP_HOST: ${PLATFORM_IMAP_HOST:-}
   PLATFORM_IMAP_PORT: ${PLATFORM_IMAP_PORT:-993}
   PLATFORM_IMAP_USERNAME: ${PLATFORM_IMAP_USERNAME:-}
   PLATFORM_IMAP_PASSWORD: ${PLATFORM_IMAP_PASSWORD:-}
-  PLATFORM_IMAP_PASSWORD_FILE: ${PLATFORM_IMAP_PASSWORD_FILE:-}
   PLATFORM_IMAP_SSL: ${PLATFORM_IMAP_SSL:-true}
   PLATFORM_IMAP_STARTTLS: ${PLATFORM_IMAP_STARTTLS:-false}
   PLATFORM_IMAP_FOLDER: ${PLATFORM_IMAP_FOLDER:-INBOX}
   INFOBIP_OAUTH_CLIENT_ID: ${INFOBIP_OAUTH_CLIENT_ID:-}
   INFOBIP_OAUTH_CLIENT_SECRET: ${INFOBIP_OAUTH_CLIENT_SECRET:-}
-  INFOBIP_OAUTH_CLIENT_SECRET_FILE: ${INFOBIP_OAUTH_CLIENT_SECRET_FILE:-}
-  INFOBIP_OAUTH_SCOPES: ${INFOBIP_OAUTH_SCOPES:-api_read message:send subscriptions:manage}
-  INFOBIP_OAUTH_AUTHORIZE_URL: ${INFOBIP_OAUTH_AUTHORIZE_URL:-https://oneapi.infobip.com/exchange/1/oauth/authorize}
-  INFOBIP_OAUTH_TOKEN_URL: ${INFOBIP_OAUTH_TOKEN_URL:-https://oneapi.infobip.com/exchange/1/oauth/token}
-  INFOBIP_DEFAULT_BASE_URL: ${INFOBIP_DEFAULT_BASE_URL:-https://api.infobip.com}
+  INFOBIP_OAUTH_SCOPES: api_read message:send subscriptions:manage
+  INFOBIP_OAUTH_AUTHORIZE_URL: https://oneapi.infobip.com/exchange/1/oauth/authorize
+  INFOBIP_OAUTH_TOKEN_URL: https://oneapi.infobip.com/exchange/1/oauth/token
+  INFOBIP_DEFAULT_BASE_URL: https://api.infobip.com
   MICROSOFT365_CLIENT_ID: ${MICROSOFT365_CLIENT_ID:-}
   MICROSOFT365_CLIENT_SECRET: ${MICROSOFT365_CLIENT_SECRET:-}
-  MICROSOFT365_CLIENT_SECRET_FILE: ${MICROSOFT365_CLIENT_SECRET_FILE:-}
-  MICROSOFT365_TENANT: ${MICROSOFT365_TENANT:-organizations}
-  MICROSOFT365_SCOPES: ${MICROSOFT365_SCOPES:-openid profile offline_access User.Read Mail.Read Mail.Send}
-  MICROSOFT365_GRAPH_URL: ${MICROSOFT365_GRAPH_URL:-https://graph.microsoft.com/v1.0}
+  MICROSOFT365_TENANT: organizations
+  MICROSOFT365_SCOPES: openid profile offline_access User.Read Mail.Read Mail.Send
+  MICROSOFT365_GRAPH_URL: https://graph.microsoft.com/v1.0
   PONTO_CONNECT_ENVIRONMENT: ${PONTO_CONNECT_ENVIRONMENT:-live}
   PONTO_CONNECT_CLIENT_ID: ${PONTO_CONNECT_CLIENT_ID:-}
   PONTO_CONNECT_CLIENT_SECRET: ${PONTO_CONNECT_CLIENT_SECRET:-}
-  PONTO_CONNECT_CLIENT_SECRET_FILE: ${PONTO_CONNECT_CLIENT_SECRET_FILE:-}
-  PONTO_CONNECT_API_URL: ${PONTO_CONNECT_API_URL:-https://api.ibanity.com/ponto-connect}
+  PONTO_CONNECT_API_URL: https://api.ibanity.com/ponto-connect
   PONTO_CONNECT_AUTHORIZE_URL: ${PONTO_CONNECT_AUTHORIZE_URL:-https://authorization.myponto.com/oauth2/auth}
-  PONTO_CONNECT_TOKEN_URL: ${PONTO_CONNECT_TOKEN_URL:-https://api.ibanity.com/ponto-connect/oauth2/token}
-  PONTO_CONNECT_SCOPE: ${PONTO_CONNECT_SCOPE:-offline_access ai name}
-  PONTO_CONNECT_CERT_PATH: ${PONTO_CONNECT_CERT_PATH:-/run/secrets/ponto/client.crt}
-  PONTO_CONNECT_KEY_PATH: ${PONTO_CONNECT_KEY_PATH:-/run/secrets/ponto/client.key}
+  PONTO_CONNECT_TOKEN_URL: https://api.ibanity.com/ponto-connect/oauth2/token
+  PONTO_CONNECT_SCOPE: offline_access ai name
+  PONTO_CONNECT_CERT_PATH: /run/secrets/ponto/client.crt
+  PONTO_CONNECT_KEY_PATH: /run/secrets/ponto/client.key
   PONTO_CONNECT_KEY_PASSWORD: ${PONTO_CONNECT_KEY_PASSWORD:-}
-  PONTO_CONNECT_KEY_PASSWORD_FILE: ${PONTO_CONNECT_KEY_PASSWORD_FILE:-}
   MOLLIE_OAUTH_CLIENT_ID: ${MOLLIE_OAUTH_CLIENT_ID:-}
   MOLLIE_OAUTH_CLIENT_SECRET: ${MOLLIE_OAUTH_CLIENT_SECRET:-}
-  MOLLIE_OAUTH_CLIENT_SECRET_FILE: ${MOLLIE_OAUTH_CLIENT_SECRET_FILE:-}
-  MOLLIE_OAUTH_AUTHORIZE_URL: ${MOLLIE_OAUTH_AUTHORIZE_URL:-https://my.mollie.com/oauth2/authorize}
-  MOLLIE_OAUTH_TOKEN_URL: ${MOLLIE_OAUTH_TOKEN_URL:-https://api.mollie.com/oauth2/tokens}
-  MOLLIE_API_URL: ${MOLLIE_API_URL:-https://api.mollie.com/v2}
-  MOLLIE_OAUTH_SCOPES: ${MOLLIE_OAUTH_SCOPES:-organizations.read profiles.read payments.read payments.write}
+  MOLLIE_OAUTH_AUTHORIZE_URL: https://my.mollie.com/oauth2/authorize
+  MOLLIE_OAUTH_TOKEN_URL: https://api.mollie.com/oauth2/tokens
+  MOLLIE_API_URL: https://api.mollie.com/v2
+  MOLLIE_OAUTH_SCOPES: organizations.read profiles.read payments.read payments.write
   MOLLIE_TEST_MODE: ${MOLLIE_TEST_MODE:-false}
   MOLLIE_BILLING_API_KEY: ${MOLLIE_BILLING_API_KEY:-}
-  MOLLIE_BILLING_API_KEY_FILE: ${MOLLIE_BILLING_API_KEY_FILE:-}
   MOLLIE_BILLING_WEBHOOK_SECRET: ${MOLLIE_BILLING_WEBHOOK_SECRET:-}
-  MOLLIE_BILLING_WEBHOOK_SECRET_FILE: ${MOLLIE_BILLING_WEBHOOK_SECRET_FILE:-}
   MOLLIE_BILLING_ENVIRONMENT: ${MOLLIE_BILLING_ENVIRONMENT:-live}
-  MOLLIE_BILLING_RECOVERY_MAX_PAGES: ${MOLLIE_BILLING_RECOVERY_MAX_PAGES:-100}
-  MOLLIE_BILLING_MAX_RETRIES: ${MOLLIE_BILLING_MAX_RETRIES:-3}
-  MOLLIE_BILLING_GRACE_DAYS: ${MOLLIE_BILLING_GRACE_DAYS:-7}
+  MOLLIE_BILLING_RECOVERY_MAX_PAGES: "100"
+  MOLLIE_BILLING_MAX_RETRIES: "3"
+  MOLLIE_BILLING_GRACE_DAYS: "7"
   BILLING_SELLER_LEGAL_NAME: ${BILLING_SELLER_LEGAL_NAME:-}
   BILLING_SELLER_COUNTRY: ${BILLING_SELLER_COUNTRY:-AT}
   BILLING_SELLER_EMAIL: ${BILLING_SELLER_EMAIL:-}
@@ -96,8 +83,7 @@ x-backend-environment: &backend-environment
   BILLING_SELLER_ORGANIZATION_NUMBER: ${BILLING_SELLER_ORGANIZATION_NUMBER:-}
   BILLING_SELLER_EU_OSS_ENABLED: ${BILLING_SELLER_EU_OSS_ENABLED:-false}
   GOOGLE_TRANSLATE_API_KEY: ${GOOGLE_TRANSLATE_API_KEY:-}
-  GOOGLE_TRANSLATE_API_KEY_FILE: ${GOOGLE_TRANSLATE_API_KEY_FILE:-}
-  GOOGLE_TRANSLATE_API_URL: ${GOOGLE_TRANSLATE_API_URL:-https://translation.googleapis.com/language/translate/v2}
+  GOOGLE_TRANSLATE_API_URL: https://translation.googleapis.com/language/translate/v2
 
 x-default-logging: &default-logging
   driver: json-file
@@ -110,23 +96,21 @@ services:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD_FILE: ${POSTGRES_PASSWORD_FILE:-/run/secrets/postgres_password}
+      POSTGRES_DB: zahlmeister
+      POSTGRES_USER: zahlmeister
+      POSTGRES_PASSWORD_FILE: /run/secrets/internal/postgres_password
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U zahlmeister -d zahlmeister"]
       interval: 5s
       timeout: 5s
       retries: 20
-    group_add:
-      - "${APP_RUNTIME_GID:-10001}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./secrets/production/postgres_password:/run/secrets/postgres_password:ro
+      - ./secrets/production:/run/secrets/internal:ro
     logging: *default-logging
 
   bootstrap:
-    user: "${APP_RUNTIME_UID:-10001}:${APP_RUNTIME_GID:-10001}"
+    user: "10001:10001"
     read_only: true
     tmpfs:
       - /tmp:size=128m,mode=1777
@@ -144,11 +128,12 @@ services:
         condition: service_healthy
     command: ["python", "-m", "app.db.bootstrap"]
     volumes:
-      - ./secrets:/run/secrets:ro
+      - ./secrets/production:/run/secrets/internal:ro
+      - ./secrets/ponto:/run/secrets/ponto:ro
     logging: *default-logging
 
   backend:
-    user: "${APP_RUNTIME_UID:-10001}:${APP_RUNTIME_GID:-10001}"
+    user: "10001:10001"
     read_only: true
     tmpfs:
       - /tmp:size=128m,mode=1777
@@ -173,11 +158,12 @@ services:
       retries: 3
       start_period: 20s
     volumes:
-      - ./secrets:/run/secrets:ro
+      - ./secrets/production:/run/secrets/internal:ro
+      - ./secrets/ponto:/run/secrets/ponto:ro
     logging: *default-logging
 
   worker:
-    user: "${APP_RUNTIME_UID:-10001}:${APP_RUNTIME_GID:-10001}"
+    user: "10001:10001"
     read_only: true
     tmpfs:
       - /tmp:size=128m,mode=1777
@@ -193,7 +179,8 @@ services:
         condition: service_completed_successfully
     command: ["python", "-m", "app.worker"]
     volumes:
-      - ./secrets:/run/secrets:ro
+      - ./secrets/production:/run/secrets/internal:ro
+      - ./secrets/ponto:/run/secrets/ponto:ro
     logging: *default-logging
 
   frontend:
@@ -212,7 +199,7 @@ services:
       - traefik
     labels:
       - traefik.enable=true
-      - traefik.docker.network=${TRAEFIK_NETWORK}
+      - traefik.docker.network=${TRAEFIK_NETWORK:-traefik}
       - traefik.http.routers.zahlmeister.rule=Host(`${APP_HOST}`)
       - traefik.http.routers.zahlmeister.entrypoints=websecure
       - traefik.http.routers.zahlmeister.tls=true
@@ -225,4 +212,4 @@ volumes:
 networks:
   traefik:
     external: true
-    name: ${TRAEFIK_NETWORK}
+    name: ${TRAEFIK_NETWORK:-traefik}
