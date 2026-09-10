@@ -8,7 +8,7 @@ import {useI18n} from "@/lib/i18n";
 export default function SupportAccessPage(){
   const router=useRouter();
   const {t}=useI18n();
-  const [error,setError]=useState("");
+  const [failed,setFailed]=useState(false);
 
   useEffect(()=>{
     try{
@@ -20,8 +20,8 @@ export default function SupportAccessPage(){
       const userEmail=fragment.get("user_email")||"";
       const organizationId=fragment.get("organization_id")||"";
       const organizationName=fragment.get("organization_name")||"";
-      history.replaceState(null,"","/support-access");
-      if(!accessToken||!expiresAt||!userId||!organizationId)throw new Error(t("supportSessionOpenError"));
+      window.history.replaceState(null,"","/support-access");
+      if(!accessToken||!expiresAt||!userId||!organizationId)throw new Error("invalid support handoff");
       startSupportSession(accessToken,{
         user_id:userId,
         user_name:userName,
@@ -32,10 +32,10 @@ export default function SupportAccessPage(){
         read_only:true,
       });
       router.replace("/app");
-    }catch(error){
-      setError(error instanceof Error?error.message:t("supportSessionOpenError"));
+    }catch{
+      setFailed(true);
     }
-  },[router,t]);
+  },[router]);
 
-  return <div className="auth-wrap"><div className="auth-card"><p>{error||t("supportOpening")}</p></div></div>;
+  return <div className="auth-wrap"><div className="auth-card"><p>{t(failed?"supportSessionOpenError":"supportOpening")}</p></div></div>;
 }
