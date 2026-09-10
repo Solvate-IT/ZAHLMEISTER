@@ -60,15 +60,20 @@ export async function getGooglePlayOffer(config:GooglePlayBillingConfig):Promise
 
 export async function purchaseGooglePlayPro(config:GooglePlayBillingConfig,accountToken:string):Promise<GooglePlayPurchaseResult>{
   const product=await selectedOffer(config);
-  const transaction=await NativePurchases.purchaseProduct({
-    productIdentifier:config.product_id,
-    planIdentifier:config.base_plan_id,
-    offerToken:product.offerToken,
-    productType:"subs",
-    appAccountToken:accountToken,
-    autoAcknowledgePurchases:false,
-  });
-  return {purchaseToken:transaction.purchaseToken??null,completed:transaction.purchaseState==="1"};
+  try{
+    const transaction=await NativePurchases.purchaseProduct({
+      productIdentifier:config.product_id,
+      planIdentifier:config.base_plan_id,
+      offerToken:product.offerToken,
+      productType:"subs",
+      appAccountToken:accountToken,
+      autoAcknowledgePurchases:false,
+    });
+    return {purchaseToken:transaction.purchaseToken??null,completed:transaction.purchaseState==="1"};
+  }catch(error){
+    if(error instanceof Error&&error.message.toLowerCase().includes("pending"))return {purchaseToken:null,completed:false};
+    throw error;
+  }
 }
 
 export async function currentGooglePlayPurchaseTokens(config:GooglePlayBillingConfig,accountToken:string):Promise<string[]>{
