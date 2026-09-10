@@ -18,9 +18,12 @@ def test_admin_and_customer_sessions_use_separate_namespaces() -> None:
     route = backend("app/api/routes/auth.py")
 
     assert 'ADMIN_TOKEN_PREFIX = "zma1."' in auth
+    assert 'ADMIN_SESSION_HASH_NAMESPACE = "admin"' in auth
     assert "token_prefix=ADMIN_TOKEN_PREFIX" in route
     assert "not token.startswith(ADMIN_TOKEN_PREFIX)" in deps
     assert "if token.startswith(ADMIN_TOKEN_PREFIX)" in deps
+    assert "token_hash(token, ADMIN_SESSION_HASH_NAMESPACE)" in deps
+    assert "or is_platform_admin(user)" in deps
 
 
 def test_support_session_is_short_lived_scoped_and_server_side_read_only() -> None:
@@ -29,10 +32,12 @@ def test_support_session_is_short_lived_scoped_and_server_side_read_only() -> No
     admin_route = backend("app/api/routes/admin_support.py")
 
     assert "SUPPORT_SESSION_MINUTES = 60" in service
+    assert 'SUPPORT_SESSION_HASH_NAMESPACE = "support"' in service
     assert '"typ": "support"' in service
     assert '"ro": True' in service
     assert "target_user.organization_id" in service
     assert "decode_support_token(token)" in deps
+    assert "token_hash(token, SUPPORT_SESSION_HASH_NAMESPACE)" in deps
     assert "target_user.organization_id != support_claims.organization_id" in deps
     assert "not is_platform_admin(admin_user)" in deps
     assert "support_request_is_allowed(request.method, request.url.path)" in deps
