@@ -7,6 +7,3 @@ secrets/production/*
 # Database backups
 backups/*
 !backups/.gitkeep
-
-# Local production environment
-.env.production
