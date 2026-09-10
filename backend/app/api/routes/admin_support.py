@@ -70,6 +70,8 @@ async def create_customer_support_session(
                 action="support.impersonation_start",
                 details_json=json.dumps(
                     {
+                        "organization_id": str(organization.id),
+                        "organization_name": organization.name,
                         "target_user_id": str(target_user.id),
                         "reason": reason,
                         "read_only": True,
