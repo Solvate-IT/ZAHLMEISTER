@@ -99,6 +99,7 @@ export const api = {
   mollieBillingConfig:()=>request<T.MollieBillingConfig>("/billing/mollie/config"),
   mollieBillingCheckout:()=>request<T.MollieBillingCheckout>("/billing/mollie/checkout",{method:"POST"}),
   mollieBillingSync:()=>request<T.BillingEntitlement>("/billing/mollie/sync",{method:"POST"}),
+  mollieBillingSetAutoRenew:(enabled:boolean)=>request<T.BillingEntitlement>("/billing/mollie/auto-renew",{method:"PUT",body:JSON.stringify({enabled})}),
   mollieBillingCancel:()=>request<T.BillingEntitlement>("/billing/mollie/cancel",{method:"POST"}),
   publicPayment:(token:string)=>request<T.PublicPayment>(`/public/payments/${encodeURIComponent(token)}`,{},false),
   publicPaymentQr:(token:string)=>`${apiBase()}/public/payments/${encodeURIComponent(token)}/qr.png`,
