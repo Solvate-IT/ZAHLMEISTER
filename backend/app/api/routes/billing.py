@@ -16,6 +16,7 @@ from app.schemas.billing import (
     BillingProfileRead,
     BillingProfileWrite,
     BillingPurchaseContextRead,
+    MollieAutoRenewWrite,
     MollieBillingCheckoutRead,
     MollieBillingConfigRead,
 )
@@ -36,6 +37,7 @@ from app.services.mollie_billing import (
     start_checkout,
     sync_subscription,
 )
+from app.services.mollie_billing_preferences import set_auto_renew
 from app.services.mollie_billing_webhooks import (
     MollieBillingWebhookError,
     process_sales_invoice_webhook,
@@ -229,6 +231,26 @@ async def mollie_sync(user: User = Depends(get_current_user)) -> BillingEntitlem
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Billing verification is temporarily unavailable",
+        ) from exc
+    return _entitlement_read(item)
+
+
+@router.put("/mollie/auto-renew", response_model=BillingEntitlementRead)
+async def mollie_auto_renew(
+    payload: MollieAutoRenewWrite,
+    user: User = Depends(get_current_user),
+) -> BillingEntitlementRead:
+    try:
+        async with SessionLocal.begin() as session:
+            await set_auto_renew(session, user.organization_id, payload.enabled)
+        async with SessionLocal() as session:
+            item = await entitlement_for_organization(session, user.organization_id)
+    except MollieBillingConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except MollieBillingUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Mollie billing is unavailable",
         ) from exc
     return _entitlement_read(item)
 
