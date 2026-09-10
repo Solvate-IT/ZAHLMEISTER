@@ -2,45 +2,29 @@ import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.api.deps import require_platform_admin
 from app.db.session import SessionLocal
 from app.models.entities import Organization, User
 from app.models.platform import PlatformAdminAudit
+from app.schemas.admin import PlatformSupportSessionCreate, PlatformSupportSessionRead
 from app.services.auth import is_platform_admin
 from app.services.support_sessions import SUPPORT_SESSION_MINUTES, create_support_session
 
 router = APIRouter(prefix="/admin", tags=["platform-admin"])
 
 
-class SupportSessionCreate(BaseModel):
-    reason: str = Field(min_length=3, max_length=500)
-
-
-class SupportSessionRead(BaseModel):
-    access_token: str
-    expires_in: int
-    expires_at: str
-    user_id: str
-    user_name: str
-    user_email: str
-    organization_id: str
-    organization_name: str
-    read_only: bool = True
-
-
 @router.post(
     "/customers/{organization_id}/users/{user_id}/support-session",
-    response_model=SupportSessionRead,
+    response_model=PlatformSupportSessionRead,
 )
 async def create_customer_support_session(
     organization_id: UUID,
     user_id: UUID,
-    payload: SupportSessionCreate,
+    payload: PlatformSupportSessionCreate,
     admin: User = Depends(require_platform_admin),
-) -> SupportSessionRead:
+) -> PlatformSupportSessionRead:
     reason = payload.reason.strip()
     if len(reason) < 3:
         raise HTTPException(
@@ -87,10 +71,10 @@ async def create_customer_support_session(
                 ),
             )
         )
-        return SupportSessionRead(
+        return PlatformSupportSessionRead(
             access_token=access_token,
             expires_in=SUPPORT_SESSION_MINUTES * 60,
-            expires_at=claims.expires_at.isoformat(),
+            expires_at=claims.expires_at,
             user_id=str(target_user.id),
             user_name=target_user.display_name,
             user_email=target_user.email,
