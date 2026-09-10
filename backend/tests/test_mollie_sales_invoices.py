@@ -68,6 +68,9 @@ async def test_paid_period_receipts_never_create_a_second_charge(
         captured.update(method=method, path=path, json_body=json_body, idempotency_key=idempotency_key)
         return {"id": "invoice_test", "status": "paid"}
 
+    # A profile-bound Standard API Key must never be combined with profileId, even
+    # if a stale deployment still exports the removed legacy setting.
+    monkeypatch.setenv("BILLING_SELLER_MOLLIE_PROFILE_ID", "pfl_legacy")
     monkeypatch.setattr(core, "_request_json", fake_request)
     item = _invoice(kind=kind)
     await core._create_remote_receipt(item, "de-AT")
@@ -76,6 +79,7 @@ async def test_paid_period_receipts_never_create_a_second_charge(
     assert captured["path"] == "sales-invoices"
     assert body["status"] == "paid"
     assert body["paymentDetails"] == {"source": "manual"}
+    assert "profileId" not in body
     assert "customerId" not in body
     assert "mandateId" not in body
     assert body["vatMode"] == "inclusive"
