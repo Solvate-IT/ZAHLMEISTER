@@ -62,6 +62,25 @@ async def _collection_channel_order(
     return await get_channel_order(session, organization_id)
 
 
+def _external_outcome(
+    outcome: DispatchOutcome,
+    *,
+    cp: CollectionParticipant,
+    participant: Participant,
+    channel: str,
+    include_external: bool,
+) -> None:
+    if include_external:
+        outcome.external.append(
+            ExternalDispatch(
+                collection_participant_id=cp.id,
+                participant_id=participant.id,
+                name=participant.name,
+                channel=channel,
+            )
+        )
+
+
 async def queue_collection_messages(
     session: AsyncSession,
     *,
@@ -120,26 +139,25 @@ async def queue_collection_messages(
     for cp, participant in eligible_rows:
         if cp.id in already_queued:
             continue
+        participant_overrides = overrides.get(participant.id)
         route = resolve_channel(
             participant,
             order=order,
             runtimes=runtimes,
-            overrides=overrides.get(participant.id),
+            overrides=participant_overrides,
             external_channels=external_channels,
         )
         if route is None:
             outcome.unreachable.append(cp.id)
             continue
         if route.mode == "external":
-            if include_external:
-                outcome.external.append(
-                    ExternalDispatch(
-                        collection_participant_id=cp.id,
-                        participant_id=participant.id,
-                        name=participant.name,
-                        channel=route.channel,
-                    )
-                )
+            _external_outcome(
+                outcome,
+                cp=cp,
+                participant=participant,
+                channel=route.channel,
+                include_external=include_external,
+            )
             continue
 
         content = await render_collection_message(
@@ -150,6 +168,35 @@ async def queue_collection_messages(
             organization=organization,
             participant_locale=participant_locales.get(participant.id),
         )
+
+        # Business-initiated WhatsApp traffic must use a Meta-approved template. A
+        # custom Zahlmeister message cannot be silently sent under the protected
+        # payment-request template, so continue with the next configured channel.
+        if (
+            route.channel == "whatsapp"
+            and route.provider == "infobip"
+            and content.whatsapp_template_values is None
+        ):
+            route = resolve_channel(
+                participant,
+                order=[candidate for candidate in order if candidate != "whatsapp"],
+                runtimes=runtimes,
+                overrides=participant_overrides,
+                external_channels=external_channels,
+            )
+            if route is None:
+                outcome.unreachable.append(cp.id)
+                continue
+            if route.mode == "external":
+                _external_outcome(
+                    outcome,
+                    cp=cp,
+                    participant=participant,
+                    channel=route.channel,
+                    include_external=include_external,
+                )
+                continue
+
         provider = route.provider
         if (
             route.channel == "email"
