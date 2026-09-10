@@ -537,7 +537,6 @@ def _seller_values() -> dict[str, str | None]:
         "region": os.getenv("BILLING_SELLER_REGION", "").strip() or None,
         "vat_number": os.getenv("BILLING_SELLER_VAT_NUMBER", "").replace(" ", "").upper() or None,
         "organization_number": os.getenv("BILLING_SELLER_ORGANIZATION_NUMBER", "").strip() or None,
-        "mollie_profile_id": os.getenv("BILLING_SELLER_MOLLIE_PROFILE_ID", "").strip() or None,
     }
 
 
@@ -565,9 +564,12 @@ async def _ensure_legal_entity(session: AsyncSession) -> BillingLegalEntity | No
         await session.flush()
     for key in (
         "legal_name", "country", "billing_email", "street_and_number", "postal_code", "city",
-        "region", "vat_number", "organization_number", "mollie_profile_id",
+        "region", "vat_number", "organization_number",
     ):
         setattr(item, key, values[key])
+    # Retain the legacy column for schema compatibility, but a Standard API Key is
+    # already bound to its Mollie profile and must not be accompanied by profileId.
+    item.mollie_profile_id = None
     item.active = True
     await session.flush()
 
@@ -829,9 +831,6 @@ async def _create_remote_receipt(item: BillingInvoice, locale: str) -> dict[str,
         }],
         "emailDetails": {"subject": copy.email_subject, "body": copy.email_body},
     }
-    profile_id = os.getenv("BILLING_SELLER_MOLLIE_PROFILE_ID", "").strip()
-    if profile_id:
-        payload["profileId"] = profile_id
     return await _request_json(
         "POST",
         "sales-invoices",
