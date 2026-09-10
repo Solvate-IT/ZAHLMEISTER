@@ -58,6 +58,8 @@ export interface ApiSettings { enabled: boolean; available_scopes: string[]; }
 export interface ApiCredential { id: string; name: string; token_prefix: string; scopes: string[]; created_at: string; last_used_at?: string|null; expires_at?: string|null; revoked_at?: string|null; }
 export interface ApiCredentialCreated extends ApiCredential { token: string; }
 export interface BillingEntitlement { plan:"free"|"pro"; active:boolean; provider:string|null; status:string|null; product_id:string|null; expires_at:string|null; auto_renew:boolean|null; }
+export interface BillingPurchaseContext { provider:"apple"|"google"|"mollie"; product_id:string; account_token:string; purchase_allowed:boolean; existing_provider:string|null; existing_status:string|null; reason:string|null; }
+export interface GooglePlayBillingConfig { available:boolean; package_name:string; product_id:string; base_plan_id:string; }
 export type BillingCustomerType = "consumer"|"business";
 export interface BillingProfileWrite { customer_type:BillingCustomerType; given_name:string|null; family_name:string|null; organization_name:string|null; billing_email:string; street_and_number:string; postal_code:string; city:string; region:string|null; country:string; vat_number:string|null; organization_number:string|null; }
 export interface BillingProfile extends BillingProfileWrite { vat_validation_status:string; vat_validated_at:string|null; }
