@@ -19,6 +19,19 @@ def test_ponto_revoke_url_follows_oauth_token_endpoint(monkeypatch) -> None:
     assert ponto._revoke_url() == "https://api.ibanity.com/ponto-connect/oauth2/revoke"
 
 
+def test_ponto_oauth_state_roundtrip(monkeypatch) -> None:
+    from app.services import ponto
+
+    organization_id = str(uuid4())
+    monkeypatch.setattr(ponto.settings, "ponto_connect_environment", "sandbox")
+
+    state = ponto.create_oauth_state(organization_id, "pkce-verifier", ttl_seconds=60)
+
+    assert ponto.verify_oauth_state(state) == (organization_id, "pkce-verifier")
+    assert organization_id not in state
+    assert "pkce-verifier" not in state
+
+
 @pytest.mark.asyncio
 async def test_ponto_disconnect_revokes_refresh_token_with_mtls_and_basic_auth(monkeypatch) -> None:
     from app.services import ponto
@@ -99,19 +112,43 @@ async def test_ponto_start_rejects_incomplete_configuration_before_database_writ
             "missing": ["client_id", "client_secret"],
         },
     )
-
-    class SessionMustNotBeUsed:
-        async def scalar(self, _statement):
-            raise AssertionError("database was used before Ponto readiness was checked")
-
     organization = SimpleNamespace(id=uuid4(), locale="de-AT")
 
     with pytest.raises(HTTPException) as exc:
-        await bank_sync.start_ponto(organization, SessionMustNotBeUsed())
+        await bank_sync.start_ponto(organization)
 
     assert exc.value.status_code == 409
     assert "client_id" in str(exc.value.detail)
     assert "client_secret" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_ponto_start_is_stateless(monkeypatch) -> None:
+    from app.api.routes import bank_sync
+
+    organization = SimpleNamespace(id=uuid4(), locale="de-AT")
+    calls = []
+    monkeypatch.setattr(
+        bank_sync.ponto,
+        "configuration_status",
+        lambda: {
+            "environment": "sandbox",
+            "configured": True,
+            "redirect_uri": "http://localhost:8003/api/v1/bank-sync/ponto/callback",
+            "missing": [],
+        },
+    )
+
+    def start_authorization(organization_id: str, language: str) -> str:
+        calls.append((organization_id, language))
+        return "https://sandbox-authorization.myponto.com/oauth2/auth?state=opaque"
+
+    monkeypatch.setattr(bank_sync.ponto, "start_authorization", start_authorization)
+
+    result = await bank_sync.start_ponto(organization)
+
+    assert calls == [(str(organization.id), "de")]
+    assert result.authorization_url.startswith("https://sandbox-authorization.myponto.com/")
 
 
 @pytest.mark.asyncio
