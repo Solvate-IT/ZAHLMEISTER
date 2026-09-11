@@ -36,13 +36,7 @@ async def update_payment_settings(
     organization.bank_account_name = payload.account_name
     organization.bank_iban = payload.iban
     organization.bank_bic = payload.bic
-    if not payload.include_payment_link and not payload.include_payment_qr:
-        from fastapi import HTTPException, status
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Enable at least the payment link or the payment QR code",
-        )
     organization.message_include_payment_link = payload.include_payment_link
     organization.message_include_payment_qr = payload.include_payment_qr
-    await session.flush()
+    await session.commit()
     return _read(organization)
