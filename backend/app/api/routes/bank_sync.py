@@ -4,8 +4,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_organization
+from app.api.deps import get_organization, get_session
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.entities import BankSyncAccount, BankSyncConnection, Organization
@@ -57,32 +58,39 @@ def _ponto_redirect(result: str) -> RedirectResponse:
     )
 
 
-async def _delete_local_connection(session, item: BankSyncConnection) -> None:
-    await session.execute(
-        delete(BankSyncAccount).where(BankSyncAccount.connection_id == item.id)
+def _is_established_connection(item: BankSyncConnection | None) -> bool:
+    return bool(
+        item is not None
+        and item.connected_at is not None
+        and item.status != "disconnected"
     )
-    await session.delete(item)
+
+
+def _reset_unestablished_connection(item: BankSyncConnection, *, error: str | None = None) -> None:
+    item.status = "disconnected"
+    item.encrypted_config = None
+    item.connected_at = None
+    item.last_sync_at = None
+    item.last_tested_at = datetime.now(UTC) if error else None
+    item.last_error = error[:2000] if error else None
 
 
 @router.get("/connection", response_model=BankSyncConnectionRead | None)
-async def get_connection(organization: Organization = Depends(get_organization)):
-    async with SessionLocal.begin() as session:
-        item = await session.scalar(
-            select(BankSyncConnection)
-            .where(
-                BankSyncConnection.organization_id == organization.id,
-                BankSyncConnection.provider == "ponto",
-            )
-            .with_for_update()
+async def get_connection(
+    organization: Organization = Depends(get_organization),
+    session: AsyncSession = Depends(get_session),
+):
+    item = await session.scalar(
+        select(BankSyncConnection).where(
+            BankSyncConnection.organization_id == organization.id,
+            BankSyncConnection.provider == "ponto",
         )
-        if item is None or item.status == "disconnected":
-            return None
-        if item.status == "error" and item.connected_at is None:
-            # Repair rows created by the old flow before OAuth could even start.
-            # Such a row never represented a real Ponto connection.
-            await _delete_local_connection(session, item)
-            return None
-        return _connection_read(item)
+    )
+    # A provisional/failed OAuth row is an implementation detail, not a user
+    # connection. Keep this GET endpoint strictly read-only and simply hide it.
+    if not _is_established_connection(item):
+        return None
+    return _connection_read(item)
 
 
 @router.get("/ponto/configuration", response_model=PontoConfigurationRead)
@@ -113,7 +121,7 @@ async def start_ponto(organization: Organization = Depends(get_organization)) ->
                 )
                 .with_for_update()
             )
-            if item is not None and item.connected_at is not None and item.status != "disconnected":
+            if _is_established_connection(item):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Ponto is already connected",
@@ -127,18 +135,11 @@ async def start_ponto(organization: Organization = Depends(get_organization)) ->
                 )
                 session.add(item)
                 await session.flush()
-            else:
-                await session.execute(
-                    delete(BankSyncAccount).where(BankSyncAccount.connection_id == item.id)
-                )
-                item.encrypted_config = None
-                item.connected_at = None
-                item.last_sync_at = None
-                item.last_tested_at = None
 
             item.status = "connecting"
             item.account_label = item.account_label or "Ponto"
             item.last_error = None
+            item.last_tested_at = None
             language = (organization.locale or "en").split("-", 1)[0]
             authorization_url = ponto.start_authorization(
                 item, str(organization.id), language
@@ -182,17 +183,20 @@ async def finish_ponto(
         now = datetime.now(UTC)
         if error:
             cancelled = error == "access_denied"
+            description = (error_description or error).replace("\r", " ").replace("\n", " ").strip()
             if item.connected_at is None:
-                await _delete_local_connection(session, item)
+                _reset_unestablished_connection(
+                    item,
+                    error=None if cancelled else (description or "Ponto authorization failed"),
+                )
             else:
-                description = (error_description or error).replace("\r", " ").replace("\n", " ").strip()
                 item.status = "error"
-                item.last_error = description[:2000] if description else "Ponto authorization failed"
+                item.last_error = (description or "Ponto authorization failed")[:2000]
                 item.last_tested_at = now
             result = "cancelled" if cancelled else "error"
         elif not code:
             if item.connected_at is None:
-                await _delete_local_connection(session, item)
+                _reset_unestablished_connection(item, error="Ponto authorization code is missing")
             else:
                 item.status = "error"
                 item.last_error = "Ponto authorization code is missing"
@@ -200,6 +204,12 @@ async def finish_ponto(
         else:
             try:
                 await ponto.exchange_code(item, code)
+                # A successful new authorization defines the authoritative set of
+                # bank accounts for this connection. Only now is stale local
+                # account state safe to replace.
+                await session.execute(
+                    delete(BankSyncAccount).where(BankSyncAccount.connection_id == item.id)
+                )
                 await refresh_accounts(session, item)
                 item.status = "connected"
                 item.last_error = None
@@ -207,7 +217,7 @@ async def finish_ponto(
                 result = "connected"
             except Exception as exc:
                 if item.connected_at is None:
-                    await _delete_local_connection(session, item)
+                    _reset_unestablished_connection(item, error=str(exc))
                 else:
                     item.status = "error"
                     item.last_error = str(exc)[:2000]
@@ -226,7 +236,7 @@ async def test_connection(organization: Organization = Depends(get_organization)
                 BankSyncConnection.provider == "ponto",
             )
         )
-        if item is None or item.status == "disconnected" or item.connected_at is None:
+        if not _is_established_connection(item):
             raise HTTPException(status_code=404, detail="BankSync is not connected")
         try:
             await get_bank_sync_provider(item.provider).test_connection(item)
@@ -284,11 +294,7 @@ async def sync_now(organization: Organization = Depends(get_organization)) -> Ba
                 BankSyncConnection.provider == "ponto",
             )
         )
-        if (
-            item is None
-            or item.connected_at is None
-            or item.status not in {"connected", "error"}
-        ):
+        if not _is_established_connection(item) or item.status not in {"connected", "error"}:
             raise HTTPException(status_code=409, detail="BankSync is not connected")
         try:
             result = await sync_connection(session, item)
@@ -313,9 +319,7 @@ async def disconnect(organization: Organization = Depends(get_organization)) -> 
         if item is None or item.status == "disconnected":
             return
         if item.connected_at is None:
-            # Nothing was ever authorized remotely. Local cleanup is sufficient
-            # and, unlike token revocation, also works for historical bad rows.
-            await _delete_local_connection(session, item)
+            _reset_unestablished_connection(item)
             return
         try:
             await ponto.revoke_connection(item)
