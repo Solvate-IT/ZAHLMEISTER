@@ -100,15 +100,14 @@ async def test_ponto_start_rejects_incomplete_configuration_before_database_writ
         },
     )
 
-    class DatabaseMustNotBeOpened:
-        def begin(self):
-            raise AssertionError("database was opened before Ponto readiness was checked")
+    class SessionMustNotBeUsed:
+        async def scalar(self, _statement):
+            raise AssertionError("database was used before Ponto readiness was checked")
 
-    monkeypatch.setattr(bank_sync, "SessionLocal", DatabaseMustNotBeOpened())
     organization = SimpleNamespace(id=uuid4(), locale="de-AT")
 
     with pytest.raises(HTTPException) as exc:
-        await bank_sync.start_ponto(organization)
+        await bank_sync.start_ponto(organization, SessionMustNotBeUsed())
 
     assert exc.value.status_code == 409
     assert "client_id" in str(exc.value.detail)
@@ -116,7 +115,7 @@ async def test_ponto_start_rejects_incomplete_configuration_before_database_writ
 
 
 @pytest.mark.asyncio
-async def test_failed_ponto_onboarding_row_is_cleaned_and_not_exposed(monkeypatch) -> None:
+async def test_failed_ponto_onboarding_row_is_hidden_without_mutating_database() -> None:
     from app.api.routes import bank_sync
 
     connection = SimpleNamespace(
@@ -125,36 +124,14 @@ async def test_failed_ponto_onboarding_row_is_cleaned_and_not_exposed(monkeypatc
         status="error",
         connected_at=None,
     )
-    deleted = []
 
     class Session:
         async def scalar(self, _statement):
             return connection
 
-        async def execute(self, _statement):
-            return None
-
-        async def delete(self, item):
-            deleted.append(item)
-
-    session = Session()
-
-    class Context:
-        async def __aenter__(self):
-            return session
-
-        async def __aexit__(self, *args):
-            return False
-
-    class SessionFactory:
-        def begin(self):
-            return Context()
-
-    monkeypatch.setattr(bank_sync, "SessionLocal", SessionFactory())
     organization = SimpleNamespace(id=uuid4())
 
-    assert await bank_sync.get_connection(organization) is None
-    assert deleted == [connection]
+    assert await bank_sync.get_connection(organization, Session()) is None
 
 
 @pytest.mark.asyncio
@@ -166,24 +143,19 @@ async def test_disconnect_of_unestablished_ponto_row_is_local_only(monkeypatch) 
         provider="ponto",
         status="error",
         connected_at=None,
+        encrypted_config="secret",
+        last_sync_at=None,
+        last_tested_at=None,
+        last_error="old error",
     )
-    deleted = []
 
     class Session:
         async def scalar(self, _statement):
             return connection
 
-        async def execute(self, _statement):
-            return None
-
-        async def delete(self, item):
-            deleted.append(item)
-
-    session = Session()
-
     class Context:
         async def __aenter__(self):
-            return session
+            return Session()
 
         async def __aexit__(self, *args):
             return False
@@ -200,4 +172,6 @@ async def test_disconnect_of_unestablished_ponto_row_is_local_only(monkeypatch) 
     organization = SimpleNamespace(id=uuid4())
 
     await bank_sync.disconnect(organization)
-    assert deleted == [connection]
+    assert connection.status == "disconnected"
+    assert connection.encrypted_config is None
+    assert connection.connected_at is None
