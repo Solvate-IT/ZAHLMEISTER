@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_session
 from app.db.session import SessionLocal
-from app.models.billing import BillingInvoice, BillingProfile
+from app.models.billing import BillingInvoice, BillingPaymentTransaction, BillingProfile
 from app.models.entities import User
 from app.schemas.billing import (
     BillingEntitlementRead,
@@ -23,6 +23,7 @@ from app.schemas.billing import (
     MollieBillingConfigRead,
 )
 from app.services.billing import Entitlement, entitlement_for_organization, purchase_context
+from app.services.billing_invoice_status import effective_invoice_status
 from app.services.billing_tax import (
     BillingTaxInvalidVatNumber,
     BillingTaxUnsupportedJurisdiction,
@@ -88,7 +89,7 @@ def _profile_read(item: BillingProfile) -> BillingProfileRead:
     )
 
 
-def _invoice_read(item: BillingInvoice) -> BillingInvoiceRead:
+def _invoice_read(item: BillingInvoice, payment_status: str | None = None) -> BillingInvoiceRead:
     return BillingInvoiceRead(
         id=str(item.id),
         provider=item.provider,
@@ -102,7 +103,7 @@ def _invoice_read(item: BillingInvoice) -> BillingInvoiceRead:
         vat_scheme=item.vat_scheme,
         tax_treatment=item.tax_treatment,
         invoice_number=item.invoice_number,
-        status=item.status,
+        status=effective_invoice_status(item.status, payment_status),
         payment_url=item.payment_url,
         paid_at=item.paid_at,
     )
@@ -264,13 +265,17 @@ async def billing_invoices(
 ) -> list[BillingInvoiceRead]:
     rows = (
         await session.execute(
-            select(BillingInvoice)
+            select(BillingInvoice, BillingPaymentTransaction.status)
+            .outerjoin(
+                BillingPaymentTransaction,
+                BillingPaymentTransaction.id == BillingInvoice.payment_transaction_id,
+            )
             .where(BillingInvoice.organization_id == user.organization_id)
             .order_by(BillingInvoice.period_start.desc(), BillingInvoice.created_at.desc())
             .limit(100)
         )
-    ).scalars().all()
-    return [_invoice_read(item) for item in rows]
+    ).all()
+    return [_invoice_read(item, payment_status) for item, payment_status in rows]
 
 
 @router.get("/mollie/config", response_model=MollieBillingConfigRead)
