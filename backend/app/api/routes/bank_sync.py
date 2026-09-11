@@ -86,8 +86,6 @@ async def get_connection(
             BankSyncConnection.provider == "ponto",
         )
     )
-    # A provisional/failed OAuth row is an implementation detail, not a user
-    # connection. Keep this GET endpoint strictly read-only and simply hide it.
     if not _is_established_connection(item):
         return None
     return _connection_read(item)
@@ -104,7 +102,6 @@ async def get_ponto_configuration(
 @router.post("/ponto/start", response_model=BankSyncStartRead)
 async def start_ponto(
     organization: Organization = Depends(get_organization),
-    session: AsyncSession = Depends(get_session),
 ) -> BankSyncStartRead:
     configuration = ponto.configuration_status()
     if not configuration["configured"]:
@@ -115,47 +112,9 @@ async def start_ponto(
         )
 
     try:
-        # Reuse the request-scoped session that authentication already opened.
-        # Opening a second SessionLocal here can deadlock on the connection pool
-        # while the first session is retained until the request completes.
-        item = await session.scalar(
-            select(BankSyncConnection)
-            .where(
-                BankSyncConnection.organization_id == organization.id,
-                BankSyncConnection.provider == "ponto",
-            )
-            .with_for_update()
-        )
-        if _is_established_connection(item):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Ponto is already connected",
-            )
-        if item is None:
-            item = BankSyncConnection(
-                organization_id=organization.id,
-                provider="ponto",
-                status="connecting",
-                account_label="Ponto",
-            )
-            session.add(item)
-            await session.flush()
-
-        item.status = "connecting"
-        item.account_label = item.account_label or "Ponto"
-        item.last_error = None
-        item.last_tested_at = None
         language = (organization.locale or "en").split("-", 1)[0]
-        authorization_url = ponto.start_authorization(
-            item, str(organization.id), language
-        )
-        await session.commit()
-    except HTTPException:
-        await session.rollback()
-        raise
+        authorization_url = ponto.start_authorization(str(organization.id), language)
     except ValueError as exc:
-        # A failed OAuth start must never persist a provisional connection.
-        await session.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
@@ -175,57 +134,73 @@ async def finish_ponto(
         return _ponto_redirect("error")
 
     try:
-        connection_id_raw, organization_id_raw = ponto.verify_state(state)
-        connection_id = UUID(connection_id_raw)
+        organization_id_raw, verifier = ponto.verify_oauth_state(state)
         organization_id = UUID(organization_id_raw)
     except (ValueError, TypeError):
         return _ponto_redirect("error")
 
-    result = "error"
+    if error:
+        return _ponto_redirect("cancelled" if error == "access_denied" else "error")
+    if not code:
+        return _ponto_redirect("error")
+
+    try:
+        config = await ponto.exchange_code(code, verifier)
+    except Exception:
+        return _ponto_redirect("error")
+
+    now = datetime.now(UTC)
+    result = "connected"
+    connection_id: UUID | None = None
+
     async with SessionLocal.begin() as session:
-        item = await session.get(BankSyncConnection, connection_id, with_for_update=True)
-        if item is None or item.organization_id != organization_id:
+        organization = await session.get(Organization, organization_id)
+        if organization is None:
             return _ponto_redirect("error")
 
-        now = datetime.now(UTC)
-        if error:
-            cancelled = error == "access_denied"
-            description = (error_description or error).replace("\r", " ").replace("\n", " ").strip()
-            if item.connected_at is None:
-                _reset_unestablished_connection(
-                    item,
-                    error=None if cancelled else (description or "Ponto authorization failed"),
-                )
-            else:
-                item.status = "error"
-                item.last_error = (description or "Ponto authorization failed")[:2000]
-                item.last_tested_at = now
-            result = "cancelled" if cancelled else "error"
-        elif not code:
-            if item.connected_at is None:
-                _reset_unestablished_connection(item, error="Ponto authorization code is missing")
-            else:
-                item.status = "error"
-                item.last_error = "Ponto authorization code is missing"
-                item.last_tested_at = now
-        else:
-            try:
-                await ponto.exchange_code(item, code)
-                # A successful new authorization defines the authoritative set of
-                # bank accounts for this connection. Only now is stale local
-                # account state safe to replace.
-                await session.execute(
-                    delete(BankSyncAccount).where(BankSyncAccount.connection_id == item.id)
-                )
+        item = await session.scalar(
+            select(BankSyncConnection)
+            .where(
+                BankSyncConnection.organization_id == organization_id,
+                BankSyncConnection.provider == "ponto",
+            )
+            .with_for_update()
+        )
+        if item is None:
+            item = BankSyncConnection(
+                organization_id=organization_id,
+                provider="ponto",
+                status="connected",
+                account_label="Ponto",
+            )
+            session.add(item)
+            await session.flush()
+
+        await session.execute(
+            delete(BankSyncAccount).where(BankSyncAccount.connection_id == item.id)
+        )
+        ponto.apply_authorization(item, config)
+        item.account_label = item.account_label or "Ponto"
+        item.connected_at = now
+        item.last_sync_at = None
+        item.last_tested_at = now
+        connection_id = item.id
+
+    if connection_id is not None:
+        try:
+            async with SessionLocal.begin() as session:
+                item = await session.get(BankSyncConnection, connection_id, with_for_update=True)
+                if item is None:
+                    return _ponto_redirect("error")
                 await refresh_accounts(session, item)
                 item.status = "connected"
                 item.last_error = None
                 item.last_tested_at = now
-                result = "connected"
-            except Exception as exc:
-                if item.connected_at is None:
-                    _reset_unestablished_connection(item, error=str(exc))
-                else:
+        except Exception as exc:
+            result = "error"
+            async with SessionLocal.begin() as session:
+                item = await session.get(BankSyncConnection, connection_id, with_for_update=True)
+                if item is not None:
                     item.status = "error"
                     item.last_error = str(exc)[:2000]
                     item.last_tested_at = now
