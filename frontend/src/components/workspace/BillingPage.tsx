@@ -11,9 +11,12 @@ import {isNativeApp} from "@/lib/native";
 import {Loading} from "../State";
 
 const COUNTRY_CODES=["AD","AE","AF","AG","AI","AL","AM","AO","AQ","AR","AS","AT","AU","AW","AX","AZ","BA","BB","BD","BE","BF","BG","BH","BI","BJ","BL","BM","BN","BO","BQ","BR","BS","BT","BV","BW","BY","BZ","CA","CC","CD","CF","CG","CH","CI","CK","CL","CM","CN","CO","CR","CU","CV","CW","CX","CY","CZ","DE","DJ","DK","DM","DO","DZ","EC","EE","EG","EH","ER","ES","ET","FI","FJ","FK","FM","FO","FR","GA","GB","GD","GE","GF","GG","GH","GI","GL","GM","GN","GP","GQ","GR","GS","GT","GU","GW","GY","HK","HM","HN","HR","HT","HU","ID","IE","IL","IM","IN","IO","IQ","IR","IS","IT","JE","JM","JO","JP","KE","KG","KH","KI","KM","KN","KP","KR","KW","KY","KZ","LA","LB","LC","LI","LK","LR","LS","LT","LU","LV","LY","MA","MC","MD","ME","MF","MG","MH","MK","ML","MM","MN","MO","MP","MQ","MR","MS","MT","MU","MV","MW","MX","MY","MZ","NA","NC","NE","NF","NG","NI","NL","NO","NP","NR","NU","NZ","OM","PA","PE","PF","PG","PH","PK","PL","PM","PN","PR","PS","PT","PW","PY","QA","RE","RO","RS","RU","RW","SA","SB","SC","SD","SE","SG","SH","SI","SJ","SK","SL","SM","SN","SO","SR","SS","ST","SV","SX","SY","SZ","TC","TD","TF","TG","TH","TJ","TK","TL","TM","TN","TO","TR","TT","TV","TW","TZ","UA","UG","UM","US","UY","UZ","VA","VC","VE","VG","VI","VN","VU","WF","WS","YE","YT","ZA","ZM","ZW"] as const;
+const COUNTRY_CODE_SET=new Set<string>(COUNTRY_CODES);
+const EU_COUNTRY_CODES=new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]);
 const OPEN_INVOICE_STATUSES=new Set(["creating","pending-payment","issued","overdue","payment-reversed","payment_reversed"]);
-
 const EMPTY_PROFILE:BillingProfileWrite={customer_type:"consumer",given_name:"",family_name:"",organization_name:"",billing_email:"",street_and_number:"",postal_code:"",city:"",region:"",country:"",vat_number:"",organization_number:""};
+
+type CountryCode=(typeof COUNTRY_CODES)[number];
 
 export function BillingPage(){
   const {t,locale}=useI18n();
@@ -36,10 +39,17 @@ export function BillingPage(){
   const [googleContext,setGoogleContext]=useState<BillingPurchaseContext|null>(null);
   const [googlePrice,setGooglePrice]=useState("");
   const [googleRuntime,setGoogleRuntime]=useState(false);
+  const [browserCountry,setBrowserCountry]=useState<CountryCode|null>(null);
   const googleSetupStarted=useRef(false);
   const profileSectionRef=useRef<HTMLElement|null>(null);
   const primaryProfileFieldRef=useRef<HTMLInputElement|null>(null);
   const regionNames=useMemo(()=>new Intl.DisplayNames([locale],{type:"region"}),[locale]);
+  const countryOptions=useMemo(()=>{
+    const compare=(left:CountryCode,right:CountryCode)=>(regionNames.of(left)??left).localeCompare(regionNames.of(right)??right,locale,{sensitivity:"base"});
+    const eu=COUNTRY_CODES.filter(code=>EU_COUNTRY_CODES.has(code)&&code!==browserCountry).sort(compare);
+    const rest=COUNTRY_CODES.filter(code=>!EU_COUNTRY_CODES.has(code)&&code!==browserCountry).sort(compare);
+    return {eu,rest};
+  },[browserCountry,locale,regionNames]);
 
   async function load(){
     setLoading(true);setError("");
@@ -60,6 +70,7 @@ export function BillingPage(){
     setNative(isNativeApp());
     const current=Capacitor.getPlatform();
     setPlatform(current==="android"||current==="ios"?current:"web");
+    setBrowserCountry(detectBrowserCountry());
   },[]);
   useEffect(()=>{
     if(billingResult==="return"){
@@ -120,10 +131,7 @@ export function BillingPage(){
       setEntitlement(next);await load();setNotice(next.active?t("billingActivated"):t("billingReturnProcessing"));
     }catch{setError(t("billingError"))}finally{setBusy(false)}
   }
-  async function manageGooglePlay(){
-    setError("");
-    try{await manageGooglePlaySubscriptions()}catch{setError(t("billingError"))}
-  }
+  async function manageGooglePlay(){setError("");try{await manageGooglePlaySubscriptions()}catch{setError(t("billingError"))}}
   async function saveProfile(e:React.FormEvent){
     e.preventDefault();setError("");
     if(!draft.billing_email||!draft.street_and_number||!draft.city||!draft.country||(draft.customer_type==="consumer"&&(!draft.given_name||!draft.family_name))||(draft.customer_type==="business"&&(!draft.organization_name||(!draft.vat_number&&!draft.organization_number)))){setError(t("billingRequiredFields"));return}
@@ -158,9 +166,9 @@ export function BillingPage(){
     {error&&<div className="notice error">{error}</div>}{notice&&<div className="notice success">{notice}</div>}
     <div className="split billing-plan-grid">
       <section className="card"><div className="muted">{t("billingCurrentPlan")}</div><div className="payment-amount">{active?t("billingPro"):t("billingFree")}</div><p className="muted">{active?t("billingProHint"):t("billingFreeHint")}</p>{!active&&!pending&&<div className="notice">{t("billingFreeRegistration")}</div>}{(active||pending)&&<div className="stack">{provider&&<div className="row between"><span className="muted">{t("billingProvider")}</span><strong>{provider}</strong></div>}{status&&<div className="row between"><span className="muted">{t("billingStatus")}</span><span className={`status-pill ${entitlement.status??""}`}>{status}</span></div>}{active&&entitlement.expires_at&&<div className="notice">{t("billingEndsAt",{date:formatDate(entitlement.expires_at,locale)})}</div>}</div>}</section>
-      <section className="card">
+      <section className="card"><div className="stack">
         {native?(platform==="android"?(entitlement.provider==="google"&&(active||pending)?<><h3>{t("billingManagedGoogle")}</h3><p className="muted">{t("billingNativeStoreHint")}</p>{active&&<div className="billing-renewal-row"><span className="muted">{t("billingRenews")}</span><strong>{entitlement.auto_renew===false?t("billingNo"):t("billingYes")}</strong></div>}{entitlement.auto_renew===false&&entitlement.expires_at&&<div className="notice">{t("billingCancelledNotice",{date:formatDate(entitlement.expires_at,locale)})}</div>}{pending&&<p className="muted">{t("billingReturnProcessing")}</p>}<div className="actions"><button className="button secondary" onClick={syncGoogle} disabled={busy}>{t("billingStoreSync")}</button>{googleRuntime&&<button className="button secondary" onClick={manageGooglePlay} disabled={busy}>{t("billingStoreManage")}</button>}</div></>:active?<><h3>{provider||t("billingPro")}</h3><p className="muted">{t("billingNativeStoreHint")}</p></>:googleConfig?.available&&googleRuntime&&googleContext?.purchase_allowed?<><h3>{t("billingPro")}</h3>{googlePrice&&<p><strong>{t("billingPriceYear",{price:googlePrice})}</strong></p>}<p className="muted">{t("billingNativeStoreHint")}</p><button className="button" onClick={startGooglePlay} disabled={busy}>{t("billingUpgrade")}</button></>:<><h3>{t("billingPro")}</h3><p className="muted">{t("billingNativeStoreHint")}</p></>):<><h3>{t("billingPro")}</h3><p className="muted">{t("billingNativeStoreHint")}</p></>):active?<><h3>{provider||t("billingPro")}</h3>{entitlement.provider==="mollie"&&<><div className="billing-renewal-row"><span className="muted">{t("billingRenews")}</span><RenewalSwitch checked={Boolean(entitlement.auto_renew)} disabled={busy} label={t("billingRenews")} onChange={updateAutoRenew}/></div>{entitlement.auto_renew?<><p className="muted">{renewalDate?t("billingNextRenewal",{date:formatDate(renewalDate,locale),price:renewalPrice}):t("billingProHint")}</p><div className="notice">{t("billingAutoDebitMandate")}</div></>:entitlement.expires_at&&<div className="notice">{t("billingCancelledNotice",{date:formatDate(entitlement.expires_at,locale)})}</div>}<div className="actions"><button className="button secondary" onClick={refresh} disabled={busy}>{t("billingMollieSync")}</button></div></>}{entitlement.provider==="google"&&<><div className="billing-renewal-row"><span className="muted">{t("billingRenews")}</span><strong>{entitlement.auto_renew===false?t("billingNo"):t("billingYes")}</strong></div>{entitlement.auto_renew===false&&entitlement.expires_at&&<div className="notice">{t("billingCancelledNotice",{date:formatDate(entitlement.expires_at,locale)})}</div>}<div className="actions"><button className="button secondary" onClick={syncGoogle} disabled={busy}>{t("billingStoreSync")}</button></div></>}</>:pending?<><h3>{t("billingReturnProcessing")}</h3><p className="muted">{t("billingProHint")}</p><div className="actions">{entitlement.provider==="google"?<button className="button secondary" onClick={syncGoogle} disabled={busy}>{t("billingStoreSync")}</button>:<button className="button secondary" onClick={refresh} disabled={busy}>{t("billingMollieSync")}</button>}{entitlement.provider==="mollie"&&<button className="button" onClick={startCheckout} disabled={busy}>{t("billingUpgrade")}</button>}</div></>:config.available?<><h3>{t("billingPro")}</h3><p><strong>{t("billingPriceYear",{price})}</strong></p><div className="billing-renewal-row"><span className="muted">{t("billingRenews")}</span><RenewalSwitch checked disabled label={t("billingRenews")} onChange={()=>{}}/></div><div className="notice">{t("billingAutoDebitMandate")}</div><p className="muted">{t("billingProHint")}</p>{config.environment==="test"&&<div className="notice"><strong>{t("billingTestMode")}</strong><div>{t("billingTestModeHint")}</div></div>}<button className="button" onClick={startCheckout} disabled={busy||!profile}>{busy?t("billingOpeningCheckout"):t("billingUpgrade")}</button>{!profile&&<button type="button" className="billing-profile-jump" onClick={openBillingProfile}>{t("billingProfileRequired")}</button>}</>:<><h3>{t("billingUnavailable")}</h3><p className="muted">{t("billingUnavailableHint")}</p></>}
-      </section>
+      </div></section>
     </div>
 
     {showMollieDetails&&<section ref={profileSectionRef} className="card billing-section">
@@ -171,7 +179,7 @@ export function BillingPage(){
         <div className="field"><label>{t("billingEmail")}</label><input type="email" className="input" value={draft.billing_email} onChange={e=>setDraft({...draft,billing_email:e.target.value})} required/></div>
         <div className="field"><label>{t("billingStreet")}</label><input className="input" value={draft.street_and_number} onChange={e=>setDraft({...draft,street_and_number:e.target.value})} required/></div>
         <div className="split"><div className="field"><label>{t("billingPostalCode")}</label><input className="input" value={draft.postal_code} onChange={e=>setDraft({...draft,postal_code:e.target.value})}/></div><div className="field"><label>{t("billingCity")}</label><input className="input" value={draft.city} onChange={e=>setDraft({...draft,city:e.target.value})} required/></div></div>
-        <div className="split"><div className="field"><label>{t("billingRegion")}</label><input className="input" value={draft.region??""} onChange={e=>setDraft({...draft,region:e.target.value})}/></div><div className="field"><label>{t("billingCountry")}</label><select className="input" value={draft.country} onChange={e=>setDraft({...draft,country:e.target.value})} required><option value="">{t("billingCountryChoose")}</option>{COUNTRY_CODES.map(code=><option key={code} value={code}>{regionNames.of(code)??code}</option>)}</select></div></div>
+        <div className="split"><div className="field"><label>{t("billingRegion")}</label><input className="input" value={draft.region??""} onChange={e=>setDraft({...draft,region:e.target.value})}/></div><div className="field"><label>{t("billingCountry")}</label><select className="input" value={draft.country} onChange={e=>setDraft({...draft,country:e.target.value})} required><option value="">{t("billingCountryChoose")}</option>{browserCountry&&<><option value={browserCountry}>{regionNames.of(browserCountry)??browserCountry}</option><option disabled>──────────</option></>}{countryOptions.eu.map(code=><option key={code} value={code}>{regionNames.of(code)??code}</option>)}<option disabled>──────────</option>{countryOptions.rest.map(code=><option key={code} value={code}>{regionNames.of(code)??code}</option>)}</select></div></div>
         <div className="notice">{t("billingTaxScopeHint")}</div>
         <div className="actions"><button className="button" disabled={busy}>{t("billingDetailsSave")}</button>{profile&&<button type="button" className="button secondary" onClick={()=>{setDraft(toDraft(profile));setEditingProfile(false)}} disabled={busy}>{t("cancel")}</button>}</div>
       </form>:profile&&<div className="stack"><div><strong>{profile.customer_type==="business"?profile.organization_name:`${profile.given_name??""} ${profile.family_name??""}`.trim()}</strong><div className="muted">{profile.street_and_number} · {[profile.postal_code,profile.city].filter(Boolean).join(" ")} · {regionNames.of(profile.country)??profile.country}</div><div className="muted">{profile.billing_email}</div>{profile.customer_type==="business"&&(profile.vat_number||profile.organization_number)&&<div className="muted">{[profile.vat_number,profile.organization_number].filter(Boolean).join(" · ")}</div>}</div></div>}
@@ -181,6 +189,17 @@ export function BillingPage(){
   </>;
 }
 
+function detectBrowserCountry():CountryCode|null{
+  if(typeof navigator==="undefined")return null;
+  const languages=navigator.languages?.length?navigator.languages:[navigator.language];
+  for(const language of languages){
+    try{
+      const region=new Intl.Locale(language).region?.toUpperCase();
+      if(region&&COUNTRY_CODE_SET.has(region))return region as CountryCode;
+    }catch{}
+  }
+  return null;
+}
 function RenewalSwitch({checked,disabled,label,onChange}:{checked:boolean;disabled:boolean;label:string;onChange:(checked:boolean)=>void}){return <label className="toggle-switch"><input type="checkbox" checked={checked} disabled={disabled} aria-label={label} onChange={e=>onChange(e.target.checked)}/><span className="toggle-switch-track" aria-hidden="true"/></label>}
 function toDraft(profile:BillingProfile):BillingProfileWrite{return {customer_type:profile.customer_type,given_name:profile.given_name??"",family_name:profile.family_name??"",organization_name:profile.organization_name??"",billing_email:profile.billing_email,street_and_number:profile.street_and_number,postal_code:profile.postal_code,city:profile.city,region:profile.region??"",country:profile.country,vat_number:profile.vat_number??"",organization_number:profile.organization_number??""}}
 function cleanDraft(draft:BillingProfileWrite):BillingProfileWrite{return {...draft,given_name:draft.given_name?.trim()||null,family_name:draft.family_name?.trim()||null,organization_name:draft.organization_name?.trim()||null,billing_email:draft.billing_email.trim(),street_and_number:draft.street_and_number.trim(),postal_code:draft.postal_code.trim(),city:draft.city.trim(),region:draft.region?.trim()||null,country:draft.country.trim().toUpperCase(),vat_number:draft.vat_number?.trim()||null,organization_number:draft.organization_number?.trim()||null}}
