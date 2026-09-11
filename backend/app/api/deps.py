@@ -31,6 +31,22 @@ async def get_session():
         yield session
 
 
+async def _release_dependency_transaction(session: AsyncSession) -> None:
+    """Release the DB connection after dependency-only reads.
+
+    FastAPI caches ``get_session`` within one request. Without ending the implicit
+    read transaction, authentication keeps a pool connection checked out while an
+    endpoint may open its own short-lived SessionLocal for provider or business
+    logic. Under concurrent requests that doubles pool pressure and can deadlock
+    the application before the endpoint itself starts.
+
+    ``SessionLocal`` uses ``expire_on_commit=False``, so the already-loaded ORM
+    objects remain usable by downstream dependencies and endpoint code.
+    """
+    if session.in_transaction():
+        await session.commit()
+
+
 async def get_current_auth_session(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
@@ -87,6 +103,7 @@ async def get_current_auth_session(
             )
         request.state.support_session = support_claims
 
+    await _release_dependency_transaction(session)
     return auth_session
 
 
@@ -105,6 +122,7 @@ async def get_current_admin_auth_session(
     )
     if auth_session is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin session expired")
+    await _release_dependency_transaction(session)
     return auth_session
 
 
@@ -115,6 +133,7 @@ async def get_current_user(
     user = await session.get(User, auth_session.user_id)
     if user is None or not user.is_active or is_platform_admin(user):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account unavailable")
+    await _release_dependency_transaction(session)
     return user
 
 
@@ -133,6 +152,7 @@ async def require_platform_admin(
     maximum_ttl = timedelta(hours=ADMIN_SESSION_HOURS, minutes=1)
     if auth_session.expires_at - auth_session.created_at > maximum_ttl:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin session required")
+    await _release_dependency_transaction(session)
     return user
 
 
@@ -143,6 +163,7 @@ async def get_organization(
     organization = await session.get(Organization, user.organization_id)
     if organization is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    await _release_dependency_transaction(session)
     return organization
 
 
@@ -163,7 +184,7 @@ async def get_api_credential(
     now = datetime.now(UTC)
     if item.last_used_at is None or item.last_used_at < now - timedelta(minutes=5):
         item.last_used_at = now
-        await session.commit()
+    await _release_dependency_transaction(session)
     return item
 
 
@@ -174,6 +195,7 @@ async def get_api_organization(
     organization = await session.get(Organization, credential.organization_id)
     if organization is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    await _release_dependency_transaction(session)
     return organization
 
 
