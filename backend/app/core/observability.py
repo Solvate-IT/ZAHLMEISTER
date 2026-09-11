@@ -11,6 +11,19 @@ from app.core.config import settings
 
 _request_id: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,100}$")
+_LOG_EXTRA_FIELDS = (
+    "event",
+    "method",
+    "path",
+    "status_code",
+    "duration_ms",
+    "client_ip",
+    "job_id",
+    "job_type",
+    "attempt",
+    "retry_in_seconds",
+    "organization_id",
+)
 
 
 def _safe_log_path(path: str) -> str:
@@ -30,25 +43,28 @@ class JsonFormatter(logging.Formatter):
         request_id = getattr(record, "request_id", None) or _request_id.get()
         if request_id and request_id != "-":
             payload["request_id"] = request_id
-        for key in (
-            "event",
-            "method",
-            "path",
-            "status_code",
-            "duration_ms",
-            "client_ip",
-            "job_id",
-            "job_type",
-            "attempt",
-            "retry_in_seconds",
-            "organization_id",
-        ):
+        for key in _LOG_EXTRA_FIELDS:
             value = getattr(record, key, None)
             if value is not None:
                 payload[key] = value
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+class TextFormatter(logging.Formatter):
+    """Readable development logs without dropping structured request details."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        rendered = super().format(record)
+        details = []
+        for key in _LOG_EXTRA_FIELDS:
+            value = getattr(record, key, None)
+            if value is not None:
+                details.append(f"{key}={value}")
+        if details:
+            rendered += " | " + " ".join(details)
+        return rendered
 
 
 class RequestIdFilter(logging.Filter):
@@ -66,7 +82,7 @@ def configure_logging() -> None:
         handler.setFormatter(JsonFormatter())
     else:
         handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s %(name)s [%(request_id)s] %(message)s")
+            TextFormatter("%(asctime)s %(levelname)s %(name)s [%(request_id)s] %(message)s")
         )
     root = logging.getLogger()
     root.handlers.clear()
