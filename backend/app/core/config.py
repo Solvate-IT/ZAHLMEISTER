@@ -19,6 +19,7 @@ _SECRET_FIELDS = {
     "ponto_connect_client_secret": "ponto_connect_client_secret_file",
     "ponto_connect_key_password": "ponto_connect_key_password_file",
     "mollie_oauth_client_secret": "mollie_oauth_client_secret_file",
+    "mollie_connect_access_token": "mollie_connect_access_token_file",
     "mollie_billing_api_key": "mollie_billing_api_key_file",
     "mollie_billing_webhook_secret": "mollie_billing_webhook_secret_file",
     "google_translate_api_key": "google_translate_api_key_file",
@@ -111,6 +112,8 @@ class Settings(BaseSettings):
     mollie_oauth_client_id: str = ""
     mollie_oauth_client_secret: str = ""
     mollie_oauth_client_secret_file: str = ""
+    mollie_connect_access_token: str = ""
+    mollie_connect_access_token_file: str = ""
     mollie_oauth_authorize_url: str = "https://my.mollie.com/oauth2/authorize"
     mollie_oauth_token_url: str = "https://api.mollie.com/oauth2/tokens"
     mollie_api_url: str = "https://api.mollie.com/v2"
@@ -238,6 +241,18 @@ class Settings(BaseSettings):
             errors.append("PONTO_CONNECT_ENVIRONMENT must be live in production")
         if ponto_configured and "sandbox-authorization.myponto.com" in self.ponto_authorization_url:
             errors.append("Ponto sandbox authorization URL must not be used in production")
+
+        mollie_connect_configured = any(
+            (
+                self.mollie_oauth_client_id.strip(),
+                self.mollie_oauth_client_secret.strip(),
+                self.mollie_connect_access_token.strip(),
+            )
+        )
+        if mollie_connect_configured and not (
+            self.mollie_oauth_client_id.strip() and self.mollie_oauth_client_secret.strip()
+        ):
+            errors.append("Mollie Connect OAuth configuration is incomplete")
 
         if self.mollie_billing_configured:
             if self.mollie_billing_environment != "live":

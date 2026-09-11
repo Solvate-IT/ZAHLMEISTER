@@ -71,6 +71,29 @@ def test_production_security_accepts_safe_configuration() -> None:
     assert settings.production_security_errors() == []
 
 
+def test_production_security_rejects_incomplete_mollie_connect_configuration() -> None:
+    settings = Settings(
+        _env_file=None,
+        environment="production",
+        app_secret="x" * 48,
+        database_url="postgresql+asyncpg://zahlmeister:secure-password@db:5432/zahlmeister",
+        public_app_url="https://app.example.com",
+        oauth_callback_base_url="https://app.example.com",
+        CORS_ORIGINS="https://app.example.com",
+        mail_delivery_mode="smtp",
+        smtp_host="smtp.example.com",
+        mail_from_address="noreply@example.com",
+        platform_imap_host="imap.example.com",
+        platform_imap_username="reply@example.com",
+        platform_imap_password="secret",
+        contact_recipient="support@example.com",
+        mollie_oauth_client_id="app_test",
+        mollie_oauth_client_secret="",
+        mollie_connect_access_token="advanced_test",
+    )
+    assert "Mollie Connect OAuth configuration is incomplete" in settings.production_security_errors()
+
+
 def test_production_config_accepts_capacitor_local_origins() -> None:
     settings = Settings(
         _env_file=None,

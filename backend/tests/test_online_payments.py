@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
+from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
+from app.api.routes.online_payments import router as online_payments_router
 from app.models.entities import OnlinePaymentConnection
-from app.services import mollie
+from app.services import mollie, mollie_onboarding
 
 
 def test_mollie_oauth_state_roundtrip_and_tamper_rejection() -> None:
@@ -29,6 +31,138 @@ def test_mollie_locale_normalization_uses_supported_fallbacks() -> None:
     assert mollie.normalize_locale('en') == 'en_GB'
     assert mollie.normalize_locale('sl-SI') is None
     assert mollie.normalize_locale(None) is None
+
+
+def test_mollie_oauth_start_contract_uses_post() -> None:
+    route = next(
+        item
+        for item in online_payments_router.routes
+        if item.path == "/online-payments/mollie/oauth/start"
+    )
+    assert route.methods == {"POST"}
+
+
+def test_mollie_client_link_prefill_uses_existing_customer_data() -> None:
+    payload = mollie_onboarding.build_client_link_prefill(
+        email=" billing@example.com ",
+        display_name="Christian Fast",
+        organization_name=" Solvate IT ",
+        locale="de-AT",
+        country="at",
+        street_and_number="Teststraße 1",
+        postal_code="8010",
+        city="Graz",
+        region="Steiermark",
+        registration_number="FN 123",
+        vat_number="ATU12345678",
+    )
+
+    assert payload == {
+        "owner": {
+            "email": "billing@example.com",
+            "givenName": "Christian",
+            "familyName": "Fast",
+            "locale": "de_AT",
+        },
+        "name": "Solvate IT",
+        "address": {
+            "country": "AT",
+            "streetAndNumber": "Teststraße 1",
+            "postalCode": "8010",
+            "city": "Graz",
+            "region": "Steiermark",
+        },
+        "registrationNumber": "FN 123",
+        "vatNumber": "ATU12345678",
+    }
+
+
+def test_mollie_client_link_prefill_falls_back_when_owner_cannot_be_derived() -> None:
+    assert mollie_onboarding.build_client_link_prefill(
+        email="billing@example.com",
+        display_name="Christian",
+        organization_name="Solvate IT",
+        locale="de-AT",
+        country="AT",
+    ) is None
+
+
+def test_mollie_onboarding_without_advanced_token_uses_standard_oauth(monkeypatch) -> None:
+    monkeypatch.setattr(mollie_onboarding.settings, "mollie_connect_access_token", "")
+    monkeypatch.setattr(
+        mollie_onboarding,
+        "oauth_authorization_url",
+        lambda organization_id: f"https://oauth.example/{organization_id}",
+    )
+
+    url = asyncio.run(
+        mollie_onboarding.onboarding_authorization_url(
+            "organization-1",
+            {"owner": {"email": "test@example.com"}},
+        )
+    )
+    assert url == "https://oauth.example/organization-1"
+
+
+def test_mollie_onboarding_creates_client_link_and_preserves_oauth_contract(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "_links": {
+                    "clientLink": {
+                        "href": "https://my.mollie.com/client-link/test",
+                    }
+                }
+            }
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, url, **kwargs):
+            captured["url"] = url
+            captured.update(kwargs)
+            return FakeResponse()
+
+    monkeypatch.setattr(mollie_onboarding.settings, "mollie_connect_access_token", "advanced_test")
+    monkeypatch.setattr(mollie_onboarding.settings, "mollie_oauth_client_id", "app_test")
+    monkeypatch.setattr(mollie_onboarding.httpx, "AsyncClient", lambda timeout: FakeClient())
+    monkeypatch.setattr(mollie_onboarding, "oauth_authorization_url", lambda _: "https://fallback")
+    monkeypatch.setattr(mollie_onboarding, "sign_oauth_state", lambda _: "signed-state")
+
+    prefill = {
+        "owner": {
+            "email": "billing@example.com",
+            "givenName": "Christian",
+            "familyName": "Fast",
+        },
+        "name": "Solvate IT",
+        "address": {"country": "AT"},
+    }
+    url = asyncio.run(mollie_onboarding.onboarding_authorization_url("organization-1", prefill))
+
+    assert captured["url"] == "https://api.mollie.com/v2/client-links"
+    assert captured["json"] == prefill
+    headers = captured["headers"]
+    assert isinstance(headers, dict)
+    assert headers["Authorization"] == "Bearer advanced_test"
+
+    parsed = urlparse(url)
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "my.mollie.com"
+    query = parse_qs(parsed.query)
+    assert query["client_id"] == ["app_test"]
+    assert query["state"] == ["signed-state"]
+    assert query["approval_prompt"] == ["auto"]
+    assert query["scope"] == [mollie_onboarding.settings.mollie_oauth_scopes]
 
 
 def test_mollie_payment_status_parser() -> None:

@@ -6,7 +6,6 @@ type Provider="infobip"|"mollie"|"ponto";
 
 const registrationUrls:Partial<Record<Provider,string>>={
   infobip:"https://www.infobip.com/en/signup",
-  mollie:"https://my.mollie.com/dashboard/signup",
 };
 
 export function ProviderOnboardingNotice({provider}:{provider:Provider}){

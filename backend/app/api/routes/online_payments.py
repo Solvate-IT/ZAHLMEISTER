@@ -7,10 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 
-from app.api.deps import get_organization
+from app.api.deps import get_current_user, get_organization
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.models.entities import OnlinePaymentConnection, Organization
+from app.models.billing import BillingProfile
+from app.models.entities import OnlinePaymentConnection, Organization, User
 from app.schemas.online_payments import (
     OnlinePaymentConnectionRead,
     OnlinePaymentEnabledUpdate,
@@ -24,10 +25,13 @@ from app.services.mollie import (
     exchange_oauth_code,
     get_account_details,
     mollie_provider,
-    oauth_authorization_url,
     oauth_connection_config,
     revoke_connection,
     verify_oauth_state,
+)
+from app.services.mollie_onboarding import (
+    build_client_link_prefill,
+    onboarding_authorization_url,
 )
 from app.services.secrets import encrypt_config
 
@@ -69,12 +73,35 @@ async def get_connection(
         return _read(connection)
 
 
-@router.get("/mollie/oauth/start", response_model=OnlinePaymentOAuthStartRead)
+@router.post("/mollie/oauth/start", response_model=OnlinePaymentOAuthStartRead)
 async def start_mollie_oauth(
+    user: User = Depends(get_current_user),
     organization: Organization = Depends(get_organization),
 ) -> OnlinePaymentOAuthStartRead:
+    async with SessionLocal() as session:
+        billing_profile = await session.get(BillingProfile, organization.id)
+
+    prefill = build_client_link_prefill(
+        email=billing_profile.billing_email if billing_profile else user.email,
+        display_name=user.display_name,
+        organization_name=(
+            billing_profile.organization_name
+            if billing_profile and billing_profile.organization_name
+            else organization.name
+        ),
+        locale=organization.locale,
+        country=billing_profile.country if billing_profile else None,
+        given_name=billing_profile.given_name if billing_profile else None,
+        family_name=billing_profile.family_name if billing_profile else None,
+        street_and_number=billing_profile.street_and_number if billing_profile else None,
+        postal_code=billing_profile.postal_code if billing_profile else None,
+        city=billing_profile.city if billing_profile else None,
+        region=billing_profile.region if billing_profile else None,
+        registration_number=billing_profile.organization_number if billing_profile else None,
+        vat_number=billing_profile.vat_number if billing_profile else None,
+    )
     try:
-        url = oauth_authorization_url(str(organization.id))
+        url = await onboarding_authorization_url(str(organization.id), prefill)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return OnlinePaymentOAuthStartRead(authorization_url=url)

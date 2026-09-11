@@ -61,6 +61,7 @@ x-backend-environment: &backend-environment
   PONTO_CONNECT_KEY_PASSWORD: ${PONTO_CONNECT_KEY_PASSWORD:-}
   MOLLIE_OAUTH_CLIENT_ID: ${MOLLIE_OAUTH_CLIENT_ID:-}
   MOLLIE_OAUTH_CLIENT_SECRET: ${MOLLIE_OAUTH_CLIENT_SECRET:-}
+  MOLLIE_CONNECT_ACCESS_TOKEN: ${MOLLIE_CONNECT_ACCESS_TOKEN:-}
   MOLLIE_OAUTH_AUTHORIZE_URL: https://my.mollie.com/oauth2/authorize
   MOLLIE_OAUTH_TOKEN_URL: https://api.mollie.com/oauth2/tokens
   MOLLIE_API_URL: https://api.mollie.com/v2
