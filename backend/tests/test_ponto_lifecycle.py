@@ -1,7 +1,9 @@
 import base64
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from app.services.secrets import encrypt_config
 
@@ -81,3 +83,121 @@ async def test_ponto_disconnect_does_not_silently_drop_missing_remote_token() ->
     )
     with pytest.raises(ValueError, match="revoke the integration in Ponto"):
         await ponto.revoke_connection(connection)
+
+
+@pytest.mark.asyncio
+async def test_ponto_start_rejects_incomplete_configuration_before_database_write(monkeypatch) -> None:
+    from app.api.routes import bank_sync
+
+    monkeypatch.setattr(
+        bank_sync.ponto,
+        "configuration_status",
+        lambda: {
+            "environment": "sandbox",
+            "configured": False,
+            "redirect_uri": "https://example.test/callback",
+            "missing": ["client_id", "client_secret"],
+        },
+    )
+
+    class DatabaseMustNotBeOpened:
+        def begin(self):
+            raise AssertionError("database was opened before Ponto readiness was checked")
+
+    monkeypatch.setattr(bank_sync, "SessionLocal", DatabaseMustNotBeOpened())
+    organization = SimpleNamespace(id=uuid4(), locale="de-AT")
+
+    with pytest.raises(HTTPException) as exc:
+        await bank_sync.start_ponto(organization)
+
+    assert exc.value.status_code == 409
+    assert "client_id" in str(exc.value.detail)
+    assert "client_secret" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_failed_ponto_onboarding_row_is_cleaned_and_not_exposed(monkeypatch) -> None:
+    from app.api.routes import bank_sync
+
+    connection = SimpleNamespace(
+        id=uuid4(),
+        provider="ponto",
+        status="error",
+        connected_at=None,
+    )
+    deleted = []
+
+    class Session:
+        async def scalar(self, _statement):
+            return connection
+
+        async def execute(self, _statement):
+            return None
+
+        async def delete(self, item):
+            deleted.append(item)
+
+    session = Session()
+
+    class Context:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *args):
+            return False
+
+    class SessionFactory:
+        def begin(self):
+            return Context()
+
+    monkeypatch.setattr(bank_sync, "SessionLocal", SessionFactory())
+    organization = SimpleNamespace(id=uuid4())
+
+    assert await bank_sync.get_connection(organization) is None
+    assert deleted == [connection]
+
+
+@pytest.mark.asyncio
+async def test_disconnect_of_unestablished_ponto_row_is_local_only(monkeypatch) -> None:
+    from app.api.routes import bank_sync
+
+    connection = SimpleNamespace(
+        id=uuid4(),
+        provider="ponto",
+        status="error",
+        connected_at=None,
+    )
+    deleted = []
+
+    class Session:
+        async def scalar(self, _statement):
+            return connection
+
+        async def execute(self, _statement):
+            return None
+
+        async def delete(self, item):
+            deleted.append(item)
+
+    session = Session()
+
+    class Context:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *args):
+            return False
+
+    class SessionFactory:
+        def begin(self):
+            return Context()
+
+    async def must_not_revoke(_connection):
+        raise AssertionError("remote revocation must not run without a completed OAuth connection")
+
+    monkeypatch.setattr(bank_sync, "SessionLocal", SessionFactory())
+    monkeypatch.setattr(bank_sync.ponto, "revoke_connection", must_not_revoke)
+    organization = SimpleNamespace(id=uuid4())
+
+    await bank_sync.disconnect(organization)
+    assert deleted == [connection]
