@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import hmac
-import json
 import secrets
 import ssl
 import time
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -23,38 +20,51 @@ def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
 
 
-def sign_state(connection_id: str, organization_id: str, ttl_seconds: int = 600) -> str:
-    payload = json.dumps(
+def create_oauth_state(
+    organization_id: str,
+    verifier: str,
+    ttl_seconds: int = 600,
+) -> str:
+    """Create an authenticated, encrypted OAuth state including the PKCE verifier.
+
+    Keeping the short-lived PKCE verifier in the state makes OAuth start fully
+    stateless. No provisional BankSyncConnection row or database lock is needed
+    before the customer has actually authorized Ponto.
+    """
+    return encrypt_config(
         {
-            "connection_id": connection_id,
+            "purpose": "ponto_oauth",
             "organization_id": organization_id,
+            "pkce_verifier": verifier,
+            "ponto_environment": settings.ponto_connect_environment,
             "exp": int(time.time()) + ttl_seconds,
-        },
-        separators=(",", ":"),
-    ).encode()
-    body = _b64url(payload)
-    signature = _b64url(
-        hmac.new(settings.app_secret.encode(), body.encode(), hashlib.sha256).digest()
+        }
     )
-    return f"{body}.{signature}"
 
 
-def verify_state(value: str) -> tuple[str, str]:
+def verify_oauth_state(value: str) -> tuple[str, str]:
     try:
-        body, signature = value.split(".", 1)
-        expected = _b64url(
-            hmac.new(settings.app_secret.encode(), body.encode(), hashlib.sha256).digest()
-        )
-        if not hmac.compare_digest(signature, expected):
+        payload = decrypt_config(value)
+        if payload.get("purpose") != "ponto_oauth":
             raise ValueError("Invalid Ponto OAuth state")
-        padded = body + "=" * (-len(body) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded).decode())
         if int(payload.get("exp") or 0) < int(time.time()):
             raise ValueError("Expired Ponto OAuth state")
-        return str(payload["connection_id"]), str(payload["organization_id"])
-    except Exception as exc:
-        if isinstance(exc, ValueError) and "Ponto OAuth state" in str(exc):
+        if payload.get("ponto_environment") != settings.ponto_connect_environment:
+            raise ValueError("Ponto OAuth environment changed")
+        organization_id = str(payload["organization_id"]).strip()
+        verifier = str(payload["pkce_verifier"]).strip()
+        if not organization_id or not verifier:
+            raise ValueError("Invalid Ponto OAuth state")
+        return organization_id, verifier
+    except ValueError as exc:
+        if str(exc) in {
+            "Invalid Ponto OAuth state",
+            "Expired Ponto OAuth state",
+            "Ponto OAuth environment changed",
+        }:
             raise
+        raise ValueError("Invalid Ponto OAuth state") from exc
+    except (KeyError, TypeError) as exc:
         raise ValueError("Invalid Ponto OAuth state") from exc
 
 
@@ -128,9 +138,7 @@ def configured() -> bool:
     return bool(configuration_status()["configured"])
 
 
-def start_authorization(
-    connection: BankSyncConnection, organization_id: str, language: str = "en"
-) -> str:
+def start_authorization(organization_id: str, language: str = "en") -> str:
     status = configuration_status()
     if not status["configured"]:
         raise ValueError(
@@ -138,16 +146,7 @@ def start_authorization(
         )
     verifier = secrets.token_urlsafe(64)[:96]
     challenge = _b64url(hashlib.sha256(verifier.encode()).digest())
-    config = decrypt_config(connection.encrypted_config)
-    config.update(
-        {
-            "pkce_verifier": verifier,
-            "oauth_started_at": time.time(),
-            "ponto_environment": settings.ponto_connect_environment,
-        }
-    )
-    connection.encrypted_config = encrypt_config(config)
-    state = sign_state(str(connection.id), organization_id)
+    state = create_oauth_state(organization_id, verifier)
     query = urlencode(
         {
             "client_id": settings.ponto_connect_client_id,
@@ -217,14 +216,9 @@ async def revoke_connection(connection: BankSyncConnection) -> None:
         response.raise_for_status()
 
 
-async def exchange_code(connection: BankSyncConnection, code: str) -> None:
-    config = decrypt_config(connection.encrypted_config)
-    verifier = str(config.get("pkce_verifier") or "")
+async def exchange_code(code: str, verifier: str) -> dict[str, Any]:
     if not verifier:
         raise ValueError("Ponto PKCE verifier missing")
-    started_environment = str(config.get("ponto_environment") or "")
-    if started_environment and started_environment != settings.ponto_connect_environment:
-        raise ValueError("Ponto environment changed while OAuth authorization was in progress")
     payload = await _token_request(
         {
             "grant_type": "authorization_code",
@@ -234,19 +228,18 @@ async def exchange_code(connection: BankSyncConnection, code: str) -> None:
             "code_verifier": verifier,
         }
     )
-    config.update(
-        {
-            "access_token": payload["access_token"],
-            "refresh_token": payload.get("refresh_token"),
-            "expires_at": time.time() + int(payload.get("expires_in") or 1800) - 60,
-            "scope": payload.get("scope"),
-        }
-    )
-    config.pop("pkce_verifier", None)
-    config.pop("oauth_started_at", None)
+    return {
+        "access_token": payload["access_token"],
+        "refresh_token": payload.get("refresh_token"),
+        "expires_at": time.time() + int(payload.get("expires_in") or 1800) - 60,
+        "scope": payload.get("scope"),
+        "ponto_environment": settings.ponto_connect_environment,
+    }
+
+
+def apply_authorization(connection: BankSyncConnection, config: dict[str, Any]) -> None:
     connection.encrypted_config = encrypt_config(config)
     connection.status = "connected"
-    connection.connected_at = datetime.now(UTC)
     connection.last_error = None
 
 
