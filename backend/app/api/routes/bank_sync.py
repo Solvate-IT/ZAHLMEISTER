@@ -57,16 +57,30 @@ def _ponto_redirect(result: str) -> RedirectResponse:
     )
 
 
+async def _delete_local_connection(session, item: BankSyncConnection) -> None:
+    await session.execute(
+        delete(BankSyncAccount).where(BankSyncAccount.connection_id == item.id)
+    )
+    await session.delete(item)
+
+
 @router.get("/connection", response_model=BankSyncConnectionRead | None)
 async def get_connection(organization: Organization = Depends(get_organization)):
-    async with SessionLocal() as session:
+    async with SessionLocal.begin() as session:
         item = await session.scalar(
-            select(BankSyncConnection).where(
+            select(BankSyncConnection)
+            .where(
                 BankSyncConnection.organization_id == organization.id,
                 BankSyncConnection.provider == "ponto",
             )
+            .with_for_update()
         )
         if item is None or item.status == "disconnected":
+            return None
+        if item.status == "error" and item.connected_at is None:
+            # Repair rows created by the old flow before OAuth could even start.
+            # Such a row never represented a real Ponto connection.
+            await _delete_local_connection(session, item)
             return None
         return _connection_read(item)
 
@@ -81,43 +95,64 @@ async def get_ponto_configuration(
 
 @router.post("/ponto/start", response_model=BankSyncStartRead)
 async def start_ponto(organization: Organization = Depends(get_organization)) -> BankSyncStartRead:
-    authorization_url: str | None = None
-    error_detail: str | None = None
-    async with SessionLocal.begin() as session:
-        item = await session.scalar(
-            select(BankSyncConnection).where(
-                BankSyncConnection.organization_id == organization.id,
-                BankSyncConnection.provider == "ponto",
-            )
+    configuration = ponto.configuration_status()
+    if not configuration["configured"]:
+        missing = ", ".join(configuration["missing"])
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Ponto Connect configuration is incomplete: {missing}",
         )
-        if item is None:
-            item = BankSyncConnection(
-                organization_id=organization.id,
-                provider="ponto",
-                status="connecting",
-                account_label="Ponto",
+
+    try:
+        async with SessionLocal.begin() as session:
+            item = await session.scalar(
+                select(BankSyncConnection)
+                .where(
+                    BankSyncConnection.organization_id == organization.id,
+                    BankSyncConnection.provider == "ponto",
+                )
+                .with_for_update()
             )
-            session.add(item)
-            await session.flush()
-        item.status = "connecting"
-        item.account_label = item.account_label or "Ponto"
-        item.last_error = None
-        try:
+            if item is not None and item.connected_at is not None and item.status != "disconnected":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Ponto is already connected",
+                )
+            if item is None:
+                item = BankSyncConnection(
+                    organization_id=organization.id,
+                    provider="ponto",
+                    status="connecting",
+                    account_label="Ponto",
+                )
+                session.add(item)
+                await session.flush()
+            else:
+                await session.execute(
+                    delete(BankSyncAccount).where(BankSyncAccount.connection_id == item.id)
+                )
+                item.encrypted_config = None
+                item.connected_at = None
+                item.last_sync_at = None
+                item.last_tested_at = None
+
+            item.status = "connecting"
+            item.account_label = item.account_label or "Ponto"
+            item.last_error = None
             language = (organization.locale or "en").split("-", 1)[0]
             authorization_url = ponto.start_authorization(
                 item, str(organization.id), language
             )
-        except ValueError as exc:
-            error_detail = str(exc)
-            item.status = "error"
-            item.last_error = error_detail[:2000]
-            item.last_tested_at = datetime.now(UTC)
-
-    if error_detail:
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        # Raising outside the transaction body rolls back a newly-created or
+        # reset provisional row. A failed OAuth start must never look connected.
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=error_detail
-        )
-    assert authorization_url is not None
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
     return BankSyncStartRead(authorization_url=authorization_url)
 
 
@@ -147,18 +182,21 @@ async def finish_ponto(
         now = datetime.now(UTC)
         if error:
             cancelled = error == "access_denied"
-            item.status = "disconnected" if cancelled else "error"
-            description = (error_description or error).replace("\r", " ").replace("\n", " ").strip()
-            item.last_error = description[:2000] if description else "Ponto authorization failed"
-            item.last_tested_at = now
-            if cancelled:
-                item.encrypted_config = None
-                item.connected_at = None
+            if item.connected_at is None:
+                await _delete_local_connection(session, item)
+            else:
+                description = (error_description or error).replace("\r", " ").replace("\n", " ").strip()
+                item.status = "error"
+                item.last_error = description[:2000] if description else "Ponto authorization failed"
+                item.last_tested_at = now
             result = "cancelled" if cancelled else "error"
         elif not code:
-            item.status = "error"
-            item.last_error = "Ponto authorization code is missing"
-            item.last_tested_at = now
+            if item.connected_at is None:
+                await _delete_local_connection(session, item)
+            else:
+                item.status = "error"
+                item.last_error = "Ponto authorization code is missing"
+                item.last_tested_at = now
         else:
             try:
                 await ponto.exchange_code(item, code)
@@ -168,9 +206,12 @@ async def finish_ponto(
                 item.last_tested_at = now
                 result = "connected"
             except Exception as exc:
-                item.status = "error"
-                item.last_error = str(exc)[:2000]
-                item.last_tested_at = now
+                if item.connected_at is None:
+                    await _delete_local_connection(session, item)
+                else:
+                    item.status = "error"
+                    item.last_error = str(exc)[:2000]
+                    item.last_tested_at = now
 
     return _ponto_redirect(result)
 
@@ -185,7 +226,7 @@ async def test_connection(organization: Organization = Depends(get_organization)
                 BankSyncConnection.provider == "ponto",
             )
         )
-        if item is None or item.status == "disconnected":
+        if item is None or item.status == "disconnected" or item.connected_at is None:
             raise HTTPException(status_code=404, detail="BankSync is not connected")
         try:
             await get_bank_sync_provider(item.provider).test_connection(item)
@@ -210,6 +251,7 @@ async def get_accounts(organization: Organization = Depends(get_organization)) -
                 .where(
                     BankSyncAccount.organization_id == organization.id,
                     BankSyncConnection.status != "disconnected",
+                    BankSyncConnection.connected_at.is_not(None),
                 )
                 .order_by(BankSyncAccount.name, BankSyncAccount.iban)
             )
@@ -242,7 +284,11 @@ async def sync_now(organization: Organization = Depends(get_organization)) -> Ba
                 BankSyncConnection.provider == "ponto",
             )
         )
-        if item is None or item.status not in {"connected", "error"}:
+        if (
+            item is None
+            or item.connected_at is None
+            or item.status not in {"connected", "error"}
+        ):
             raise HTTPException(status_code=409, detail="BankSync is not connected")
         try:
             result = await sync_connection(session, item)
@@ -265,6 +311,11 @@ async def disconnect(organization: Organization = Depends(get_organization)) -> 
             .with_for_update()
         )
         if item is None or item.status == "disconnected":
+            return
+        if item.connected_at is None:
+            # Nothing was ever authorized remotely. Local cleanup is sufficient
+            # and, unlike token revocation, also works for historical bad rows.
+            await _delete_local_connection(session, item)
             return
         try:
             await ponto.revoke_connection(item)
