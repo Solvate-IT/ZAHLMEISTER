@@ -102,7 +102,10 @@ async def get_ponto_configuration(
 
 
 @router.post("/ponto/start", response_model=BankSyncStartRead)
-async def start_ponto(organization: Organization = Depends(get_organization)) -> BankSyncStartRead:
+async def start_ponto(
+    organization: Organization = Depends(get_organization),
+    session: AsyncSession = Depends(get_session),
+) -> BankSyncStartRead:
     configuration = ponto.configuration_status()
     if not configuration["configured"]:
         missing = ", ".join(configuration["missing"])
@@ -112,43 +115,47 @@ async def start_ponto(organization: Organization = Depends(get_organization)) ->
         )
 
     try:
-        async with SessionLocal.begin() as session:
-            item = await session.scalar(
-                select(BankSyncConnection)
-                .where(
-                    BankSyncConnection.organization_id == organization.id,
-                    BankSyncConnection.provider == "ponto",
-                )
-                .with_for_update()
+        # Reuse the request-scoped session that authentication already opened.
+        # Opening a second SessionLocal here can deadlock on the connection pool
+        # while the first session is retained until the request completes.
+        item = await session.scalar(
+            select(BankSyncConnection)
+            .where(
+                BankSyncConnection.organization_id == organization.id,
+                BankSyncConnection.provider == "ponto",
             )
-            if _is_established_connection(item):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Ponto is already connected",
-                )
-            if item is None:
-                item = BankSyncConnection(
-                    organization_id=organization.id,
-                    provider="ponto",
-                    status="connecting",
-                    account_label="Ponto",
-                )
-                session.add(item)
-                await session.flush()
+            .with_for_update()
+        )
+        if _is_established_connection(item):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Ponto is already connected",
+            )
+        if item is None:
+            item = BankSyncConnection(
+                organization_id=organization.id,
+                provider="ponto",
+                status="connecting",
+                account_label="Ponto",
+            )
+            session.add(item)
+            await session.flush()
 
-            item.status = "connecting"
-            item.account_label = item.account_label or "Ponto"
-            item.last_error = None
-            item.last_tested_at = None
-            language = (organization.locale or "en").split("-", 1)[0]
-            authorization_url = ponto.start_authorization(
-                item, str(organization.id), language
-            )
+        item.status = "connecting"
+        item.account_label = item.account_label or "Ponto"
+        item.last_error = None
+        item.last_tested_at = None
+        language = (organization.locale or "en").split("-", 1)[0]
+        authorization_url = ponto.start_authorization(
+            item, str(organization.id), language
+        )
+        await session.commit()
     except HTTPException:
+        await session.rollback()
         raise
     except ValueError as exc:
-        # Raising outside the transaction body rolls back a newly-created or
-        # reset provisional row. A failed OAuth start must never look connected.
+        # A failed OAuth start must never persist a provisional connection.
+        await session.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
