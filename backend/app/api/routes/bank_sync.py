@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -24,6 +25,7 @@ from app.services.bank_sync import refresh_accounts, sync_connection
 from app.services.bank_sync_providers import get_bank_sync_provider
 
 router = APIRouter(prefix="/bank-sync", tags=["bank-sync"])
+logger = logging.getLogger("zahlmeister.ponto")
 
 
 def _connection_read(item: BankSyncConnection) -> BankSyncConnectionRead:
@@ -131,72 +133,89 @@ async def finish_ponto(
     error_description: str | None = None,
 ):
     if not state:
+        logger.warning("Ponto OAuth callback missing state")
         return _ponto_redirect("error")
 
     try:
         organization_id_raw, verifier = ponto.verify_oauth_state(state)
         organization_id = UUID(organization_id_raw)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as exc:
+        logger.warning("Ponto OAuth callback state validation failed: %s", exc)
         return _ponto_redirect("error")
 
     if error:
+        logger.warning(
+            "Ponto OAuth provider returned error for organization %s: %s%s",
+            organization_id,
+            error,
+            f" ({error_description[:500]})" if error_description else "",
+        )
         return _ponto_redirect("cancelled" if error == "access_denied" else "error")
     if not code:
+        logger.warning("Ponto OAuth callback missing authorization code for organization %s", organization_id)
         return _ponto_redirect("error")
 
     try:
         config = await ponto.exchange_code(code, verifier)
     except Exception:
+        logger.exception("Ponto OAuth token exchange failed for organization %s", organization_id)
         return _ponto_redirect("error")
 
     now = datetime.now(UTC)
     result = "connected"
     connection_id: UUID | None = None
 
-    async with SessionLocal.begin() as session:
-        organization = await session.get(Organization, organization_id)
-        if organization is None:
-            return _ponto_redirect("error")
+    try:
+        async with SessionLocal.begin() as session:
+            organization = await session.get(Organization, organization_id)
+            if organization is None:
+                logger.warning("Ponto OAuth callback references missing organization %s", organization_id)
+                return _ponto_redirect("error")
 
-        item = await session.scalar(
-            select(BankSyncConnection)
-            .where(
-                BankSyncConnection.organization_id == organization_id,
-                BankSyncConnection.provider == "ponto",
+            item = await session.scalar(
+                select(BankSyncConnection)
+                .where(
+                    BankSyncConnection.organization_id == organization_id,
+                    BankSyncConnection.provider == "ponto",
+                )
+                .with_for_update()
             )
-            .with_for_update()
-        )
-        if item is None:
-            item = BankSyncConnection(
-                organization_id=organization_id,
-                provider="ponto",
-                status="connected",
-                account_label="Ponto",
-            )
-            session.add(item)
-            await session.flush()
+            if item is None:
+                item = BankSyncConnection(
+                    organization_id=organization_id,
+                    provider="ponto",
+                    status="connected",
+                    account_label="Ponto",
+                )
+                session.add(item)
+                await session.flush()
 
-        await session.execute(
-            delete(BankSyncAccount).where(BankSyncAccount.connection_id == item.id)
-        )
-        ponto.apply_authorization(item, config)
-        item.account_label = item.account_label or "Ponto"
-        item.connected_at = now
-        item.last_sync_at = None
-        item.last_tested_at = now
-        connection_id = item.id
+            await session.execute(
+                delete(BankSyncAccount).where(BankSyncAccount.connection_id == item.id)
+            )
+            ponto.apply_authorization(item, config)
+            item.account_label = item.account_label or "Ponto"
+            item.connected_at = now
+            item.last_sync_at = None
+            item.last_tested_at = now
+            connection_id = item.id
+    except Exception:
+        logger.exception("Ponto OAuth credentials could not be stored for organization %s", organization_id)
+        return _ponto_redirect("error")
 
     if connection_id is not None:
         try:
             async with SessionLocal.begin() as session:
                 item = await session.get(BankSyncConnection, connection_id, with_for_update=True)
                 if item is None:
+                    logger.warning("Ponto connection disappeared before account refresh: %s", connection_id)
                     return _ponto_redirect("error")
                 await refresh_accounts(session, item)
                 item.status = "connected"
                 item.last_error = None
                 item.last_tested_at = now
         except Exception as exc:
+            logger.exception("Ponto account refresh failed for connection %s", connection_id)
             result = "error"
             async with SessionLocal.begin() as session:
                 item = await session.get(BankSyncConnection, connection_id, with_for_update=True)
@@ -205,6 +224,7 @@ async def finish_ponto(
                     item.last_error = str(exc)[:2000]
                     item.last_tested_at = now
 
+    logger.info("Ponto OAuth callback completed for organization %s with result %s", organization_id, result)
     return _ponto_redirect(result)
 
 
