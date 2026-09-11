@@ -62,7 +62,7 @@ pnpm-debug.log*
 .pnpm-store/
 .vercel/
 *.tsbuildinfo
-#next-env.d.ts
+next-env.d.ts
 
 # Docker runtime data
 docker/backup/*
