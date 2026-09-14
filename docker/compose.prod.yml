@@ -174,6 +174,9 @@ services:
     cap_drop:
       - ALL
     image: zahlmeister-backend:${IMAGE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
     restart: unless-stopped
     environment: *backend-environment
     depends_on:
@@ -198,10 +201,10 @@ services:
         condition: service_healthy
     networks:
       - default
-      - traefik
+      - proxy
     labels:
       - traefik.enable=true
-      - traefik.docker.network=${TRAEFIK_NETWORK:-traefik}
+      - traefik.docker.network=${PROXY_NETWORK:-solvate_proxy}
       - traefik.http.routers.zahlmeister.rule=Host(`${APP_HOST}`)
       - traefik.http.routers.zahlmeister.entrypoints=websecure
       - traefik.http.routers.zahlmeister.tls=true
@@ -212,6 +215,6 @@ volumes:
   postgres_data:
 
 networks:
-  traefik:
+  proxy:
     external: true
-    name: ${TRAEFIK_NETWORK:-traefik}
+    name: ${PROXY_NETWORK:-solvate_proxy}
