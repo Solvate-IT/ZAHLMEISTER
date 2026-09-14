@@ -31,6 +31,26 @@ write_secret_if_missing() {
   printf '%s\n' "$value" > "$path"
 }
 
+production_secrets_ready() {
+  local target_dir="$1" name expected metadata
+  local names=(postgres_password database_url app_secret platform_admin_password monitoring_token)
+
+  [[ -d "$target_dir" ]] || return 1
+  metadata="$(stat -c '%u:%g:%a' "$target_dir" 2>/dev/null || true)"
+  [[ "$metadata" == "10001:10001:755" ]] || return 1
+
+  for name in "${names[@]}"; do
+    [[ -f "$target_dir/$name" && -s "$target_dir/$name" ]] || return 1
+    if [[ "$name" == "postgres_password" ]]; then
+      expected="10001:10001:644"
+    else
+      expected="10001:10001:640"
+    fi
+    metadata="$(stat -c '%u:%g:%a' "$target_dir/$name" 2>/dev/null || true)"
+    [[ "$metadata" == "$expected" ]] || return 1
+  done
+}
+
 secure_internal_secret_permissions() {
   local environment="$1" target_dir="$2"
   chmod 0755 "$target_dir"
@@ -56,6 +76,20 @@ ensure_internal_secrets() {
   local environment="$1" private_file="$2"
   local target_dir="$DOCKER_DIR/secrets/$environment"
   local postgres_password database_url expected_database_url value
+
+  # Once the production secret set has been initialized securely, normal Docker
+  # operators do not need permission to read or rewrite its contents. Docker
+  # mounts the files directly for the runtime containers.
+  if [[ "$environment" == "production" && "$(id -u)" != "0" && ( "$(id -u)" != "10001" || "$(id -g)" != "10001" ) ]]; then
+    if production_secrets_ready "$target_dir"; then
+      INTERNAL_SECRETS_DIR="$target_dir"
+      export INTERNAL_SECRETS_DIR
+      return 0
+    fi
+    echo "Production internal secrets are missing or do not have the expected secure ownership/permissions." >&2
+    echo "Initialize or repair them once as root, then rerun this command as the normal deployment user." >&2
+    return 1
+  fi
 
   mkdir -p "$target_dir"
 
