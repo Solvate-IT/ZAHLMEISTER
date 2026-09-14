@@ -247,7 +247,7 @@ def _subscription_marker(config: dict[str, Any], channel: str) -> dict[str, Any]
 def _webhook_basic_password(connection: CommunicationConnection) -> str:
     if not connection.webhook_key:
         raise ValueError("Infobip webhook key is missing")
-    material = f"infobip-webhook-auth:{connection.webhook_key}".encode("utf-8")
+    material = f"infobip-webhook-auth:{connection.webhook_key}".encode()
     return _b64url(
         hmac.new(settings.app_secret.encode("utf-8"), material, hashlib.sha256).digest()
     )

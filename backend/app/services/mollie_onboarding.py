@@ -150,7 +150,7 @@ async def onboarding_authorization_url(
         if not isinstance(payload, dict):
             raise ValueError("Unexpected Mollie Client Link response")
         client_link_url = str(
-            (((payload.get("_links") or {}).get("clientLink") or {}).get("href") or "")
+            ((payload.get("_links") or {}).get("clientLink") or {}).get("href") or ""
         ).strip()
         if not client_link_url:
             raise ValueError("Mollie Client Link response did not contain a URL")
