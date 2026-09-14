@@ -37,6 +37,10 @@ ENV RUFF_CACHE_DIR=/tmp/ruff-cache \
 RUN pip install --no-cache-dir --prefix=/home/app/.local ".[dev]"
 COPY backend/tests ./tests
 COPY backend/locales ./locales
+COPY frontend/src/lib/session.ts /frontend/src/lib/session.ts
+COPY frontend/src/app/support-access/page.tsx /frontend/src/app/support-access/page.tsx
+COPY frontend/src/components/Workspace.tsx /frontend/src/components/Workspace.tsx
+COPY frontend/src/components/PlatformAdmin.tsx /frontend/src/components/PlatformAdmin.tsx
 USER app
 CMD ["pytest", "-q"]
 

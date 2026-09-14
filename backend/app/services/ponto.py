@@ -68,6 +68,11 @@ def verify_oauth_state(value: str) -> tuple[str, str]:
         raise ValueError("Invalid Ponto OAuth state") from exc
 
 
+# Keep the previous internal names available while callers migrate to the clearer OAuth names.
+sign_state = create_oauth_state
+verify_state = verify_oauth_state
+
+
 def _endpoint_configuration_errors() -> list[str]:
     errors: list[str] = []
     api = urlparse(settings.ponto_connect_api_url.strip())
