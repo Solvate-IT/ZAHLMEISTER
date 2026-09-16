@@ -24,6 +24,44 @@ backend_shell() { compose exec backend bash; }
 frontend_shell() { compose exec frontend sh; }
 apply_schema() { compose run --rm bootstrap; }
 run_tests() { compose run --rm backend pytest -q; }
+platform_admin_access() {
+  compose exec backend python -c '
+import asyncio
+import getpass
+
+from app.core.config import settings
+from app.services.platform_admin import set_platform_admin_password
+
+admins = sorted(settings.platform_admin_emails)
+if not admins:
+    raise SystemExit("No platform admin emails are configured in PLATFORM_ADMIN_EMAILS.")
+
+print("Configured platform admin emails:")
+for item in admins:
+    print(f"  - {item}")
+
+email = input("Admin email: ").strip()
+if not email:
+    raise SystemExit("No email entered.")
+if email.casefold() not in settings.platform_admin_emails:
+    raise SystemExit(
+        "Email is not configured in PLATFORM_ADMIN_EMAILS. "
+        "Add it to the tracked environment configuration and recreate the stack first."
+    )
+
+password = getpass.getpass("New password: ")
+confirmation = getpass.getpass("Repeat password: ")
+if password != confirmation:
+    raise SystemExit("Passwords do not match.")
+
+try:
+    asyncio.run(set_platform_admin_password(email, password))
+except ValueError as exc:
+    raise SystemExit(str(exc)) from exc
+
+print("Platform admin access created or updated successfully.")
+'
+}
 
 while true; do
   frontend_port="$(env_value FRONTEND_PORT 3003)"
@@ -43,6 +81,7 @@ while true; do
  8) Frontend Shell
  9) Database Initialize / Migrate / Verify
 10) Tests
+11) Platform Admin Access
  q) Quit
 ------------------------------------------------------------
  Frontend: ${frontend_url}
@@ -61,6 +100,7 @@ EOF
     8) frontend_shell ;;
     9) apply_schema; pause ;;
     10) run_tests; pause ;;
+    11) platform_admin_access; pause ;;
     q|Q) exit 0 ;;
     *) echo "Invalid selection"; pause ;;
   esac
