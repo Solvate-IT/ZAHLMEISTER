@@ -205,6 +205,7 @@ services:
       - traefik.http.routers.zahlmeister.rule=Host(`${APP_HOST}`)
       - traefik.http.routers.zahlmeister.entrypoints=websecure
       - traefik.http.routers.zahlmeister.tls=true
+      - traefik.http.routers.zahlmeister.tls.certresolver=letsencrypt
       - traefik.http.services.zahlmeister.loadbalancer.server.port=80
     logging: *default-logging
 
