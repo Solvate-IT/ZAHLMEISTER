@@ -123,7 +123,7 @@ services:
     build:
       context: ..
       dockerfile: docker/backend.Dockerfile
-    restart: unless-stopped
+    restart: "no"
     environment: *backend-environment
     depends_on:
       db:
@@ -174,9 +174,6 @@ services:
     cap_drop:
       - ALL
     image: zahlmeister-backend:${IMAGE_TAG:-latest}
-    build:
-      context: ..
-      dockerfile: docker/backend.Dockerfile
     restart: unless-stopped
     environment: *backend-environment
     depends_on:
