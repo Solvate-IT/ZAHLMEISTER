@@ -130,6 +130,31 @@ env_value() {
   printf '%s' "${value:-$fallback}"
 }
 
+load_layered_environment() {
+  local key value
+
+  # Docker Compose gives inherited shell variables precedence over --env-file.
+  # Normalize every project-managed key into the shell so the documented
+  # layering is deterministic: tracked environment first, private .env second.
+  # Commented external credential markers intentionally become empty when the
+  # private file does not configure them, preventing stale exported credentials
+  # from silently enabling integrations.
+  while IFS= read -r key; do
+    [[ -n "$key" ]] || continue
+    if has_env_key "$key" "$PRIVATE_ENV_FILE"; then
+      value="$(read_env_value_from_file "$PRIVATE_ENV_FILE" "$key")"
+    elif has_env_key "$key" "$BASE_ENV_FILE"; then
+      value="$(read_env_value_from_file "$BASE_ENV_FILE" "$key")"
+    else
+      value=""
+    fi
+    printf -v "$key" '%s' "$value"
+    export "$key"
+  done < <({ extract_env_keys "$BASE_ENV_FILE"; extract_active_env_keys "$PRIVATE_ENV_FILE"; } | sort -u)
+}
+
+load_layered_environment
+
 # Internal runtime secrets are created once and then reused. Existing legacy
 # .env values are adopted on first migration to preserve database/encryption state.
 source "$DOCKER_DIR/scripts/internal-secrets.sh"
