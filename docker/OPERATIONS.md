@@ -75,6 +75,18 @@ The standard menu intentionally contains only frequent operations:
 
 Use `q` to quit. Backup, restore and other uncommon maintenance tasks remain separate scripts under `scripts/`.
 
+## Platform admin access
+
+Platform-admin maintenance is intentionally separate from the normal menu. Run:
+
+```bash
+./scripts/platform-admin-access.sh
+```
+
+The assistant shows the active environment and the configured admin account before anything is changed. If the running backend still uses an older admin configuration, it offers to recreate backend and worker automatically and verifies the result before allowing a password change. With a single configured admin address there is nothing to type or copy; with multiple addresses a numbered selection is shown. Production changes require an additional confirmation, and the password prompt states the minimum length.
+
+Development and Production may use different admin addresses. Always follow the address shown by this assistant for the active environment instead of copying an address from another installation.
+
 ## Database schema
 
 Schema initialization remains idempotent. Existing production data must be considered before schema changes; incompatible changes require explicit safe migrations.

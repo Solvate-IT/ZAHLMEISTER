@@ -3,6 +3,7 @@
 import {useCallback, useEffect, useState} from "react";
 import {useRouter, useSearchParams} from "next/navigation";
 import {api} from "@/lib/api";
+import {clearToken} from "@/lib/session";
 import {useI18n} from "@/lib/i18n";
 import {Brand} from "./Brand";
 import {PasswordInput} from "./PasswordInput";
@@ -26,7 +27,7 @@ export function AccountActionPage() {
   const verify = useCallback(async () => {
     if (!token || !verifying) return;
     setBusy(true); setError("");
-    try { await api.verifyEmail(token); setSuccess(true); }
+    try { await api.verifyEmail(token); await clearToken(); setSuccess(true); }
     catch { setError(t("invalidLink")); }
     finally { setBusy(false); }
   }, [token, verifying, t]);
@@ -38,13 +39,13 @@ export function AccountActionPage() {
     if (!validPassword(password)) { setError(t("passwordRequirements")); return; }
     if (password !== confirm) { setError(t("passwordsDoNotMatch")); return; }
     setBusy(true); setError("");
-    try { await api.resetPassword(token, password); setSuccess(true); }
+    try { await api.resetPassword(token, password); await clearToken(); setSuccess(true); }
     catch { setError(t("invalidLink")); }
     finally { setBusy(false); }
   }
 
   const validAction = verifying || resetting;
   return <div className="page-bg"><div className="auth-wrap"><div className="auth-card"><Brand/>
-    {!validAction || !token ? <div className="notice error">{t("invalidLink")}</div> : success ? <div className="stack"><div className="notice success">{verifying ? t("verificationSuccess") : t("passwordResetSuccess")}</div><button className="button" onClick={() => router.replace("/")}>{t("done")}</button></div> : verifying ? <div className="stack"><h1 className="auth-title">{t("verifyEmail")}</h1>{busy && <div className="state"><span className="spinner"/>{t("loading")}</div>}{error && <><div className="notice error">{error}</div><button className="button secondary" onClick={() => void verify()} disabled={busy}>{t("retry")}</button></>}</div> : <form className="form" onSubmit={reset}><h1 className="auth-title">{t("resetPassword")}</h1><div className="field"><label htmlFor="new-password">{t("newPassword")}</label><PasswordInput id="new-password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} required minLength={6}/><span className="muted field-hint">{t("passwordRequirements")}</span></div><div className="field"><label htmlFor="confirm-password">{t("confirmPassword")}</label><PasswordInput id="confirm-password" autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} required minLength={6}/></div>{error && <div className="notice error">{error}</div>}<button className="button" disabled={busy}>{busy ? t("loading") : t("resetPassword")}</button></form>}
+    {!validAction || !token ? <div className="notice error">{t("invalidLink")}</div> : success ? <div className="stack"><div className="notice success">{verifying ? t("verificationSuccess") : t("passwordResetSuccess")}</div><button className="button" onClick={() => router.replace("/?auth=login")}>{t("login")}</button></div> : verifying ? <div className="stack"><h1 className="auth-title">{t("verifyEmail")}</h1>{busy && <div className="state"><span className="spinner"/>{t("loading")}</div>}{error && <><div className="notice error">{error}</div><button className="button secondary" onClick={() => void verify()} disabled={busy}>{t("retry")}</button></>}</div> : <form className="form" onSubmit={reset}><h1 className="auth-title">{t("resetPassword")}</h1><div className="field"><label htmlFor="new-password">{t("newPassword")}</label><PasswordInput id="new-password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} required minLength={6}/><span className="muted field-hint">{t("passwordRequirements")}</span></div><div className="field"><label htmlFor="confirm-password">{t("confirmPassword")}</label><PasswordInput id="confirm-password" autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} required minLength={6}/></div>{error && <div className="notice error">{error}</div>}<button className="button" disabled={busy}>{busy ? t("loading") : t("resetPassword")}</button></form>}
   </div></div></div>;
 }
