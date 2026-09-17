@@ -7,7 +7,8 @@
     "build": "next build",
     "typecheck": "tsc --noEmit",
     "test:responsive": "node --test tests/responsive-css.test.mjs",
-    "check": "npm run test:responsive && npm run typecheck && npm run build"
+    "test:profile-ui": "node --test tests/profile-ui.test.mjs",
+    "check": "npm run test:responsive && npm run test:profile-ui && npm run typecheck && npm run build"
   },
   "dependencies": {
     "@capacitor/core": "8.5.1",
@@ -20,7 +21,7 @@
     "@capacitor/app-launcher": "8.0.1",
     "@capacitor/contacts": "1.0.1",
     "@capacitor/filesystem": "8.1.3",
-    "@capacitor/share": "8.0.1"
+    "@capacitor/share": "8.1.0"
   },
   "devDependencies": {
     "@types/node": "22.18.0",
