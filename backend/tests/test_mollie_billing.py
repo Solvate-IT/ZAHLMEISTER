@@ -46,9 +46,9 @@ def test_live_billing_requires_live_key(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_tariff_is_versioned_in_code() -> None:
-    assert PRO_YEARLY_TARIFF.version == "2026-09-08"
+    assert PRO_YEARLY_TARIFF.version == "2026-09-17"
     assert PRO_YEARLY_TARIFF.product_id == PRO_PRODUCT_ID
-    assert PRO_YEARLY_TARIFF.amount == Decimal("29.90")
+    assert PRO_YEARLY_TARIFF.amount == Decimal("1.00")
     assert PRO_YEARLY_TARIFF.currency == "EUR"
     assert PRO_YEARLY_TARIFF.interval == "12 months"
 
@@ -56,7 +56,7 @@ def test_tariff_is_versioned_in_code() -> None:
 def test_billing_config_uses_versioned_tariff(monkeypatch: pytest.MonkeyPatch) -> None:
     _configure_test_billing(monkeypatch)
     config = billing_config()
-    assert config["amount"] == "29.90"
+    assert config["amount"] == "1.00"
     assert config["currency"] == "EUR"
     assert config["interval"] == "12 months"
 
@@ -65,9 +65,9 @@ def test_payment_must_match_exact_catalog_amount_and_currency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_test_billing(monkeypatch)
-    assert _payment_amount_matches({"amount": {"value": "29.90", "currency": "EUR"}}) is True
-    assert _payment_amount_matches({"amount": {"value": "29.89", "currency": "EUR"}}) is False
-    assert _payment_amount_matches({"amount": {"value": "29.90", "currency": "USD"}}) is False
+    assert _payment_amount_matches({"amount": {"value": "1.00", "currency": "EUR"}}) is True
+    assert _payment_amount_matches({"amount": {"value": "0.99", "currency": "EUR"}}) is False
+    assert _payment_amount_matches({"amount": {"value": "1.00", "currency": "USD"}}) is False
 
 
 def test_existing_subscription_keeps_its_original_price_after_catalog_change(
@@ -153,4 +153,3 @@ def test_invalid_payment_metadata_is_rejected() -> None:
                 }
             }
         )
-

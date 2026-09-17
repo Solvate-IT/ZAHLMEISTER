@@ -14,9 +14,9 @@ class BillingTariff:
 
 
 PRO_YEARLY_TARIFF = BillingTariff(
-    version="2026-09-08",
+    version="2026-09-17",
     product_id="zahlmeister.pro.yearly",
-    amount=Decimal("29.90"),
+    amount=Decimal("1.00"),
     currency="EUR",
     interval="12 months",
 )
