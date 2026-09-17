@@ -46,15 +46,17 @@ async function download(path: string): Promise<{blob: Blob; filename: string}> {
   return {blob: await response.blob(), filename};
 }
 
+type EmailVerificationResult={status:"verified"|"sent"|"already_verified"};
+
 export const api = {
-  async restore(): Promise<T.AccountUser|null> { try { return await request<T.AccountUser>("/auth/me"); } catch (e) { if (e instanceof ApiError && e.status === 401) return null; throw e; } },
+  async restore(): Promise<T.AccountUser|null> { try { return await request<T.AccountUser>("/auth/me",{cache:"no-store"}); } catch (e) { if (e instanceof ApiError && e.status === 401) return null; throw e; } },
   async login(email: string, password: string) { const data=await request<T.AuthResponse>("/auth/login",{method:"POST",body:JSON.stringify({email,password})},false); await storeToken(data.token); return data.user; },
   async register(payload: {email:string;password:string;display_name:string;locale:string;currency:string}) { const data=await request<T.AuthResponse>("/auth/register",{method:"POST",body:JSON.stringify(payload)},false); await storeToken(data.token); return data.user; },
   async logout(){ try { await request<void>("/auth/logout",{method:"POST"}); } finally { await clearToken(); } },
   forgotPassword:(email:string)=>request<void>("/auth/forgot-password",{method:"POST",body:JSON.stringify({email})},false),
   resetPassword:(token:string,new_password:string)=>request<void>("/auth/reset-password",{method:"POST",body:JSON.stringify({token,new_password})},false),
-  verifyEmail:(token:string)=>request<void>("/auth/verify-email",{method:"POST",body:JSON.stringify({token})},false),
-  resendVerification:()=>request<void>("/auth/resend-verification",{method:"POST"}),
+  verifyEmail:(token:string)=>request<EmailVerificationResult>("/auth/verify-email",{method:"POST",body:JSON.stringify({token})},false),
+  resendVerification:()=>request<EmailVerificationResult>("/auth/resend-verification",{method:"POST"}),
   sendContact:(payload:Record<string,string>)=>request<void>("/public/contact",{method:"POST",body:JSON.stringify(payload)},false),
   updateProfile:(payload:Record<string,string>)=>request<T.AccountUser>("/account/profile",{method:"PATCH",body:JSON.stringify(payload)}),
   changePassword:(current_password:string,new_password:string)=>request<void>("/account/change-password",{method:"POST",body:JSON.stringify({current_password,new_password})}),
