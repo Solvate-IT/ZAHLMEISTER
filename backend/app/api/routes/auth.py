@@ -18,7 +18,12 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.entities import AuthSession, Organization, User
 from app.models.platform import PlatformAdminAudit
-from app.schemas.account import ForgotPasswordRequest, ResetPasswordRequest, TokenRequest
+from app.schemas.account import (
+    EmailVerificationResult,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
+    TokenRequest,
+)
 from app.schemas.auth import AuthResponse, LoginRequest, RegisterRequest, UserRead
 from app.services.account import (
     RESET_PURPOSE,
@@ -270,42 +275,61 @@ async def admin_logout(
 
 @router.get("/me", response_model=UserRead)
 async def me(
+    response: Response,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> UserRead:
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
     organization = await session.get(Organization, user.organization_id)
     if organization is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
     return user_read(user, organization)
 
 
-@router.post("/resend-verification", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/resend-verification", response_model=EmailVerificationResult)
 async def resend_verification(
-    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
-) -> None:
+) -> EmailVerificationResult:
     if user.email_verified_at is not None:
-        return
+        return EmailVerificationResult(status="already_verified")
     async with SessionLocal.begin() as session:
         stored = await session.get(User, user.id)
         if stored is None:
-            return
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account unavailable")
+        if stored.email_verified_at is not None:
+            return EmailVerificationResult(status="already_verified")
         token = await create_action_token(
             session, stored, VERIFY_PURPOSE, ttl=timedelta(hours=24)
         )
         email = stored.email
         organization = await session.get(Organization, stored.organization_id)
         locale = organization.locale if organization is not None else "en"
-    background_tasks.add_task(_send_verification, email, token, locale)
+    await _send_verification(email, token, locale)
+    return EmailVerificationResult(status="sent")
 
 
-@router.post("/verify-email", status_code=status.HTTP_204_NO_CONTENT)
-async def verify_email(payload: TokenRequest) -> None:
+@router.post("/verify-email", response_model=EmailVerificationResult)
+async def verify_email(payload: TokenRequest) -> EmailVerificationResult:
+    user_id = None
     async with SessionLocal.begin() as session:
         user = await consume_action_token(session, payload.token, VERIFY_PURPOSE)
         if user is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired token")
         user.email_verified_at = datetime.now(UTC)
+        user_id = user.id
+        await session.flush()
+
+    async with SessionLocal() as session:
+        persisted_at = await session.scalar(
+            select(User.email_verified_at).where(User.id == user_id)
+        )
+    if persisted_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Email verification could not be persisted",
+        )
+    return EmailVerificationResult(status="verified")
 
 
 @router.post("/forgot-password", status_code=status.HTTP_204_NO_CONTENT)
