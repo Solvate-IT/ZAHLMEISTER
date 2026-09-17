@@ -14,9 +14,9 @@ const COUNTRY_CODES=["AD","AE","AF","AG","AI","AL","AM","AO","AQ","AR","AS","AT"
 const COUNTRY_CODE_SET=new Set<string>(COUNTRY_CODES);
 const EU_COUNTRY_CODES=new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]);
 const OPEN_INVOICE_STATUSES=new Set(["creating","pending-payment","issued","overdue","payment-reversed","payment_reversed"]);
-const EMPTY_PROFILE:BillingProfileWrite={customer_type:"consumer",given_name:"",family_name:"",organization_name:"",billing_email:"",street_and_number:"",postal_code:"",city:"",region:"",country:"",vat_number:"",organization_number:""};
-
 type CountryCode=(typeof COUNTRY_CODES)[number];
+const DEFAULT_COUNTRY:CountryCode="AT";
+const EMPTY_PROFILE:BillingProfileWrite={customer_type:"consumer",given_name:"",family_name:"",organization_name:"",billing_email:"",street_and_number:"",postal_code:"",city:"",region:"",country:DEFAULT_COUNTRY,vat_number:"",organization_number:""};
 
 export function BillingPage(){
   const {t,locale}=useI18n();
@@ -44,12 +44,14 @@ export function BillingPage(){
   const profileSectionRef=useRef<HTMLElement|null>(null);
   const primaryProfileFieldRef=useRef<HTMLInputElement|null>(null);
   const regionNames=useMemo(()=>new Intl.DisplayNames([locale],{type:"region"}),[locale]);
+  const preferredCountries=useMemo<CountryCode[]>(()=>browserCountry&&browserCountry!==DEFAULT_COUNTRY?[DEFAULT_COUNTRY,browserCountry]:[DEFAULT_COUNTRY],[browserCountry]);
   const countryOptions=useMemo(()=>{
+    const preferred=new Set<CountryCode>(preferredCountries);
     const compare=(left:CountryCode,right:CountryCode)=>(regionNames.of(left)??left).localeCompare(regionNames.of(right)??right,locale,{sensitivity:"base"});
-    const eu=COUNTRY_CODES.filter(code=>EU_COUNTRY_CODES.has(code)&&code!==browserCountry).sort(compare);
-    const rest=COUNTRY_CODES.filter(code=>!EU_COUNTRY_CODES.has(code)&&code!==browserCountry).sort(compare);
+    const eu=COUNTRY_CODES.filter(code=>EU_COUNTRY_CODES.has(code)&&!preferred.has(code)).sort(compare);
+    const rest=COUNTRY_CODES.filter(code=>!EU_COUNTRY_CODES.has(code)&&!preferred.has(code)).sort(compare);
     return {eu,rest};
-  },[browserCountry,locale,regionNames]);
+  },[locale,preferredCountries,regionNames]);
 
   async function load(){
     setLoading(true);setError("");
@@ -118,7 +120,7 @@ export function BillingPage(){
     try{const next=await api.mollieBillingSync();setEntitlement(next);await load();setNotice(next.active?t("billingActivated"):next.status==="pending"?t("billingReturnProcessing"):"")}catch{setError(t("billingError"))}finally{setBusy(false)}
   }
   async function syncGoogle(){
-    setBusy(true);setError("");setNotice("");
+    setBusy(true);setError("");
     try{const next=await api.googlePlayBillingSync();setEntitlement(next);await load();setNotice(next.active?t("billingActivated"):next.status==="pending"?t("billingReturnProcessing"):"")}catch{setError(t("billingError"))}finally{setBusy(false)}
   }
   async function startGooglePlay(){
@@ -179,7 +181,7 @@ export function BillingPage(){
         <div className="field"><label>{t("billingEmail")}</label><input type="email" className="input" value={draft.billing_email} onChange={e=>setDraft({...draft,billing_email:e.target.value})} required/></div>
         <div className="field"><label>{t("billingStreet")}</label><input className="input" value={draft.street_and_number} onChange={e=>setDraft({...draft,street_and_number:e.target.value})} required/></div>
         <div className="split"><div className="field"><label>{t("billingPostalCode")}</label><input className="input" value={draft.postal_code} onChange={e=>setDraft({...draft,postal_code:e.target.value})}/></div><div className="field"><label>{t("billingCity")}</label><input className="input" value={draft.city} onChange={e=>setDraft({...draft,city:e.target.value})} required/></div></div>
-        <div className="split"><div className="field"><label>{t("billingRegion")}</label><input className="input" value={draft.region??""} onChange={e=>setDraft({...draft,region:e.target.value})}/></div><div className="field"><label>{t("billingCountry")}</label><select className="input" value={draft.country} onChange={e=>setDraft({...draft,country:e.target.value})} required><option value="">{t("billingCountryChoose")}</option>{browserCountry&&<><option value={browserCountry}>{regionNames.of(browserCountry)??browserCountry}</option><option disabled>──────────</option></>}{countryOptions.eu.map(code=><option key={code} value={code}>{regionNames.of(code)??code}</option>)}<option disabled>──────────</option>{countryOptions.rest.map(code=><option key={code} value={code}>{regionNames.of(code)??code}</option>)}</select></div></div>
+        <div className="split"><div className="field"><label>{t("billingRegion")}</label><input className="input" value={draft.region??""} onChange={e=>setDraft({...draft,region:e.target.value})}/></div><div className="field"><label>{t("billingCountry")}</label><select className="input" value={draft.country} onChange={e=>setDraft({...draft,country:e.target.value})} required><option value="">{t("billingCountryChoose")}</option>{preferredCountries.map(code=><option key={code} value={code}>{regionNames.of(code)??code}</option>)}<option disabled>──────────</option>{countryOptions.eu.map(code=><option key={code} value={code}>{regionNames.of(code)??code}</option>)}<option disabled>──────────</option>{countryOptions.rest.map(code=><option key={code} value={code}>{regionNames.of(code)??code}</option>)}</select></div></div>
         <div className="notice">{t("billingTaxScopeHint")}</div>
         <div className="actions"><button className="button" disabled={busy}>{t("billingDetailsSave")}</button>{profile&&<button type="button" className="button secondary" onClick={()=>{setDraft(toDraft(profile));setEditingProfile(false)}} disabled={busy}>{t("cancel")}</button>}</div>
       </form>:profile&&<div className="stack"><div><strong>{profile.customer_type==="business"?profile.organization_name:`${profile.given_name??""} ${profile.family_name??""}`.trim()}</strong><div className="muted">{profile.street_and_number} · {[profile.postal_code,profile.city].filter(Boolean).join(" ")} · {regionNames.of(profile.country)??profile.country}</div><div className="muted">{profile.billing_email}</div>{profile.customer_type==="business"&&(profile.vat_number||profile.organization_number)&&<div className="muted">{[profile.vat_number,profile.organization_number].filter(Boolean).join(" · ")}</div>}</div></div>}
