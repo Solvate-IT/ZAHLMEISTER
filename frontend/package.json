@@ -9,7 +9,8 @@
     "test:responsive": "node --test tests/responsive-css.test.mjs",
     "test:profile-ui": "node --test tests/profile-ui.test.mjs",
     "test:account-action": "node --test tests/account-action.test.mjs",
-    "test": "npm run test:responsive && npm run test:profile-ui && npm run test:account-action",
+    "test:mobile-workspace": "node --test tests/mobile-workspace.test.mjs",
+    "test": "npm run test:responsive && npm run test:profile-ui && npm run test:account-action && npm run test:mobile-workspace",
     "check": "npm test && npm run typecheck && npm run build"
   },
   "dependencies": {
