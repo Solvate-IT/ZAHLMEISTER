@@ -2,11 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 
-const css = readFileSync(new URL("../src/app/globals.css", import.meta.url), "utf8");
+const css = readFileSync(new URL("../src/app/mobile-workspace.css", import.meta.url), "utf8");
 const lists = readFileSync(new URL("../src/components/workspace/ListsPage.tsx", import.meta.url), "utf8");
 
 test("phone workspace uses a denser type and spacing scale without shrinking form controls", () => {
-  assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.workspace-body\{[^}]*font-size:\.94rem[^}]*padding:14px 10px 96px/);
+  assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.workspace-body\{[^}]*font-size:\.94rem[^}]*padding:14px 10px 98px/);
   assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.page-title h1\{font-size:1\.5rem/);
   assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.card\{[^}]*padding:16px/);
   assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.payment-amount\{font-size:2\.35rem/);
@@ -28,11 +28,12 @@ test("participant row actions use accessible inline svg controls on phones", () 
 });
 
 test("phone participant rows keep actions side by side and reduce row height", () => {
-  assert.match(css, /\.participant-action-icon\{display:none\}/);
+  assert.match(css, /\.participant-action-icon\{display:none/);
   assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.participant-table\{min-width:560px/);
   assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.participant-table th,\.participant-table td\{padding:9px 10px/);
   assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.participant-row-actions\{[^}]*flex-wrap:nowrap[^}]*gap:4px/);
   assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.participant-action\{width:40px;height:40px;min-height:40px;padding:0/);
   assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.participant-action-label\{display:none\}/);
-  assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.participant-action-icon\{display:inline-flex\}/);
+  assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.participant-action-icon\{display:inline-flex/);
+  assert.ok(css.indexOf(".participant-action-icon{display:none") < css.indexOf("@media(max-width:620px)"), "base icon hiding must precede the phone override");
 });
