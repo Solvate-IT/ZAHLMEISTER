@@ -1,3 +1,6 @@
+.participant-action-icon{display:none;align-items:center;justify-content:center;flex:0 0 auto}
+.participant-action-icon path,.participant-action-icon line,.participant-action-icon polyline{vector-effect:non-scaling-stroke}
+
 @media(max-width:620px){
   .workspace-header{height:64px;padding:0 12px}
   .workspace-body{font-size:.94rem;padding:14px 10px 98px}
@@ -25,6 +28,3 @@
   .participant-action-label{display:none}
   .participant-action-icon{display:inline-flex;width:18px;height:18px}
 }
-
-.participant-action-icon{display:none;align-items:center;justify-content:center;flex:0 0 auto}
-.participant-action-icon path,.participant-action-icon line,.participant-action-icon polyline{vector-effect:non-scaling-stroke}
