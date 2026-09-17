@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.passwords import PASSWORD_MIN_LENGTH, validate_password_strength
@@ -9,6 +11,10 @@ class ForgotPasswordRequest(BaseModel):
 
 class TokenRequest(BaseModel):
     token: str = Field(min_length=20, max_length=500)
+
+
+class EmailVerificationResult(BaseModel):
+    status: Literal["verified", "sent", "already_verified"]
 
 
 class ResetPasswordRequest(TokenRequest):
