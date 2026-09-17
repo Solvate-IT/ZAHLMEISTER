@@ -2,6 +2,7 @@ import type {Metadata, Viewport} from "next";
 import "./globals.css";
 import "./portal.css";
 import "./ux.css";
+import "./mobile-workspace.css";
 import {I18nProvider} from "@/lib/i18n";
 import {NativeBridge} from "@/components/NativeBridge";
 
