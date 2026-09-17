@@ -1,0 +1,30 @@
+@media(max-width:620px){
+  .workspace-header{height:64px;padding:0 12px}
+  .workspace-body{font-size:.94rem;padding:14px 10px 98px}
+  .workspace-body .input,.workspace-body .select,.workspace-body .textarea{font-size:1rem}
+  .page-title{gap:12px;margin-bottom:14px}
+  .page-title h1{font-size:1.5rem}
+  .card{padding:16px;border-radius:17px}
+  .card h3{font-size:1.05rem}
+  .split{gap:12px;margin-top:12px}
+  .stack{gap:10px}
+  .notice{padding:10px 12px}
+  .payment-amount{font-size:2.35rem}
+  .billing-plan-grid{margin-top:12px}
+  .billing-section{margin-top:14px}
+  .billing-renewal-row{margin:9px 0}
+  .settings-nav{gap:2px;padding-bottom:2px}
+  .settings-nav button{padding:8px 9px}
+  .toolbar{margin-bottom:11px}
+  .mobile-nav button{min-height:52px;padding:10px 4px;font-size:.82rem;line-height:1.15}
+  .participant-table{min-width:560px}
+  .participant-table th,.participant-table td{padding:9px 10px}
+  .participant-table th:last-child,.participant-table td:last-child{width:100px}
+  .participant-row-actions{flex-wrap:nowrap;gap:4px;justify-content:flex-start}
+  .participant-action{width:40px;height:40px;min-height:40px;padding:0;border-radius:11px}
+  .participant-action-label{display:none}
+  .participant-action-icon{display:inline-flex;width:18px;height:18px}
+}
+
+.participant-action-icon{display:none;align-items:center;justify-content:center;flex:0 0 auto}
+.participant-action-icon path,.participant-action-icon line,.participant-action-icon polyline{vector-effect:non-scaling-stroke}
