@@ -24,7 +24,49 @@ backend_shell() { compose exec backend bash; }
 frontend_shell() { compose exec frontend sh; }
 apply_schema() { compose run --rm bootstrap; }
 run_tests() { compose run --rm backend pytest -q; }
+normalize_admin_emails() {
+  printf '%s' "$1" \
+    | tr ',' '\n' \
+    | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed '/^$/d' \
+    | sort -u
+}
 platform_admin_access() {
+  local configured_admins runtime_admins
+  configured_admins="$(normalize_admin_emails "$(env_value PLATFORM_ADMIN_EMAILS)")"
+  if [[ -z "$configured_admins" ]]; then
+    echo "No platform admin emails are configured in PLATFORM_ADMIN_EMAILS." >&2
+    return 1
+  fi
+
+  echo "Configured platform admin emails (${BASE_ENV_FILE##*/}):"
+  printf '  - %s\n' $configured_admins
+
+  if ! runtime_admins="$(compose exec -T backend python -c 'from app.core.config import settings; print("\n".join(sorted(settings.platform_admin_emails)))' 2>/dev/null)"; then
+    echo "Backend container is not running or its configuration cannot be read." >&2
+    echo "Start the stack first, then retry Platform Admin Access." >&2
+    return 1
+  fi
+  runtime_admins="$(normalize_admin_emails "$runtime_admins")"
+
+  if [[ "$configured_admins" != "$runtime_admins" ]]; then
+    echo >&2
+    echo "Platform admin configuration mismatch." >&2
+    echo "The running backend still uses different PLATFORM_ADMIN_EMAILS values:" >&2
+    if [[ -n "$runtime_admins" ]]; then
+      printf '  - %s\n' $runtime_admins >&2
+    else
+      echo "  - <none>" >&2
+    fi
+    echo >&2
+    echo "Recreate the backend and worker with the current environment, then retry:" >&2
+    printf '  docker compose' >&2
+    printf ' %q' "${COMPOSE_ENV_ARGS[@]}" >&2
+    printf ' -f %q up -d --force-recreate backend worker\n' "$COMPOSE_FILE" >&2
+    return 1
+  fi
+
   compose exec backend python -c '
 import asyncio
 import getpass
@@ -36,18 +78,11 @@ admins = sorted(settings.platform_admin_emails)
 if not admins:
     raise SystemExit("No platform admin emails are configured in PLATFORM_ADMIN_EMAILS.")
 
-print("Configured platform admin emails:")
-for item in admins:
-    print(f"  - {item}")
-
 email = input("Admin email: ").strip()
 if not email:
     raise SystemExit("No email entered.")
 if email.casefold() not in settings.platform_admin_emails:
-    raise SystemExit(
-        "Email is not configured in PLATFORM_ADMIN_EMAILS. "
-        "Add it to the tracked environment configuration and recreate the stack first."
-    )
+    raise SystemExit("Email is not configured in PLATFORM_ADMIN_EMAILS.")
 
 password = getpass.getpass("New password: ")
 confirmation = getpass.getpass("Repeat password: ")
