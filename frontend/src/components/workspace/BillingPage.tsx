@@ -120,7 +120,7 @@ export function BillingPage(){
     try{const next=await api.mollieBillingSync();setEntitlement(next);await load();setNotice(next.active?t("billingActivated"):next.status==="pending"?t("billingReturnProcessing"):"")}catch{setError(t("billingError"))}finally{setBusy(false)}
   }
   async function syncGoogle(){
-    setBusy(true);setError("");
+    setBusy(true);setError("");setNotice("");
     try{const next=await api.googlePlayBillingSync();setEntitlement(next);await load();setNotice(next.active?t("billingActivated"):next.status==="pending"?t("billingReturnProcessing"):"")}catch{setError(t("billingError"))}finally{setBusy(false)}
   }
   async function startGooglePlay(){
