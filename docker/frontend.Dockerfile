@@ -7,7 +7,7 @@ RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 
 FROM dependencies AS test
-RUN npm run typecheck
+RUN npm test && npm run typecheck
 
 FROM test AS build
 ARG NEXT_PUBLIC_API_BASE_URL=

@@ -9,7 +9,8 @@
     "test:responsive": "node --test tests/responsive-css.test.mjs",
     "test:profile-ui": "node --test tests/profile-ui.test.mjs",
     "test:account-action": "node --test tests/account-action.test.mjs",
-    "check": "npm run test:responsive && npm run test:profile-ui && npm run test:account-action && npm run typecheck && npm run build"
+    "test": "npm run test:responsive && npm run test:profile-ui && npm run test:account-action",
+    "check": "npm test && npm run typecheck && npm run build"
   },
   "dependencies": {
     "@capacitor/core": "8.5.1",

@@ -25,6 +25,7 @@ frontend_shell() { compose exec frontend sh; }
 apply_schema() { compose run --rm bootstrap; }
 run_tests() {
   compose run --rm backend pytest -q
+  compose run --rm frontend sh -c 'npm ci --no-audit --no-fund && npm test && npm run typecheck'
   "$SCRIPT_DIR/scripts/platform-admin-access.test.sh"
 }
 
