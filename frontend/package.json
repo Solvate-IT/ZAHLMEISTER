@@ -6,7 +6,8 @@
     "dev": "next dev -H 0.0.0.0 -p 3000",
     "build": "next build",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run build"
+    "test:responsive": "node --test tests/responsive-css.test.mjs",
+    "check": "npm run test:responsive && npm run typecheck && npm run build"
   },
   "dependencies": {
     "@capacitor/core": "8.5.1",
