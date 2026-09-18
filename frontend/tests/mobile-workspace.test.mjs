@@ -37,3 +37,8 @@ test("phone participant rows keep actions side by side and reduce row height", (
   assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.participant-action-icon\{display:inline-flex/);
   assert.ok(css.indexOf(".participant-action-icon{display:none") < css.indexOf("@media(max-width:620px)"), "base icon hiding must precede the phone override");
 });
+
+test("participant import result controls close their fragment before the form container", () => {
+  const importModal = lists.slice(lists.indexOf("function ImportModal"));
+  assert.match(importModal, /\{rows&&<>[\s\S]*<\/button><\/>}<\/div><\/Modal>/);
+});
