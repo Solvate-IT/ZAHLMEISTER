@@ -93,17 +93,17 @@ Delegated scopes:
 
 ## Infobip
 
-Infobip is optional for internal **SMS and WhatsApp**. Provider usage costs remain with the customer's Infobip account. The implementation uses Infobip Exchange OAuth, Messages API and CPaaS X Subscriptions.
+Infobip is optional for internal **SMS and WhatsApp**. For now, Zahlmeister uses a simple bring-your-own-account model: each organization registers and operates its own Infobip account. Provider usage costs are therefore billed directly by Infobip to that organization. Zahlmeister does not require a central Infobip platform, reseller or Tech Provider account for this setup.
 
-### Platform OAuth setup
+### Customer-owned account setup
 
-1. Create an Infobip Exchange/OAuth app for Zahlmeister.
-2. Register `https://<APP_HOST>/api/v1/communication-settings/infobip/oauth/callback`.
-3. Configure `INFOBIP_OAUTH_CLIENT_ID` and `INFOBIP_OAUTH_CLIENT_SECRET` in ignored `docker/.env`.
-4. Required scopes are `api_read message:send subscriptions:manage`.
-5. The customer connects the Infobip account and selects the sender/resource used for SMS and/or WhatsApp.
+1. Register an Infobip account directly with Infobip.
+2. Configure the required SMS sender and/or WhatsApp sender in that Infobip account. WhatsApp onboarding and Meta approval remain with the customer/provider account.
+3. Create an Infobip API key with only the permissions required for messaging and subscription callbacks.
+4. Copy the account's personalized HTTPS API Base URL (for example `https://xxxxx.api.infobip.com`) and the API key into **Communication → Infobip** in Zahlmeister.
+5. Select or enter the sender/resource used for SMS and/or WhatsApp.
 
-An API key remains available as a fallback. Provider credentials/tokens and managed subscription metadata are encrypted with `APP_SECRET`. OAuth uses the provider-returned personalized `*.api.infobip.com` base URL when available; the connection can also be corrected explicitly to the account's personalized HTTPS base URL.
+The API key is the normal onboarding path. Provider credentials and managed subscription metadata are encrypted with `APP_SECRET`. Existing OAuth-based connections remain technically compatible, but Zahlmeister does not expose OAuth onboarding in the UI at this stage. A centralized Infobip platform integration can be added later if customer volume justifies it.
 
 ### Webhooks and replies
 

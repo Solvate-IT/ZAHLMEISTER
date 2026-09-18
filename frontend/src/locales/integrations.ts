@@ -1,6 +1,10 @@
 export const integrationMessages: Record<string, Record<string,string>> = {
   de: {
     emailProviderHint: "Wähle, wie Zahlmeister E-Mails sendet und Antworten empfängt.",
+    infobipOnboardingTitle: "Eigenes Infobip-Konto verwenden",
+    infobipOnboardingHint: "Registriere dich direkt bei Infobip. Erstelle dort einen API-Key und kopiere die persönliche API Base URL nach Zahlmeister. Abrechnung und Kanal-Einrichtung bleiben direkt in deinem Infobip-Konto.",
+    infobipApiKeyHint: "Verwende einen API-Key aus deinem eigenen Infobip-Konto und gib nur die für Messaging und Rückmeldungen benötigten Berechtigungen frei.",
+    registerWithProvider: "Beim Anbieter registrieren",
     emailDeliveryProvider: "E-Mail-Anbindung",
     emailExternalApp: "E-Mail-App auf diesem Gerät",
     zahlmeisterEmail: "Zahlmeister E-Mail",
@@ -120,6 +124,10 @@ export const integrationMessages: Record<string, Record<string,string>> = {
   },
   en: {
     emailProviderHint: "Choose how Zahlmeister sends email and receives replies.",
+    infobipOnboardingTitle: "Use your own Infobip account",
+    infobipOnboardingHint: "Register directly with Infobip. Create an API key there and copy your personal API Base URL into Zahlmeister. Billing and channel setup remain in your Infobip account.",
+    infobipApiKeyHint: "Use an API key from your own Infobip account and grant only the permissions required for messaging and callbacks.",
+    registerWithProvider: "Register with provider",
     emailDeliveryProvider: "Email connection",
     emailExternalApp: "Email app on this device",
     zahlmeisterEmail: "Zahlmeister email",
