@@ -540,6 +540,26 @@ def _seller_values() -> dict[str, str | None]:
     }
 
 
+def _seller_snapshot(item: BillingLegalEntity | None) -> dict[str, str | None]:
+    if item is None:
+        values = _seller_values()
+        return {key: values.get(key) for key in (
+            "legal_name", "country", "billing_email", "street_and_number", "postal_code",
+            "city", "region", "vat_number", "organization_number",
+        )}
+    return {
+        "legal_name": item.legal_name,
+        "country": item.country,
+        "billing_email": item.billing_email,
+        "street_and_number": item.street_and_number,
+        "postal_code": item.postal_code,
+        "city": item.city,
+        "region": item.region,
+        "vat_number": item.vat_number,
+        "organization_number": item.organization_number,
+    }
+
+
 async def _ensure_legal_entity(session: AsyncSession) -> BillingLegalEntity | None:
     values = _seller_values()
     required = ("legal_name", "country", "billing_email", "street_and_number", "postal_code", "city")
@@ -665,8 +685,11 @@ async def _invoice_record(
                 "kind": f"{cycle.operation}_receipt",
                 "tax_rule_version": cycle.tax_rule_version,
                 "recipient": recipient,
+                "seller": _seller_snapshot(seller),
                 "source_payment_id": source_payment_id,
                 "billing_key": cycle.billing_key,
+                "delivery_attempts": 0,
+                "last_delivery_error": None,
             },
             ensure_ascii=False,
             separators=(",", ":"),
@@ -855,8 +878,27 @@ async def _apply_invoice_payload(session: AsyncSession, item: BillingInvoice, pa
     item.status = _normalize_sales_invoice_status(payload.get("status"))
     item.payment_url = None
     item.last_synced_at = datetime.now(UTC)
+    details = _invoice_details(item)
+    details["provider_created_at"] = payload.get("createdAt")
+    details["provider_issued_at"] = payload.get("issuedAt")
+    details["last_delivery_error"] = None
+    details["email_delivery_requested"] = True
+    item.details_json = json.dumps(details, ensure_ascii=False, separators=(",", ":"))
     if item.status == "paid":
         item.paid_at = _parse_datetime(payload.get("paidAt")) or item.paid_at or datetime.now(UTC)
+
+
+async def _record_invoice_delivery_failure(invoice_id: UUID, exc: Exception) -> None:
+    async with SessionLocal.begin() as session:
+        item = await session.get(BillingInvoice, invoice_id, with_for_update=True)
+        if item is None:
+            return
+        details = _invoice_details(item)
+        details["delivery_attempts"] = int(details.get("delivery_attempts") or 0) + 1
+        details["last_delivery_error"] = str(exc)[:1000]
+        details["last_delivery_attempt_at"] = datetime.now(UTC).isoformat()
+        item.details_json = json.dumps(details, ensure_ascii=False, separators=(",", ":"))
+
 
 async def _ensure_receipt(invoice_id: UUID) -> None:
     async with SessionLocal.begin() as session:
@@ -1314,33 +1356,42 @@ async def _sync_receipts(organization_id: UUID | None = None) -> int:
         if organization_id is not None:
             statement = statement.where(BillingInvoice.organization_id == organization_id)
         ids = (await session.execute(statement.order_by(BillingInvoice.created_at).limit(100))).scalars().all()
+
     processed = 0
     for invoice_id in ids:
-        async with SessionLocal() as session:
-            item = await session.get(BillingInvoice, invoice_id)
-            if item is None:
-                continue
-            details = _invoice_details(item)
-            if item.external_id:
-                payload = await _get_sales_invoice(item.external_id)
-                async with SessionLocal.begin() as update_session:
-                    locked = await update_session.get(BillingInvoice, invoice_id, with_for_update=True)
-                    if locked is not None:
-                        await _apply_invoice_payload(update_session, locked, payload)
-                processed += 1
-                continue
-            remote = await _find_remote_invoice(item)
-            if remote is not None:
-                async with SessionLocal.begin() as update_session:
-                    locked = await update_session.get(BillingInvoice, invoice_id, with_for_update=True)
-                    if locked is not None:
-                        await _apply_invoice_payload(update_session, locked, remote)
-                processed += 1
-                continue
-            if details.get("kind") not in {"initial_receipt", "renewal_receipt"}:
-                raise MollieBillingVerificationError("Billing invoice kind is invalid")
+        try:
+            async with SessionLocal() as session:
+                item = await session.get(BillingInvoice, invoice_id)
+                if item is None:
+                    continue
+                details = _invoice_details(item)
+                if item.external_id:
+                    payload = await _get_sales_invoice(item.external_id)
+                    async with SessionLocal.begin() as update_session:
+                        locked = await update_session.get(BillingInvoice, invoice_id, with_for_update=True)
+                        if locked is not None:
+                            await _apply_invoice_payload(update_session, locked, payload)
+                    processed += 1
+                    continue
+                remote = await _find_remote_invoice(item)
+                if remote is not None:
+                    async with SessionLocal.begin() as update_session:
+                        locked = await update_session.get(BillingInvoice, invoice_id, with_for_update=True)
+                        if locked is not None:
+                            await _apply_invoice_payload(update_session, locked, remote)
+                    processed += 1
+                    continue
+                if details.get("kind") not in {"initial_receipt", "renewal_receipt"}:
+                    raise MollieBillingVerificationError("Billing invoice kind is invalid")
             await _ensure_receipt(invoice_id)
             processed += 1
+        except (MollieBillingUnavailable, MollieBillingVerificationError) as exc:
+            await _record_invoice_delivery_failure(invoice_id, exc)
+            logger.exception(
+                "Mollie invoice delivery failed",
+                extra={"invoice_id": str(invoice_id)},
+            )
+            continue
     return processed
 
 
