@@ -49,6 +49,8 @@ _LABELS = {
         "total": "Gesamt",
         "paid": "Bezahlt",
         "payment_reference": "Zahlungsreferenz",
+        "vat_id": "UID-/USt-IdNr.",
+        "registration": "Registernummer",
     },
     "en": {
         "title": "Invoice",
@@ -63,6 +65,8 @@ _LABELS = {
         "total": "Total",
         "paid": "Paid",
         "payment_reference": "Payment reference",
+        "vat_id": "VAT number",
+        "registration": "Registration number",
     },
 }
 
@@ -84,7 +88,7 @@ def _safe(value: Any) -> str:
     return escape(str(value), {'"': "&quot;"})
 
 
-def _party_lines(party: dict[str, Any]) -> list[str]:
+def _party_lines(party: dict[str, Any], labels: dict[str, str]) -> list[str]:
     name = (
         party.get("organizationName")
         or " ".join(
@@ -112,10 +116,10 @@ def _party_lines(party: dict[str, Any]) -> list[str]:
         lines.append(_safe(country))
     vat = party.get("vatNumber") or party.get("vat_number")
     if vat:
-        lines.append(f"VAT: {_safe(vat)}")
+        lines.append(f"{labels['vat_id']}: {_safe(vat)}")
     org = party.get("organizationNumber") or party.get("organization_number")
     if org:
-        lines.append(f"Registration: {_safe(org)}")
+        lines.append(f"{labels['registration']}: {_safe(org)}")
     email = party.get("email") or party.get("billing_email")
     if email:
         lines.append(_safe(email))
@@ -217,8 +221,8 @@ def build_billing_invoice_pdf(item: BillingInvoice, locale: str) -> bytes:
         Spacer(1, 9 * mm),
     ]
 
-    seller_text = "<br/>".join(_party_lines(seller))
-    recipient_text = "<br/>".join(_party_lines(recipient))
+    seller_text = "<br/>".join(_party_lines(seller, labels))
+    recipient_text = "<br/>".join(_party_lines(recipient, labels))
     parties = Table(
         [
             [Paragraph(labels["seller"], body_bold), Paragraph(labels["recipient"], body_bold)],
