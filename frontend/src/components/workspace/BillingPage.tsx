@@ -3,7 +3,7 @@
 import {useEffect,useMemo,useRef,useState} from "react";
 import {Capacitor} from "@capacitor/core";
 import {useRouter,useSearchParams} from "next/navigation";
-import {api,ApiError} from "@/lib/api";
+import {api,ApiError,saveDownload} from "@/lib/api";
 import type {BillingEntitlement,BillingInvoice,BillingProfile,BillingProfileWrite,BillingPurchaseContext,GooglePlayBillingConfig,MollieBillingConfig} from "@/lib/types";
 import {useI18n} from "@/lib/i18n";
 import {currentGooglePlayPurchaseTokens,getGooglePlayOffer,isGooglePlayBillingRuntime,manageGooglePlaySubscriptions,purchaseGooglePlayPro} from "@/lib/googlePlayPurchases";
@@ -150,6 +150,11 @@ export function BillingPage(){
     try{const next=await api.mollieBillingSetAutoRenew(enabled);setEntitlement(next);setNotice(enabled?t("saved"):(next.expires_at?t("billingCancelledNotice",{date:formatDate(next.expires_at,locale)}):t("saved")))}catch{setError(t("billingError"))}finally{setBusy(false)}
   }
 
+  async function downloadInvoice(item:BillingInvoice){
+    setBusy(true);setError("");
+    try{await saveDownload(api.billingInvoicePdf(item.id))}catch{setError(t("billingError"))}finally{setBusy(false)}
+  }
+
   if(loading||native===null||!entitlement||!config)return <Loading/>;
   const active=entitlement.active;
   const pending=entitlement.status==="pending"&&(entitlement.provider==="mollie"||entitlement.provider==="google");
@@ -187,7 +192,7 @@ export function BillingPage(){
       </form>:profile&&<div className="stack"><div><strong>{profile.customer_type==="business"?profile.organization_name:`${profile.given_name??""} ${profile.family_name??""}`.trim()}</strong><div className="muted">{profile.street_and_number} · {[profile.postal_code,profile.city].filter(Boolean).join(" ")} · {regionNames.of(profile.country)??profile.country}</div><div className="muted">{profile.billing_email}</div>{profile.customer_type==="business"&&(profile.vat_number||profile.organization_number)&&<div className="muted">{[profile.vat_number,profile.organization_number].filter(Boolean).join(" · ")}</div>}</div></div>}
     </section>}
 
-    {showMollieDetails&&<section className="card billing-section"><h3>{t("billingInvoicesTitle")}</h3><p className="muted">{t("billingInvoicesHint")}</p>{invoices.length===0?<div className="muted">{t("billingNoInvoices")}</div>:<div className="table-wrap"><table className="table"><thead><tr><th>{t("billingInvoiceNumber")}</th><th>{t("billingInvoicePeriod")}</th><th>{t("billingInvoiceAmount")}</th><th>{t("billingInvoiceVat")}</th><th>{t("billingInvoiceStatus")}</th><th>{t("actions")}</th></tr></thead><tbody>{invoices.map(item=><tr key={item.id}><td>{item.invoice_number??"—"}</td><td>{formatDate(item.period_start,locale)} – {formatDate(item.period_end,locale)}</td><td>{new Intl.NumberFormat(locale,{style:"currency",currency:item.currency}).format(Number(item.gross_amount))}</td><td>{Number(item.vat_rate).toLocaleString(locale)} %</td><td><span className={`status-pill ${item.status}`}>{invoiceStatusLabel(item.status,t)}</span></td><td>{item.payment_url&&item.status!=="paid"&&item.status!=="cancelled"?<a className="button secondary small" href={item.payment_url} target="_blank" rel="noreferrer">{t("billingInvoicePay")}</a>:"—"}</td></tr>)}</tbody></table></div>}</section>}
+    {showMollieDetails&&<section className="card billing-section"><h3>{t("billingInvoicesTitle")}</h3><p className="muted">{t("billingInvoicesHint")}</p>{invoices.length===0?<div className="muted">{t("billingNoInvoices")}</div>:<div className="table-wrap"><table className="table"><thead><tr><th>{t("billingInvoiceNumber")}</th><th>{t("billingInvoicePeriod")}</th><th>{t("billingInvoiceAmount")}</th><th>{t("billingInvoiceVat")}</th><th>{t("billingInvoiceStatus")}</th><th>{t("actions")}</th></tr></thead><tbody>{invoices.map(item=><tr key={item.id}><td>{item.invoice_number??"—"}</td><td>{formatDate(item.period_start,locale)} – {formatDate(item.period_end,locale)}</td><td>{new Intl.NumberFormat(locale,{style:"currency",currency:item.currency}).format(Number(item.gross_amount))}</td><td>{Number(item.vat_rate).toLocaleString(locale)} %</td><td><span className={`status-pill ${item.status}`}>{invoiceStatusLabel(item.status,t)}</span></td><td>{item.invoice_number||(item.payment_url&&item.status!=="paid"&&item.status!=="cancelled")?<div className="actions">{item.invoice_number&&<button type="button" className="button secondary small" disabled={busy} onClick={()=>void downloadInvoice(item)}>{t("billingInvoicePdf")}</button>}{item.payment_url&&item.status!=="paid"&&item.status!=="cancelled"&&<a className="button secondary small" href={item.payment_url} target="_blank" rel="noreferrer">{t("billingInvoicePay")}</a>}</div>:"—"}</td></tr>)}</tbody></table></div>}</section>}
   </>;
 }
 
