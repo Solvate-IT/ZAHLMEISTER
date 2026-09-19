@@ -32,6 +32,7 @@ def test_backend_has_non_mutating_test_delivery_and_real_dispatch_endpoint() -> 
     communications_route = backend("app/api/routes/communications.py")
     collections_route = backend("app/api/routes/collections.py")
     worker = backend("app/worker.py")
+    webhooks = backend("app/api/routes/webhooks.py")
 
     assert "class TestCollectionMessageRequest" in communications_schema
     assert "class TestCollectionMessageResult" in communications_schema
@@ -43,6 +44,8 @@ def test_backend_has_non_mutating_test_delivery_and_real_dispatch_endpoint() -> 
     assert "queue_collection_messages(" in collections_route
     assert 'stored.kind == "initial"' in worker
     assert 'stored.kind == "reminder"' in worker
+    assert 'outgoing.kind == "test"' in webhooks
+    assert 'message.kind == "test"' in webhooks
 
 
 def test_frontend_requires_confirmation_and_supports_test_delivery() -> None:
