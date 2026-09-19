@@ -1068,7 +1068,8 @@ async def _process_payment_payload(payment: dict[str, Any]) -> UUID:
     if invoice_id is not None:
         try:
             await _ensure_receipt(invoice_id)
-        except MollieBillingUnavailable:
+        except MollieBillingUnavailable as exc:
+            await _record_invoice_delivery_failure(invoice_id, exc)
             logger.exception("Mollie receipt creation deferred", extra={"invoice_id": str(invoice_id)})
     return organization_id
 
