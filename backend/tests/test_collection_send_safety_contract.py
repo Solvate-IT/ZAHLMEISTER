@@ -37,8 +37,9 @@ def test_backend_has_non_mutating_test_delivery_and_real_dispatch_endpoint() -> 
     assert "class TestCollectionMessageResult" in communications_schema
     assert '"/collections/{collection_id}/test-message"' in communications_route
     assert 'kind="test"' in communications_route
-    assert "CommunicationMessage.kind != "test"" in communications_route
+    assert 'CommunicationMessage.kind != "test"' in communications_route
     assert '"/{collection_id}/dispatch"' in collections_route
+    assert 'CommunicationMessage.kind != "test"' in collections_route
     assert "queue_collection_messages(" in collections_route
     assert 'stored.kind == "initial"' in worker
     assert 'stored.kind == "reminder"' in worker
