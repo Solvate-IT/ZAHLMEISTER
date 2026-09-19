@@ -168,10 +168,17 @@ async def test_collection_message(
                 )
             provider = runtime.provider
 
+        preview_cp = CollectionParticipant(
+            collection_id=collection.id,
+            participant_id=participant.id,
+            payment_reference="TEST",
+            public_token="test-preview",
+            status="open",
+        )
         content = await render_collection_message(
             session,
             collection=collection,
-            collection_participant=cp,
+            collection_participant=preview_cp,
             participant=participant,
             organization=stored_org,
         )
