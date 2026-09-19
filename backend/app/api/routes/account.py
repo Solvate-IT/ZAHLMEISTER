@@ -351,6 +351,7 @@ async def export_account_data(
             "id": str(user.id),
             "email": user.email,
             "display_name": user.display_name,
+            "phone": user.phone,
             "email_verified_at": _dt(user.email_verified_at),
             "last_login_at": _dt(user.last_login_at),
             "terms_accepted_at": _dt(user.terms_accepted_at),
