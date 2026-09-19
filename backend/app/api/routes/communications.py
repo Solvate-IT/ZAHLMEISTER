@@ -5,7 +5,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
-from app.api.deps import get_organization, get_session
+from app.api.deps import get_current_user, get_organization, get_session
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.entities import (
     Collection,
@@ -14,6 +15,7 @@ from app.models.entities import (
     Organization,
     Participant,
     ScheduledJob,
+    User,
 )
 from app.schemas.communications import (
     ChannelFeedbackRequest,
@@ -24,13 +26,15 @@ from app.schemas.communications import (
     ExternalResultRequest,
     InternalMessageRequest,
     QueueMessageResult,
+    TestCollectionMessageRequest,
+    TestCollectionMessageResult,
 )
 from app.services.channel_strategy import (
     channel_addresses,
     load_channel_runtimes,
     set_channel_knowledge,
 )
-from app.services.communications import external_launch_uri, recipient_for_channel
+from app.services.communications import external_launch_uri, normalize_phone, recipient_for_channel
 from app.services.message_renderer import render_collection_message
 
 router = APIRouter(tags=["communications"])
@@ -99,11 +103,114 @@ async def list_communications(
             .where(
                 CommunicationMessage.collection_participant_id == cp_id,
                 CommunicationMessage.status != "draft",
+                CommunicationMessage.kind != "test",
             )
             .order_by(CommunicationMessage.created_at.desc())
         )
     ).scalars().all()
     return [_to_read(message) for message in messages]
+
+
+@router.post(
+    "/collections/{collection_id}/test-message",
+    response_model=TestCollectionMessageResult,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def test_collection_message(
+    collection_id: UUID,
+    payload: TestCollectionMessageRequest,
+    user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_organization),
+) -> TestCollectionMessageResult:
+    async with SessionLocal.begin() as session:
+        stored_org = await session.get(Organization, organization.id)
+        collection = await session.get(Collection, collection_id)
+        if stored_org is None or collection is None or collection.organization_id != stored_org.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collection not found")
+
+        row = (
+            await session.execute(
+                select(CollectionParticipant, Participant)
+                .join(Participant, Participant.id == CollectionParticipant.participant_id)
+                .where(CollectionParticipant.collection_id == collection.id)
+                .order_by(CollectionParticipant.created_at, CollectionParticipant.id)
+                .limit(1)
+            )
+        ).one_or_none()
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A collection needs at least one participant before a test can be sent",
+            )
+        cp, participant = row
+        runtimes = await load_channel_runtimes(session, stored_org.id)
+
+        if payload.channel == "email":
+            recipient = user.email.strip()
+            if not settings.smtp_host.strip() or not settings.mail_from_address.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Zahlmeister test email is not configured",
+                )
+            provider = "zahlmeister_email"
+        else:
+            recipient = normalize_phone(user.phone)
+            if not recipient:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Add a phone number to your account before using a phone test channel",
+                )
+            runtime = runtimes.get(payload.channel)
+            if runtime is None or runtime.mode != "internal" or not runtime.configured:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Internal {payload.channel} is not configured",
+                )
+            provider = runtime.provider
+
+        content = await render_collection_message(
+            session,
+            collection=collection,
+            collection_participant=cp,
+            participant=participant,
+            organization=stored_org,
+        )
+        if payload.channel == "whatsapp" and content.whatsapp_template_values is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="WhatsApp test sending requires the protected default payment template",
+            )
+
+        message = CommunicationMessage(
+            organization_id=stored_org.id,
+            collection_id=collection.id,
+            collection_participant_id=cp.id,
+            kind="test",
+            channel=payload.channel,
+            delivery_mode="internal",
+            direction="outgoing",
+            recipient=recipient,
+            subject=f"[TEST] {content.subject}" if payload.channel == "email" else content.subject,
+            body=content.text,
+            status="queued",
+            provider=provider,
+            metadata_json=content.metadata_json(),
+        )
+        session.add(message)
+        await session.flush()
+        session.add(
+            ScheduledJob(
+                organization_id=stored_org.id,
+                job_type="send_message",
+                payload=json.dumps({"message_id": str(message.id)}),
+                scheduled_at=datetime.now(UTC),
+            )
+        )
+        return TestCollectionMessageResult(
+            channel=payload.channel,
+            recipient=recipient,
+            status="queued",
+        )
 
 
 @router.post(
