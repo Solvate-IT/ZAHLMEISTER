@@ -86,6 +86,14 @@ If VIES is unavailable, Zahlmeister does not silently grant reverse charge. Chec
 
 Non-EU billing profiles can already be stored using ISO country codes, but automatic charging is deliberately blocked until an explicit tax rule/provider covers that jurisdiction. Zahlmeister must never infer `0%` merely because a customer is outside the EU.
 
+## Invoice delivery and customer access
+
+For new Mollie Pro billing periods, a verified paid payment creates exactly one local invoice record bound to its billing cycle and payment transaction. The invoice keeps immutable recipient, seller, tax, period and payment snapshots. Historical subscriptions are not reconstructed automatically.
+
+Zahlmeister then creates a Mollie Sales Invoice as an already-paid receipt using a stable local `ZM:<invoice UUID>` reference and an idempotency key. The request includes `emailDetails`, so Mollie sends the paid invoice PDF to the billing email address. If Mollie is temporarily unavailable, the local invoice stays recoverable and the PostgreSQL worker retries open invoice records independently; one failing invoice does not block unrelated customers. Provider recovery checks the stable reference before any new POST, preventing duplicate invoices after timeouts or uncertain responses.
+
+Once Mollie assigns an invoice number, authenticated users can download a Zahlmeister PDF copy from the billing history. The PDF is generated from the immutable local billing snapshot and uses the Mollie invoice number and provider timestamps. Access is organization-scoped server-side; an invoice from another customer cannot be fetched by ID.
+
 ## Billing profile and UI transparency
 
 Business billing profiles require a legal organization name and at least one VAT number or organization/registry number already at API validation time. EU B2B reverse charge still additionally requires a valid VIES VAT number.
