@@ -39,6 +39,7 @@ class ChangePasswordRequest(BaseModel):
 class ProfileUpdateRequest(BaseModel):
     display_name: str | None = Field(default=None, max_length=200)
     organization_name: str | None = Field(default=None, max_length=200)
+    phone: str | None = Field(default=None, max_length=50)
     locale: str | None = Field(default=None, max_length=20)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
 
@@ -51,6 +52,14 @@ class ProfileUpdateRequest(BaseModel):
         if not value:
             raise ValueError("Name must not be empty")
         return value
+
+    @field_validator("phone")
+    @classmethod
+    def clean_phone(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
 
     @field_validator("currency")
     @classmethod
