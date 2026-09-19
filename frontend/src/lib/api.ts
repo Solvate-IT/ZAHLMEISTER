@@ -103,6 +103,7 @@ export const api = {
   billingProfile:()=>request<T.BillingProfile|null>("/billing/profile"),
   saveBillingProfile:(payload:T.BillingProfileWrite)=>request<T.BillingProfile>("/billing/profile",{method:"PUT",body:JSON.stringify(payload)}),
   billingInvoices:()=>request<T.BillingInvoice[]>("/billing/invoices"),
+  billingInvoicePdf:(id:string)=>download(`/billing/invoices/${id}/pdf`),
   mollieBillingConfig:()=>request<T.MollieBillingConfig>("/billing/mollie/config"),
   mollieBillingCheckout:()=>request<T.MollieBillingCheckout>("/billing/mollie/checkout",{method:"POST"}),
   mollieBillingSync:()=>request<T.BillingEntitlement>("/billing/mollie/sync",{method:"POST"}),
