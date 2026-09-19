@@ -58,6 +58,7 @@ class UserRead(BaseModel):
     id: str
     email: str
     display_name: str
+    phone: str | None = None
     organization_id: str
     organization_name: str
     locale: str
