@@ -48,5 +48,6 @@ def test_billing_ui_exposes_invoice_pdf_action() -> None:
     assert "billingInvoicePdfUrl:" in api
     assert 't("billingInvoicePdf")' in page
     assert "billingInvoicePdfUrl(item.id)" in page
-    assert 'billingInvoicePdf:"Rechnung anzeigen"' in locale
-    assert 'billingInvoicePdf:"View invoice"' in locale
+    assert "billingInvoicePdfLabels" in locale
+    assert 'de:"Rechnung anzeigen"' in locale
+    assert 'en:"View invoice"' in locale
