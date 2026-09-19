@@ -6,6 +6,7 @@ from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_RIGHT
@@ -79,6 +80,10 @@ def _details(item: BillingInvoice) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _safe(value: Any) -> str:
+    return escape(str(value), {'"': "&quot;"})
+
+
 def _party_lines(party: dict[str, Any]) -> list[str]:
     name = (
         party.get("organizationName")
@@ -90,30 +95,30 @@ def _party_lines(party: dict[str, Any]) -> list[str]:
         or party.get("legal_name")
         or ""
     )
-    lines = [str(name)] if name else []
+    lines = [_safe(name)] if name else []
     street = party.get("streetAndNumber") or party.get("street_and_number")
     if street:
-        lines.append(str(street))
+        lines.append(_safe(street))
     postal = party.get("postalCode") or party.get("postal_code") or ""
     city = party.get("city") or ""
     locality = " ".join(value for value in (str(postal).strip(), str(city).strip()) if value)
     if locality:
-        lines.append(locality)
+        lines.append(_safe(locality))
     region = party.get("region")
     if region:
-        lines.append(str(region))
+        lines.append(_safe(region))
     country = party.get("country")
     if country:
-        lines.append(str(country))
+        lines.append(_safe(country))
     vat = party.get("vatNumber") or party.get("vat_number")
     if vat:
-        lines.append(f"VAT: {vat}")
+        lines.append(f"VAT: {_safe(vat)}")
     org = party.get("organizationNumber") or party.get("organization_number")
     if org:
-        lines.append(f"Registration: {org}")
+        lines.append(f"Registration: {_safe(org)}")
     email = party.get("email") or party.get("billing_email")
     if email:
-        lines.append(str(email))
+        lines.append(_safe(email))
     return lines
 
 
@@ -200,7 +205,7 @@ def build_billing_invoice_pdf(item: BillingInvoice, locale: str) -> bytes:
         Paragraph(labels["title"], title_style),
         Table(
             [
-                [Paragraph(labels["invoice_number"], body), Paragraph(str(item.invoice_number), right)],
+                [Paragraph(labels["invoice_number"], body), Paragraph(_safe(item.invoice_number), right)],
                 [Paragraph(labels["invoice_date"], body), Paragraph(_date(issued_at), right)],
                 [
                     Paragraph(labels["period"], body),
@@ -244,7 +249,7 @@ def build_billing_invoice_pdf(item: BillingInvoice, locale: str) -> bytes:
                 Paragraph(labels["total"], right),
             ],
             [
-                Paragraph(copy.line_description, body),
+                Paragraph(_safe(copy.line_description), body),
                 Paragraph(_money(net, item.currency), right),
                 Paragraph(f"{Decimal(item.vat_rate):.2f} %<br/>{_money(tax, item.currency)}", right),
                 Paragraph(_money(gross, item.currency), right),
@@ -282,11 +287,11 @@ def build_billing_invoice_pdf(item: BillingInvoice, locale: str) -> bytes:
     story.extend([totals, Spacer(1, 8 * mm)])
 
     if item.tax_treatment == "eu_reverse_charge":
-        story.extend([Paragraph(copy.reverse_charge_memo, body), Spacer(1, 4 * mm)])
+        story.extend([Paragraph(_safe(copy.reverse_charge_memo), body), Spacer(1, 4 * mm)])
     if item.paid_at:
         story.append(Paragraph(f"{labels['paid']}: {_date(item.paid_at)}", body_bold))
     if item.payment_reference:
-        story.append(Paragraph(f"{labels['payment_reference']}: {item.payment_reference}", body))
+        story.append(Paragraph(f"{labels['payment_reference']}: {_safe(item.payment_reference)}", body))
 
     doc.build(story)
     return buffer.getvalue()
