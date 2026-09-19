@@ -198,6 +198,16 @@ class DispatchResult(BaseModel):
     unreachable: list[UUID] = Field(default_factory=list)
 
 
+class TestCollectionMessageRequest(BaseModel):
+    channel: Literal["email", "sms", "whatsapp"] = "email"
+
+
+class TestCollectionMessageResult(BaseModel):
+    channel: Literal["email", "sms", "whatsapp"]
+    recipient: str
+    status: str = "queued"
+
+
 class ConnectionTestRead(BaseModel):
     ok: bool
     status: str
