@@ -460,7 +460,10 @@ async def get_collection(
                     CommunicationMessage.channel,
                     CommunicationMessage.created_at,
                 )
-                .where(CommunicationMessage.collection_participant_id.in_(cp_ids))
+                .where(
+                    CommunicationMessage.collection_participant_id.in_(cp_ids),
+                    CommunicationMessage.kind != "test",
+                )
                 .order_by(CommunicationMessage.created_at.desc())
             )
         ).all()
