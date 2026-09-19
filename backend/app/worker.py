@@ -275,16 +275,22 @@ async def send_message(job: ScheduledJob) -> None:
             return
 
         content = canonical_from_stored_message(message)
-        runtimes = await load_channel_runtimes(session, message.organization_id)
-        runtime = runtimes.get(message.channel)
-        if runtime is None or runtime.mode != "internal" or not runtime.configured:
-            raise ValueError(f"Internal {message.channel} is not configured")
-        provider = message.provider or runtime.provider or ""
-        sender = runtime.sender or ""
-        config = runtime.config
-        connection_id = runtime.connection_id
         recipient = message.recipient
         channel = message.channel
+        if message.kind == "test" and message.channel == "email" and message.provider == "zahlmeister_email":
+            provider = "zahlmeister_email"
+            sender = ""
+            config = {}
+            connection_id = None
+        else:
+            runtimes = await load_channel_runtimes(session, message.organization_id)
+            runtime = runtimes.get(message.channel)
+            if runtime is None or runtime.mode != "internal" or not runtime.configured:
+                raise ValueError(f"Internal {message.channel} is not configured")
+            provider = message.provider or runtime.provider or ""
+            sender = runtime.sender or ""
+            config = runtime.config
+            connection_id = runtime.connection_id
         organization = await session.get(Organization, message.organization_id)
         if organization is not None:
             organization_name = organization.name
@@ -297,7 +303,7 @@ async def send_message(job: ScheduledJob) -> None:
             config={
                 **config,
                 "from_name": organization_name,
-                "reply_to": reply_address(message_id),
+                **({} if message.kind == "test" else {"reply_to": reply_address(message_id)}),
             },
             message_id=message_header_id,
         )
