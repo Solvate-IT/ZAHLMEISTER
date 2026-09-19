@@ -40,3 +40,16 @@ for(const [locale,label] of Object.entries(billingInvoicePdfLabels)){
   billingMessages[locale]={...billingMessages[locale],billingInvoicePdf:label};
 }
 
+const billingInvoicePreparingLabels:Record<string,string>={
+  bg:"Фактурата се създава …",cs:"Faktura se vytváří …",da:"Fakturaen oprettes …",de:"Rechnung wird erstellt …",
+  el:"Το τιμολόγιο δημιουργείται …",en:"Invoice is being created …",es:"La factura se está creando …",et:"Arvet koostatakse …",
+  fi:"Laskua luodaan …",fr:"La facture est en cours de création …",ga:"Tá an sonrasc á chruthú …",hr:"Račun se izrađuje …",
+  hu:"A számla készül …",it:"Creazione della fattura in corso …",lt:"Sąskaita kuriama …",lv:"Rēķins tiek veidots …",
+  mt:"Il-fattura qed tinħoloq …",nl:"Factuur wordt aangemaakt …",pl:"Faktura jest tworzona …",pt:"A fatura está a ser criada …",
+  ro:"Factura este în curs de creare …",sk:"Faktúra sa vytvára …",sl:"Račun se ustvarja …",sv:"Fakturan skapas …"
+};
+
+for(const [locale,label] of Object.entries(billingInvoicePreparingLabels)){
+  billingMessages[locale]={...billingMessages[locale],billingInvoicePreparing:label};
+}
+
