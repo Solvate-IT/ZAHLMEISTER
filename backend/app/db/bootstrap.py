@@ -8,6 +8,15 @@ from app.db.session import engine
 from app.models.base import Base
 
 
+def _apply_compatible_schema_updates(connection: Connection) -> None:
+    # Keep bootstrap safe for existing installations without introducing a separate
+    # migration framework. Nullable columns can be added idempotently before the
+    # strict drift verification runs.
+    connection.exec_driver_sql(
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50)"
+    )
+
+
 def _verify_schema(connection: Connection) -> None:
     inspector = inspect(connection)
     expected_tables = set(Base.metadata.tables)
@@ -42,6 +51,7 @@ def _verify_schema(connection: Connection) -> None:
 async def create_schema() -> None:
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(_apply_compatible_schema_updates)
         await connection.run_sync(_verify_schema)
 
 
