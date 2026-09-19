@@ -23,6 +23,7 @@ from app.models.entities import (
     Payment,
     ScheduledJob,
 )
+from app.schemas.communications import DispatchExternalItem, DispatchRequest, DispatchResult
 from app.schemas.workflow import (
     CollectionCreate,
     CollectionDetail,
@@ -581,6 +582,53 @@ async def update_payment_status(
             participant=participant,
             payment_method="manual" if payload.paid else None,
             delivery_status=None,
+        )
+
+
+@router.post("/{collection_id}/dispatch", response_model=DispatchResult)
+async def dispatch_collection(
+    collection_id: UUID,
+    payload: DispatchRequest,
+    organization: Organization = Depends(get_organization),
+) -> DispatchResult:
+    async with SessionLocal.begin() as session:
+        stored_org = await session.get(Organization, organization.id)
+        assert stored_org is not None
+        item = await _owned_collection(session, stored_org, collection_id, for_update=True)
+        _require_bank_account(stored_org)
+        include_link, include_qr = _effective_message_options(item, stored_org)
+        _validate_message_options(include_link, include_qr)
+
+        outcome = await queue_collection_messages(
+            session,
+            collection=item,
+            organization=stored_org,
+            kind=payload.kind,
+            external_channels=set(payload.external_channels),
+            collection_participant_ids=(
+                set(payload.collection_participant_ids)
+                if payload.collection_participant_ids is not None
+                else None
+            ),
+        )
+        if payload.kind == "initial":
+            item.status = "active"
+            if item.send_at is None:
+                item.send_at = datetime.now(UTC)
+            await _schedule_reminders(session, item, now=datetime.now(UTC))
+
+        return DispatchResult(
+            queued_internal=outcome.queued_internal,
+            external=[
+                DispatchExternalItem(
+                    collection_participant_id=row.collection_participant_id,
+                    participant_id=row.participant_id,
+                    name=row.name,
+                    channel=row.channel,
+                )
+                for row in outcome.external
+            ],
+            unreachable=outcome.unreachable,
         )
 
 
