@@ -197,7 +197,7 @@ async def test_collection_message(
             delivery_mode="internal",
             direction="outgoing",
             recipient=recipient,
-            subject=f"[TEST] {content.subject}" if payload.channel == "email" else content.subject,
+            subject=content.subject,
             body=content.text,
             status="queued",
             provider=provider,
