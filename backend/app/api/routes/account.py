@@ -47,6 +47,7 @@ def _user_read(user: User, organization: Organization) -> UserRead:
         id=str(user.id),
         email=user.email,
         display_name=user.display_name,
+        phone=user.phone,
         organization_id=str(user.organization_id),
         organization_name=organization.name,
         locale=organization.locale,
@@ -71,6 +72,8 @@ async def update_profile(
             stored.display_name = payload.display_name
         if payload.organization_name is not None:
             organization.name = payload.organization_name
+        if "phone" in payload.model_fields_set:
+            stored.phone = payload.phone
         if payload.locale is not None:
             organization.locale = payload.locale
         if payload.currency is not None:
