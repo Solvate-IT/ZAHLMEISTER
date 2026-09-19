@@ -294,6 +294,8 @@ async def _store_incoming(
         )
         if locked_outgoing is None or locked_outgoing.organization_id != outgoing.organization_id:
             return
+        if outgoing.kind == "test":
+            return
         if external_id:
             duplicate = await session.scalar(
                 select(CommunicationMessage.id).where(
@@ -369,6 +371,8 @@ async def _update_delivery(
         message.status = _advanced_delivery_status(previous_status, new_status)
         message.metadata_json = json.dumps(raw, ensure_ascii=False)[:20000]
 
+        if message.kind == "test":
+            return
         if message.channel != "whatsapp":
             return
         cp = await session.get(CollectionParticipant, message.collection_participant_id)
