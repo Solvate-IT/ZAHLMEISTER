@@ -1,15 +1,17 @@
 import logging
+import re
 from decimal import Decimal
+from uuid import UUID
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Form, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Form, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_session
 from app.db.session import SessionLocal
 from app.models.billing import BillingInvoice, BillingPaymentTransaction, BillingProfile
-from app.models.entities import User
+from app.models.entities import Organization, User
 from app.schemas.billing import (
     BillingEntitlementRead,
     BillingInvoiceRead,
@@ -24,6 +26,7 @@ from app.schemas.billing import (
 )
 from app.services.billing import Entitlement, entitlement_for_organization, purchase_context
 from app.services.billing_invoice_status import effective_invoice_status
+from app.services.billing_invoice_pdf import build_billing_invoice_pdf
 from app.services.billing_tax import (
     BillingTaxInvalidVatNumber,
     BillingTaxUnsupportedJurisdiction,
@@ -276,6 +279,41 @@ async def billing_invoices(
         )
     ).all()
     return [_invoice_read(item, payment_status) for item, payment_status in rows]
+
+
+@router.get("/invoices/{invoice_id}/pdf")
+async def billing_invoice_pdf(
+    invoice_id: UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    item = await session.scalar(
+        select(BillingInvoice).where(
+            BillingInvoice.id == invoice_id,
+            BillingInvoice.organization_id == user.organization_id,
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+    if not item.invoice_number:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Invoice PDF is not available until Mollie assigns the invoice number",
+        )
+    organization = await session.get(Organization, user.organization_id)
+    try:
+        content = build_billing_invoice_pdf(item, organization.locale if organization else "en")
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    safe_number = re.sub(r"[^A-Za-z0-9._-]+", "-", item.invoice_number).strip("-") or str(item.id)
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="zahlmeister-invoice-{safe_number}.pdf"',
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 @router.get("/mollie/config", response_model=MollieBillingConfigRead)
