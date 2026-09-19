@@ -83,6 +83,7 @@ export const api = {
   translateCollectionMessageLanguages:(id:string,language:string,body:string)=>request<T.CollectionMessageTranslations>(`/collections/${id}/message-translations/translate-other-languages`,{method:"POST",body:JSON.stringify({language,body})}),
   setPaid:(cid:string,pid:string,paid:boolean)=>request<T.CollectionParticipant>(`/collections/${cid}/participants/${pid}/payment-status`,{method:"PUT",body:JSON.stringify({paid})}),
   dispatchCollection:(id:string,payload:{kind:"initial"|"reminder";external_channels:T.CommunicationChannel[];collection_participant_ids?:string[]})=>request<T.DispatchResult>(`/collections/${id}/dispatch`,{method:"POST",body:JSON.stringify(payload)}),
+  testCollectionMessage:(id:string,channel:"email"|"sms"|"whatsapp")=>request<{channel:"email"|"sms"|"whatsapp";recipient:string;status:string}>(`/collections/${id}/test-message`,{method:"POST",body:JSON.stringify({channel})}),
   sendCollection:(id:string)=>request<{queued:number}>(`/collections/${id}/send`,{method:"POST"}),
   remindCollection:(id:string)=>request<{queued:number}>(`/collections/${id}/remind`,{method:"POST"}),
   exportCollection:(id:string,format:string,detailed=false)=>download(`/collections/${id}/export?format=${encodeURIComponent(format)}&detailed=${detailed}`),
