@@ -1,5 +1,5 @@
 export interface AccountUser {
-  id: string; email: string; display_name: string; organization_id: string;
+  id: string; email: string; display_name: string; phone?: string | null; organization_id: string;
   organization_name: string; locale: string; currency: string; email_verified: boolean; is_platform_admin: boolean;
 }
 export interface AuthResponse { token: string; user: AccountUser; }
