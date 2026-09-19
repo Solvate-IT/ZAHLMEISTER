@@ -86,6 +86,7 @@ def user_read(user: User, organization: Organization) -> UserRead:
         id=str(user.id),
         email=user.email,
         display_name=user.display_name,
+        phone=user.phone,
         organization_id=str(user.organization_id),
         organization_name=organization.name,
         locale=organization.locale,
