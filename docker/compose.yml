@@ -104,7 +104,7 @@ services:
       - ./secrets/development:/run/secrets/internal:ro
 
   mailpit:
-    image: axllent/mailpit:v1.31.0
+    image: axllent/mailpit:v1.31.1
     restart: "no"
     ports:
       - "127.0.0.1:${MAILPIT_PORT:-8028}:8025"
