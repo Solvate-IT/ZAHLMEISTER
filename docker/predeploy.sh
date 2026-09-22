@@ -126,16 +126,16 @@ docker run --rm \
   -e ENVIRONMENT=test \
   -e READINESS_REQUIRE_WORKER=false \
   "$BACKEND_TEST_IMAGE" \
-  sh -c 'ruff check app tests && pytest -q'
+  sh -c 'ruff check app tests && python -m pytest -q'
 
 echo
-echo "[5/11] Testing fresh schema bootstrap against PostgreSQL 17..."
+echo "[5/11] Testing fresh schema bootstrap against PostgreSQL 18..."
 docker network create "$NETWORK" >/dev/null
 docker run -d --name "$DB_CONTAINER" --network "$NETWORK" --network-alias db \
   -e POSTGRES_DB="$TEST_DB_NAME" \
   -e POSTGRES_USER="$TEST_DB_USER" \
   -e POSTGRES_PASSWORD="$TEST_DB_PASSWORD" \
-  postgres:17-alpine >/dev/null
+  postgres:18.6-alpine >/dev/null
 DB_READY=0
 for _ in $(seq 1 30); do
   if docker exec "$DB_CONTAINER" pg_isready -U "$TEST_DB_USER" -d "$TEST_DB_NAME" >/dev/null 2>&1; then

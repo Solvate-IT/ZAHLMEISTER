@@ -25,5 +25,6 @@ RUN set -eux; \
 
 WORKDIR /app
 COPY backend/pyproject.toml ./
+COPY backend/app ./app
 RUN pip install --no-cache-dir -e ".[dev]"
 COPY backend/ .

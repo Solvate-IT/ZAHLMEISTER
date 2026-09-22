@@ -42,7 +42,7 @@ COPY backend/locales ./locales
 # cross-layer contract tests do not require Dockerfile changes per file.
 COPY frontend/src /frontend/src
 USER app
-CMD ["pytest", "-q"]
+CMD ["python", "-m", "pytest", "-q"]
 
 FROM base AS runtime
 COPY --chown=app:app backend/locales ./locales
