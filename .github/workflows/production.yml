@@ -85,7 +85,7 @@ jobs:
           GHCR_USER: ${{ github.actor }}
         run: |
           printf '%s' "$GHCR_TOKEN" | \
-            ssh "${PROD_USER}$${PROD_HOST}" "docker login ghcr.io -u '${GHCR_USER}' --password-stdin"
+            ssh "${PROD_USER}@${PROD_HOST}" "docker login ghcr.io -u '${GHCR_USER}' --password-stdin"
 
       - name: Deploy immutable images
         shell: bash
@@ -95,7 +95,7 @@ jobs:
           IMAGE_REGISTRY: ${{ needs.verify-build-push.outputs.registry_path }}
         run: |
           REPO_NAME="${GITHUB_REPOSITORY##*/}"
-          ssh "${PROD_USER}$${PROD_HOST}" \
+          ssh "${PROD_USER}@${PROD_HOST}" \
             "cd '/opt/${REPO_NAME}' && \
              git fetch origin main && git checkout main && git reset --hard origin/main && \
              ./docker/scripts/deploy-production.sh '${GITHUB_SHA}' '${IMAGE_REGISTRY}'"
@@ -106,4 +106,4 @@ jobs:
         env:
           PROD_HOST: ${{ secrets.PRODUCTION_HOST }}
           PROD_USER: ${{ secrets.PRODUCTION_USER }}
-        run: ssh "${PROD_USER}$${PROD_HOST}" "docker logout ghcr.io >/dev/null 2>&1 || true" || true
+        run: ssh "${PROD_USER}@${PROD_HOST}" "docker logout ghcr.io >/dev/null 2>&1 || true" || true

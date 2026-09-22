@@ -16,7 +16,7 @@ run_trivy() {
     -v /var/run/docker.sock:/var/run/docker.sock:ro \
     -v "$CACHE_DIR:/root/.cache/" \
     -v "$ROOT_DIR:/workspace:ro" \
-    "$TRIVY_IMAGE" "$$@"
+    "$TRIVY_IMAGE" "$@"
 }
 
 echo "== Security: repository secret scan =="
