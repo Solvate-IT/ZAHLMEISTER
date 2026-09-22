@@ -94,7 +94,7 @@ x-default-logging: &default-logging
 
 services:
   db:
-    image: postgres:17-alpine
+    image: postgres:18.6-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: zahlmeister
@@ -106,7 +106,7 @@ services:
       timeout: 5s
       retries: 20
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres18_data:/var/lib/postgresql
       - ./secrets/production:/run/secrets/internal:ro
     logging: *default-logging
 
@@ -203,7 +203,7 @@ services:
     logging: *default-logging
 
 volumes:
-  postgres_data:
+  postgres18_data:
 
 networks:
   proxy:

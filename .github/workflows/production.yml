@@ -23,7 +23,7 @@ jobs:
     outputs:
       registry_path: ${{ steps.names.outputs.registry_path }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Prepare CI environment selector
         shell: bash
@@ -43,7 +43,7 @@ jobs:
         run: ./docker/scripts/test.sh all
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
