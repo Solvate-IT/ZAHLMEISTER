@@ -119,10 +119,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    image: zahlmeister-backend:${IMAGE_TAG:-latest}
-    build:
-      context: ..
-      dockerfile: docker/backend.Dockerfile
+    image: ${BACKEND_IMAGE:-zahlmeister-backend:latest}
+    pull_policy: missing
     restart: "no"
     environment: *backend-environment
     depends_on:
@@ -143,10 +141,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    image: zahlmeister-backend:${IMAGE_TAG:-latest}
-    build:
-      context: ..
-      dockerfile: docker/backend.Dockerfile
+    image: ${BACKEND_IMAGE:-zahlmeister-backend:latest}
+    pull_policy: missing
     restart: unless-stopped
     environment: *backend-environment
     depends_on:
@@ -173,7 +169,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    image: zahlmeister-backend:${IMAGE_TAG:-latest}
+    image: ${BACKEND_IMAGE:-zahlmeister-backend:latest}
+    pull_policy: missing
     restart: unless-stopped
     environment: *backend-environment
     depends_on:
@@ -186,12 +183,8 @@ services:
     logging: *default-logging
 
   frontend:
-    image: zahlmeister-frontend:${IMAGE_TAG:-latest}
-    build:
-      context: ..
-      dockerfile: docker/frontend.Dockerfile
-      args:
-        NEXT_PUBLIC_API_BASE_URL: ""
+    image: ${FRONTEND_IMAGE:-zahlmeister-frontend:latest}
+    pull_policy: missing
     restart: unless-stopped
     depends_on:
       backend:

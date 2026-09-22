@@ -65,6 +65,10 @@ required_files=(
   "docker/manage.sh"
   "docker/predeploy.sh"
   "docker/scripts/env.sh"
+  "docker/scripts/deploy-production.sh"
+  "docker/scripts/security-scan.sh"
+  "docker/scripts/test.sh"
+  ".github/workflows/production.yml"
 )
 
 echo
@@ -154,7 +158,8 @@ docker build --target test -f "$SCRIPT_DIR/frontend.Dockerfile" -t "$FRONTEND_TE
 
 echo
 echo "[7/11] Building the actual production images..."
-IMAGE_TAG="$IMAGE_TAG" docker compose "${COMPOSE_ENV_ARGS[@]}" -f "$PROD_FILE" build backend frontend
+docker build --target runtime -f "$SCRIPT_DIR/backend.Dockerfile" -t "$BACKEND_RUNTIME_IMAGE" .
+docker build --target runtime -f "$SCRIPT_DIR/frontend.Dockerfile" -t "$FRONTEND_RUNTIME_IMAGE" .
 
 APP_RUNTIME_UID_VALUE="$(env_value APP_RUNTIME_UID 10001)"
 APP_RUNTIME_GID_VALUE="$(env_value APP_RUNTIME_GID 10001)"

@@ -49,14 +49,34 @@ Only keys explicitly marked as `external credential in .env` in the tracked envi
 
 Provider certificates/private keys that are inherently files, such as Ponto mTLS material, remain under the ignored `docker/secrets/ponto/` directory.
 
-## Production start
+## Production deployment
 
-1. Set the real production values in `.env.production` and keep its key set synchronized with `.env.development`.
-2. Create `docker/.env` with `ENVIRONMENT=production` and only the external credentials that are used.
-3. Run `./predeploy.sh`.
-4. Run `./manage.sh` and choose **Start**.
+Production is deployed only from the `main` branch through GitHub Actions. The production host never builds application images.
 
-Internal secrets are initialized automatically before Compose starts. Never commit `.env`, certificates, private keys or generated files under `secrets/`.
+The workflow:
+
+1. runs the same pre-deployment and security checks available locally,
+2. builds the real backend and frontend production images,
+3. pushes the already-tested images to GHCR with the Git commit SHA as immutable tag,
+4. connects to the production host over SSH,
+5. pulls exactly those images,
+6. creates and verifies a PostgreSQL backup,
+7. runs the idempotent database bootstrap,
+8. starts backend, worker and frontend,
+9. waits for health/readiness checks and verifies the running image references.
+
+The production server must contain `/opt/ZAHLMEISTER` checked out from this repository and `docker/.env` with `ENVIRONMENT=production` plus the configured external credentials. Internal secrets are initialized automatically and remain on the host.
+
+GitHub uses a `production` environment with these secrets:
+
+- `PRODUCTION_HOST`
+- `PRODUCTION_USER`
+- `PRODUCTION_SSH_KEY`
+- `PRODUCTION_SSH_KNOWN_HOSTS`
+
+GHCR authentication on the production host uses the workflow's short-lived `GITHUB_TOKEN` and is removed again after deployment.
+
+Never commit `.env`, certificates, private keys or generated files under `secrets/`.
 
 ## manage.sh
 
@@ -93,4 +113,4 @@ Schema initialization remains idempotent. Existing production data must be consi
 
 ## Pre-deployment checks
 
-`./predeploy.sh` validates environment parity, Git tracking and Docker Compose, builds the actual production Dockerfiles, runs backend lint/tests and frontend build checks, inspects final runtime images and performs production-style smoke tests. Important runtime files are checked with `git ls-files` so local untracked files cannot hide packaging errors.
+`./scripts/test.sh all` is the canonical local/CI gate. It runs `predeploy.sh` plus Trivy secret, dependency, configuration and production-image scans. The pre-deployment checks validate environment parity, Git tracking and Docker Compose, build the actual production Dockerfiles, run backend lint/tests and frontend build checks, inspect final runtime images and perform production-style smoke tests. Important runtime files are checked with `git ls-files` so local untracked files cannot hide packaging errors.

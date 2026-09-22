@@ -10,16 +10,26 @@ compose() {
 }
 
 pause() { read -r -p "Press Enter to continue..." _; }
-start_stack() { compose up -d; }
+start_stack() {
+  if [[ "$ENVIRONMENT" == "production" ]]; then
+    compose start
+  else
+    compose up -d
+  fi
+}
 stop_stack() { compose down; }
 clean_build() {
+  if [[ "$ENVIRONMENT" == "production" ]]; then
+    echo "ERROR: Production images are built, tested and deployed only by the main-branch GitHub Action." >&2
+    return 1
+  fi
   compose down --remove-orphans
   compose build --no-cache
   compose up -d
 }
 status_stack() { compose ps; }
 show_logs() { compose logs -f --tail=200; }
-predeploy() { ZM_PRIVATE_ENV_FILE="$PRIVATE_ENV_FILE" "$SCRIPT_DIR/predeploy.sh"; }
+predeploy() { ZM_PRIVATE_ENV_FILE="$PRIVATE_ENV_FILE" "$SCRIPT_DIR/scripts/test.sh" all; }
 backend_shell() { compose exec backend bash; }
 frontend_shell() { compose exec frontend sh; }
 apply_schema() { compose run --rm bootstrap; }

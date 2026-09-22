@@ -1,0 +1,109 @@
+# Images pushed by this workflow are the exact production images that passed the gate.
+name: Zahlmeister Production
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: zahlmeister-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  TRIVY_IMAGE: aquasec/trivy:0.74.0
+
+jobs:
+  verify-build-push:
+    runs-on: ubuntu-latest
+    outputs:
+      registry_path: ${{ steps.names.outputs.registry_path }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Prepare CI environment selector
+        shell: bash
+        run: |
+          printf 'ENVIRONMENT=development\n' > docker/.env
+          chmod 600 docker/.env
+
+      - name: Resolve lowercase registry path
+        id: names
+        shell: bash
+        run: echo "registry_path=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Full local-equivalent pre-deploy gate
+        env:
+          IMAGE_TAG: ci-runtime
+          TRIVY_IMAGE: ${{ env.TRIVY_IMAGE }}
+        run: ./docker/scripts/test.sh all
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push already-tested immutable images
+        shell: bash
+        env:
+          REGISTRY_PATH: ${{ steps.names.outputs.registry_path }}
+        run: |
+          docker tag zahlmeister-backend:ci-runtime "${REGISTRY_PATH}/zahlmeister-backend:${GITHUB_SHA}"
+          docker tag zahlmeister-frontend:ci-runtime "${REGISTRY_PATH}/zahlmeister-frontend:${GITHUB_SHA}"
+          docker push "${REGISTRY_PATH}/zahlmeister-backend:${GITHUB_SHA}"
+          docker push "${REGISTRY_PATH}/zahlmeister-frontend:${GITHUB_SHA}"
+
+  deploy:
+    needs: verify-build-push
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Configure SSH
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Authenticate production host to GHCR
+        shell: bash
+        env:
+          PROD_HOST: ${{ secrets.PRODUCTION_HOST }}
+          PROD_USER: ${{ secrets.PRODUCTION_USER }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | \
+            ssh "${PROD_USER}$${PROD_HOST}" "docker login ghcr.io -u '${GHCR_USER}' --password-stdin"
+
+      - name: Deploy immutable images
+        shell: bash
+        env:
+          PROD_HOST: ${{ secrets.PRODUCTION_HOST }}
+          PROD_USER: ${{ secrets.PRODUCTION_USER }}
+          IMAGE_REGISTRY: ${{ needs.verify-build-push.outputs.registry_path }}
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          ssh "${PROD_USER}$${PROD_HOST}" \
+            "cd '/opt/${REPO_NAME}' && \
+             git fetch origin main && git checkout main && git reset --hard origin/main && \
+             ./docker/scripts/deploy-production.sh '${GITHUB_SHA}' '${IMAGE_REGISTRY}'"
+
+      - name: Remove production GHCR credentials
+        if: always()
+        shell: bash
+        env:
+          PROD_HOST: ${{ secrets.PRODUCTION_HOST }}
+          PROD_USER: ${{ secrets.PRODUCTION_USER }}
+        run: ssh "${PROD_USER}$${PROD_HOST}" "docker logout ghcr.io >/dev/null 2>&1 || true" || true
