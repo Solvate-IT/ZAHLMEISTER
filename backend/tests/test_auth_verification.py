@@ -3,7 +3,9 @@ from types import SimpleNamespace
 import uuid
 
 import pytest
+from fastapi import HTTPException
 
+from app.api import deps
 from app.api.routes import auth
 from app.models.entities import Organization, User
 from app.schemas.account import TokenRequest
@@ -148,3 +150,16 @@ async def test_resend_verification_awaits_mail_delivery(monkeypatch) -> None:
         "token": "verification-token",
         "locale": "de",
     }
+
+
+def test_verified_action_guard_accepts_verified_user() -> None:
+    user = SimpleNamespace(email_verified_at=datetime.now(UTC))
+    assert deps.ensure_verified_email(user) is user
+
+
+def test_verified_action_guard_rejects_unverified_user() -> None:
+    user = SimpleNamespace(email_verified_at=None)
+    with pytest.raises(HTTPException) as exc:
+        deps.ensure_verified_email(user)
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "Email verification required"
