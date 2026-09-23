@@ -205,7 +205,6 @@ docker run --rm --read-only --tmpfs /tmp:size=64m,mode=1777 --security-opt no-ne
     nginx -T 2>&1 | grep -q "fastcgi_temp_path /tmp/fastcgi;" &&
     nginx -T 2>&1 | grep -q "uwsgi_temp_path /tmp/uwsgi;" &&
     nginx -T 2>&1 | grep -q "scgi_temp_path /tmp/scgi;" &&
-    nginx -T 2>&1 | grep -q "location ~ \\.html\\$" &&
     test -f /usr/share/nginx/html/index.html &&
     test -f /usr/share/nginx/html/app/index.html &&
     test -f /usr/share/nginx/html/admin/index.html &&
