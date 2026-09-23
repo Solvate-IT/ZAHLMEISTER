@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 
-from app.api.deps import get_current_user, get_organization, require_verified_user
+from app.api.deps import get_organization, require_verified_user
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.billing import BillingProfile
