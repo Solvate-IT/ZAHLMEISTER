@@ -76,3 +76,19 @@ def test_admin_ui_requires_reason_and_opens_separate_support_tab() -> None:
     assert "supportTab.opener=null" in admin
     assert 'supportTab.location.replace(`/support-access#${fragment.toString()}`)' in admin
     assert 't("adminViewAsUser")' in admin
+
+
+def test_admin_route_has_visible_loading_fallback_and_production_artifact_check() -> None:
+    page = frontend("src/app/admin/page.tsx")
+    predeploy = (ROOT.parent / "docker/predeploy.sh").read_text()
+
+    assert 'fallback={<div className="auth-wrap"><Loading/></div>}' in page
+    assert "/usr/share/nginx/html/admin/index.html" in predeploy
+
+
+def test_platform_admin_bootstrap_is_serialized_and_deploy_stops_apps_before_database() -> None:
+    service = backend("app/services/platform_admin.py")
+    deploy = (ROOT.parent / "docker/scripts/deploy-production.sh").read_text()
+
+    assert "pg_advisory_xact_lock" in service
+    assert deploy.index("Stopping application services before database preparation") < deploy.index("Starting PostgreSQL")
