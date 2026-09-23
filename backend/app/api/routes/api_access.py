@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_organization, get_session
-from app.models.entities import ApiCredential, Organization
+from app.api.deps import ensure_verified_email, get_current_user, get_organization, get_session, get_verified_organization
+from app.models.entities import ApiCredential, Organization, User
 from app.schemas.api_access import (
     API_SCOPES, ApiCredentialCreate, ApiCredentialCreated, ApiCredentialRead,
     ApiEnabledUpdate, ApiSettingsRead,
@@ -24,9 +24,12 @@ async def get_api_settings(organization: Organization = Depends(get_organization
 @router.put("/enabled", response_model=ApiSettingsRead)
 async def set_api_enabled(
     payload: ApiEnabledUpdate,
+    user: User = Depends(get_current_user),
     organization: Organization = Depends(get_organization),
     session: AsyncSession = Depends(get_session),
 ) -> ApiSettingsRead:
+    if payload.enabled:
+        ensure_verified_email(user)
     stored = await session.get(Organization, organization.id, with_for_update=True)
     assert stored is not None
     stored.api_enabled = payload.enabled
@@ -48,7 +51,7 @@ async def list_api_credentials(
 @router.post("/credentials", response_model=ApiCredentialCreated, status_code=status.HTTP_201_CREATED)
 async def create_api_credential(
     payload: ApiCredentialCreate,
-    organization: Organization = Depends(get_organization),
+    organization: Organization = Depends(get_verified_organization),
     session: AsyncSession = Depends(get_session),
 ) -> ApiCredentialCreated:
     if not organization.api_enabled:
