@@ -10,11 +10,12 @@
     "test:profile-ui": "node --test tests/profile-ui.test.mjs",
     "test:account-action": "node --test tests/account-action.test.mjs",
     "test:mobile-workspace": "node --test tests/mobile-workspace.test.mjs",
-    "test": "npm run test:responsive && npm run test:profile-ui && npm run test:account-action && npm run test:mobile-workspace && npm run test:support-session-ui && npm run test:collection-send-safety && npm run test:billing-invoice-ui",
+    "test": "npm run test:responsive && npm run test:profile-ui && npm run test:account-action && npm run test:mobile-workspace && npm run test:support-session-ui && npm run test:collection-send-safety && npm run test:billing-invoice-ui && npm run test:communication-settings",
     "check": "npm test && npm run typecheck && npm run build",
     "test:support-session-ui": "node --test tests/support-session-ui.test.mjs",
     "test:collection-send-safety": "node --test tests/collection-send-safety.test.mjs",
-    "test:billing-invoice-ui": "node --test tests/billing-invoice-ui.test.mjs"
+    "test:billing-invoice-ui": "node --test tests/billing-invoice-ui.test.mjs",
+    "test:communication-settings": "node --test tests/communication-settings-ui.test.mjs"
   },
   "dependencies": {
     "@capacitor/core": "8.5.2",
