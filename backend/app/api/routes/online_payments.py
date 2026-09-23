@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 
-from app.api.deps import get_current_user, get_organization
+from app.api.deps import get_current_user, get_organization, require_verified_user
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.billing import BillingProfile
@@ -75,7 +75,7 @@ async def get_connection(
 
 @router.post("/mollie/oauth/start", response_model=OnlinePaymentOAuthStartRead)
 async def start_mollie_oauth(
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_verified_user),
     organization: Organization = Depends(get_organization),
 ) -> OnlinePaymentOAuthStartRead:
     async with SessionLocal() as session:
