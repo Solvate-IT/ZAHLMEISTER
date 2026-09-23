@@ -23,10 +23,12 @@ TEST_DB_NAME="zahlmeister_predeploy"
 TEST_DB_USER="predeploy"
 TEST_DB_PASSWORD="predeploy-only-password"
 TEST_DATABASE_URL="postgresql+asyncpg://${TEST_DB_USER}:${TEST_DB_PASSWORD}@db:5432/${TEST_DB_NAME}"
+ENV_PARSER_TEST_FILE="/tmp/zahlmeister-env-parser-test-$"
 
 cleanup() {
   docker rm -f "$FRONTEND_CONTAINER" "$BACKEND_CONTAINER" "$WORKER_CONTAINER" "$DB_CONTAINER" >/dev/null 2>&1 || true
   docker network rm "$NETWORK" >/dev/null 2>&1 || true
+  rm -f "$ENV_PARSER_TEST_FILE"
 }
 trap cleanup EXIT INT TERM
 
@@ -113,6 +115,15 @@ check_env_parity
 docker compose "${COMPOSE_ENV_ARGS[@]}" -f "$PROD_FILE" config -q
 docker compose "${COMPOSE_ENV_ARGS[@]}" -f "$SCRIPT_DIR/compose.yml" config -q
 bash -n "$SCRIPT_DIR/manage.sh" "$SCRIPT_DIR/predeploy.sh" "$SCRIPT_DIR"/scripts/*.sh "$PROJECT_DIR/mobile/tool/bootstrap_mobile.sh"
+cat > "$ENV_PARSER_TEST_FILE" <<'EOF'
+TEST_SINGLE='alpha$beta'   
+TEST_DOUBLE="gamma$delta"   
+TEST_PLAIN=plain   
+EOF
+[[ "$(read_env_value_from_file "$ENV_PARSER_TEST_FILE" TEST_SINGLE)" == 'alpha$beta' ]] || { echo "Single-quoted env parsing failed." >&2; exit 1; }
+[[ "$(read_env_value_from_file "$ENV_PARSER_TEST_FILE" TEST_DOUBLE)" == 'gamma$delta' ]] || { echo "Double-quoted env parsing failed." >&2; exit 1; }
+[[ "$(read_env_value_from_file "$ENV_PARSER_TEST_FILE" TEST_PLAIN)" == "plain" ]] || { echo "Unquoted env parsing failed." >&2; exit 1; }
+rm -f "$ENV_PARSER_TEST_FILE"
 if grep -q 'Mail.ReadWrite' "$SCRIPT_DIR/compose.prod.yml" "$SCRIPT_DIR/.env.development" "$SCRIPT_DIR/.env.production"; then
   echo "Microsoft 365 configuration still requests Mail.ReadWrite." >&2
   exit 1

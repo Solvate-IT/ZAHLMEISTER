@@ -7,12 +7,21 @@ DEV_ENV_FILE="$DOCKER_DIR/.env.development"
 PROD_ENV_FILE="$DOCKER_DIR/.env.production"
 
 read_env_value_from_file() {
-  local file="$1" key="$2" value
+  local file="$1" key="$2" value first last
   value="$(sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" "$file" | tail -n 1)"
-  value="${value%\"}"
-  value="${value#\"}"
-  value="${value%\'}"
-  value="${value#\'}"
+
+  # Whitespace outside a dotenv value is insignificant. Trim it before
+  # removing a matching pair of surrounding quotes.
+  value="$(printf '%s' "$value" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+
+  if (( ${#value} >= 2 )); then
+    first="${value:0:1}"
+    last="${value: -1}"
+    if [[ "$first" == "$last" && ( "$first" == "'" || "$first" == '"' ) ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+  fi
+
   printf '%s' "$value"
 }
 
