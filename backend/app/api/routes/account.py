@@ -354,8 +354,6 @@ async def export_account_data(
             "phone": user.phone,
             "email_verified_at": _dt(user.email_verified_at),
             "last_login_at": _dt(user.last_login_at),
-            "terms_accepted_at": _dt(user.terms_accepted_at),
-            "privacy_accepted_at": _dt(user.privacy_accepted_at),
         },
         "organization": {
             "id": str(organization.id),

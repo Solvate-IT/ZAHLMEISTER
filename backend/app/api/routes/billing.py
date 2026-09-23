@@ -107,7 +107,6 @@ def _invoice_read(item: BillingInvoice, payment_status: str | None = None) -> Bi
         tax_treatment=item.tax_treatment,
         invoice_number=item.invoice_number,
         status=effective_invoice_status(item.status, payment_status),
-        payment_url=item.payment_url,
         paid_at=item.paid_at,
     )
 

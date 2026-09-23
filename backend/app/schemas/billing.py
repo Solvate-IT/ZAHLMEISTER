@@ -152,5 +152,4 @@ class BillingInvoiceRead(BaseModel):
     tax_treatment: str
     invoice_number: str | None = None
     status: str
-    payment_url: str | None = None
     paid_at: datetime | None = None

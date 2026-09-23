@@ -15,6 +15,12 @@ def _apply_compatible_schema_updates(connection: Connection) -> None:
     connection.exec_driver_sql(
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50)"
     )
+    connection.exec_driver_sql(
+        "ALTER TABLE users DROP COLUMN IF EXISTS terms_accepted_at"
+    )
+    connection.exec_driver_sql(
+        "ALTER TABLE users DROP COLUMN IF EXISTS privacy_accepted_at"
+    )
     # Remove schema-only legacy fields that no longer carry runtime semantics.
     # These statements are idempotent and safe for both fresh and existing databases.
     connection.exec_driver_sql(

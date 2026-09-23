@@ -1,5 +1,7 @@
 from sqlalchemy import CheckConstraint, UniqueConstraint
 
+from app.models.base import Base
+from app.models.billing import BillingInvoice
 from app.models.channel_strategy import ParticipantChannelSetting
 from app.models.entities import (
     ApiCredential,
@@ -9,6 +11,7 @@ from app.models.entities import (
     CommunicationChannelSetting,
     MessageTemplate,
     ParticipantList,
+    User,
 )
 from app.models.platform import StoreSubscription
 
@@ -42,11 +45,10 @@ def test_participant_channel_constraints_match_database_contract() -> None:
 
 def test_collection_constraints_match_database_contract() -> None:
     assert Collection.__table__.c.communication_channel.default.arg == "auto"
-    assert Collection.__table__.c.communication_mode.default.arg == "auto"
+    assert "communication_mode" not in Collection.__table__.c
     assert _check_names(Collection) >= {
         "ck_collections_amount_positive",
         "ck_collections_communication_channel",
-        "ck_collections_communication_mode",
     }
     assert "uq_collections_org_name" in _unique_constraint_names(Collection)
     assert "message_overrides_json" in Collection.__table__.c
@@ -80,6 +82,15 @@ def test_orm_metadata_preserves_required_schema_objects() -> None:
     assert "ix_bank_transactions_sync_account" in _index_names(BankTransaction)
     assert "ix_collections_message_template_id" in _index_names(Collection)
     assert "ix_comm_channel_settings_connection" in _index_names(CommunicationChannelSetting)
+
+
+def test_obsolete_schema_fields_and_tables_stay_removed() -> None:
+    assert "webhook_key" not in CommunicationChannelSetting.__table__.c
+    assert "terms_accepted_at" not in User.__table__.c
+    assert "privacy_accepted_at" not in User.__table__.c
+    assert "payment_url" not in BillingInvoice.__table__.c
+    assert "billing_legal_entities" not in Base.metadata.tables
+    assert "billing_tax_registrations" not in Base.metadata.tables
 
 
 def test_subscription_provider_and_status_are_database_constrained() -> None:

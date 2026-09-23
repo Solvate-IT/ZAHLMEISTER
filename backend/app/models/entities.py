@@ -36,8 +36,6 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    terms_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    privacy_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AuthSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
