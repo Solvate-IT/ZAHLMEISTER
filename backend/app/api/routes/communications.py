@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
-from app.api.deps import get_current_user, get_organization, get_session
+from app.api.deps import get_current_user, get_organization, get_session, get_verified_organization
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.entities import (
@@ -120,7 +120,7 @@ async def test_collection_message(
     collection_id: UUID,
     payload: TestCollectionMessageRequest,
     user: User = Depends(get_current_user),
-    organization: Organization = Depends(get_organization),
+    organization: Organization = Depends(get_verified_organization),
 ) -> TestCollectionMessageResult:
     async with SessionLocal.begin() as session:
         stored_org = await session.get(Organization, organization.id)
@@ -229,7 +229,7 @@ async def create_external_draft(
     collection_id: UUID,
     cp_id: UUID,
     payload: ExternalDraftRequest,
-    organization: Organization = Depends(get_organization),
+    organization: Organization = Depends(get_verified_organization),
 ) -> ExternalDraftRead:
     async with SessionLocal.begin() as session:
         stored_org = await session.get(Organization, organization.id)
@@ -420,7 +420,7 @@ async def queue_internal_message(
     collection_id: UUID,
     cp_id: UUID,
     payload: InternalMessageRequest,
-    organization: Organization = Depends(get_organization),
+    organization: Organization = Depends(get_verified_organization),
 ) -> QueueMessageResult:
     async with SessionLocal.begin() as session:
         stored_org = await session.get(Organization, organization.id)
