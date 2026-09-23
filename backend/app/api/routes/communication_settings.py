@@ -398,7 +398,6 @@ async def finish_microsoft365_oauth(
             email_setting.connection_id = connection.id
             email_setting.sender = None
             email_setting.encrypted_config = None
-            email_setting.webhook_key = None
             email_setting.sync_cursor = None
             email_setting.status = "not_tested"
             email_setting.last_tested_at = None
@@ -777,7 +776,6 @@ async def update_setting(
         stored.connection_id = connection.id if connection else None
         stored.sender = payload.sender if provider == "infobip" else None
         stored.encrypted_config = encrypt_config(incoming) if incoming else None
-        stored.webhook_key = None
         if provider not in {"smtp_imap", "microsoft365"} or (
             provider != old_provider or stored.connection_id != old_connection_id
         ):

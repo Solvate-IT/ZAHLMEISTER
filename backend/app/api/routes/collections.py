@@ -144,7 +144,6 @@ def _summary(
         paid_count=paid_count,
         paid_amount=item.amount * paid_count,
         communication_channel=item.communication_channel,
-        communication_mode=item.communication_mode,
         channel_order=channel_order,
         message_template_id=item.message_template_id,
         reminder_rules=deserialize_reminder_rules(item.reminder_rules_json),
@@ -365,7 +364,6 @@ async def create_collection(
             due_at=payload.due_at,
             status="scheduled" if scheduled else "draft",
             communication_channel=payload.communication_channel,
-            communication_mode="auto",
             message_template_id=template.id,
             message_overrides_json=serialize_collection_message_overrides(
                 payload.message_body_overrides or {}

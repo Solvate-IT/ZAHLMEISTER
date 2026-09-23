@@ -587,9 +587,6 @@ async def _ensure_legal_entity(session: AsyncSession) -> BillingLegalEntity | No
         "region", "vat_number", "organization_number",
     ):
         setattr(item, key, values[key])
-    # Retain the legacy column for schema compatibility, but a Standard API Key is
-    # already bound to its Mollie profile and must not be accompanied by profileId.
-    item.mollie_profile_id = None
     item.active = True
     await session.flush()
 

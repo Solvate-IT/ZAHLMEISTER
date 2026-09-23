@@ -14,7 +14,7 @@ export interface ReminderRule { type: "after_send"|"before_due"|"on_due"|"after_
 export interface CollectionSummary {
   id: string; name: string; participant_list_id: string; amount: string | number; currency: string;
   send_at?: string | null; due_at?: string | null; status: string; participant_count: number;
-  paid_count: number; paid_amount: string | number; communication_channel: CollectionChannel; communication_mode: string;
+  paid_count: number; paid_amount: string | number; communication_channel: CollectionChannel;
   channel_order: CommunicationChannel[];
   message_template_id?: string | null; reminder_rules: ReminderRule[];
   include_payment_link: boolean; include_payment_qr: boolean;

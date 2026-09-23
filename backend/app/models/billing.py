@@ -48,7 +48,6 @@ class BillingLegalEntity(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     region: Mapped[str | None] = mapped_column(String(160))
     vat_number: Mapped[str | None] = mapped_column(String(40))
     organization_number: Mapped[str | None] = mapped_column(String(80))
-    mollie_profile_id: Mapped[str | None] = mapped_column(String(120))
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     __table_args__ = (

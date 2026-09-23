@@ -171,7 +171,6 @@ class CollectionRead(BaseModel):
     paid_count: int
     paid_amount: Decimal
     communication_channel: CollectionChannel = "auto"
-    communication_mode: str = "auto"
     channel_order: list[str] = Field(default_factory=list)
     message_template_id: UUID | None = None
     reminder_rules: list[ReminderRule] = Field(default_factory=list)

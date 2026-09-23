@@ -148,7 +148,6 @@ class CommunicationChannelSetting(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     sender: Mapped[str | None] = mapped_column(String(320))
     encrypted_config: Mapped[str | None] = mapped_column(Text)
     sync_cursor: Mapped[str | None] = mapped_column(String(200))
-    webhook_key: Mapped[str | None] = mapped_column(String(80), unique=True, index=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="not_tested")
     last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
@@ -196,7 +195,6 @@ class Collection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="draft", index=True)
     communication_channel: Mapped[str] = mapped_column(String(30), nullable=False, default="auto")
-    communication_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="auto")
     message_template_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("message_templates.id", ondelete="SET NULL")
     )
@@ -211,10 +209,6 @@ class Collection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint(
             "communication_channel IN ('auto','email','whatsapp','sms','telegram')",
             name="ck_collections_communication_channel",
-        ),
-        CheckConstraint(
-            "communication_mode = 'auto'",
-            name="ck_collections_communication_mode",
         ),
         Index("ix_collections_org_created", "organization_id", "created_at"),
         Index("ix_collections_message_template_id", "message_template_id"),
