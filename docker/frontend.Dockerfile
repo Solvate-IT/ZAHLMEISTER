@@ -19,11 +19,7 @@ RUN sed -i \
       -e '/^user[[:space:]].*;$/d' \
       -e 's|^pid[[:space:]].*;|pid /tmp/nginx.pid;|' \
       /etc/nginx/nginx.conf \
-    && grep -q '^pid /tmp/nginx.pid;
-COPY --from=build --chown=nginx:nginx /app/out /usr/share/nginx/html
-USER nginx
-EXPOSE 8080
- /etc/nginx/nginx.conf \
+    && grep -q '^pid /tmp/nginx.pid;$' /etc/nginx/nginx.conf \
     && ! grep -q '^user[[:space:]]' /etc/nginx/nginx.conf
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build --chown=nginx:nginx /app/out /usr/share/nginx/html
