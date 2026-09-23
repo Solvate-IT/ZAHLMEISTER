@@ -478,7 +478,7 @@ async def _load_profile(session: AsyncSession, organization_id: UUID) -> Billing
 
 async def _prepare_profile_tax(profile: BillingProfile) -> TaxDecision:
     decision = await tax_decision(profile)
-    if decision.vat_scheme == "one-stop-shop" and os.getenv("BILLING_SELLER_EU_OSS_ENABLED", "false").lower() not in {"1", "true", "yes"}:
+    if decision.vat_scheme == "one-stop-shop" and not settings.billing_seller_eu_oss_enabled:
         raise MollieBillingProfileRequired("EU OSS billing is required for this customer but is not enabled")
     profile.vat_validation_status = decision.vat_validation_status
     profile.vat_validated_at = decision.vat_validated_at

@@ -10,7 +10,8 @@ def backend(path: str) -> str:
 def test_paid_mollie_invoice_keeps_immutable_seller_snapshot_and_email_delivery() -> None:
     core = backend("app/services/mollie_billing_core.py")
 
-    assert '"seller": _seller_snapshot(seller)' in core
+    assert "seller = _seller_snapshot()" in core
+    assert '"seller": seller' in core
     assert '"emailDetails": {"subject": copy.email_subject, "body": copy.email_body}' in core
     assert 'idempotency_key=f"zahlmeister-invoice-{item.idempotency_key}"' in core
 
