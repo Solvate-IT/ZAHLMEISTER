@@ -41,6 +41,10 @@ COPY backend/locales ./locales
 # Keep the complete frontend source tree available in the test stage so new
 # cross-layer contract tests do not require Dockerfile changes per file.
 COPY frontend/src /frontend/src
+# Cross-layer contract tests also inspect the production orchestration scripts.
+# Copy only the files they assert against; production runtime stages stay unchanged.
+COPY docker/predeploy.sh /docker/predeploy.sh
+COPY docker/scripts/deploy-production.sh /docker/scripts/deploy-production.sh
 USER app
 CMD ["python", "-m", "pytest", "-q"]
 
