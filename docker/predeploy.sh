@@ -23,7 +23,7 @@ TEST_DB_NAME="zahlmeister_predeploy"
 TEST_DB_USER="predeploy"
 TEST_DB_PASSWORD="predeploy-only-password"
 TEST_DATABASE_URL="postgresql+asyncpg://${TEST_DB_USER}:${TEST_DB_PASSWORD}@db:5432/${TEST_DB_NAME}"
-ENV_PARSER_TEST_FILE="/tmp/zahlmeister-env-parser-test-$"
+ENV_PARSER_TEST_FILE="/tmp/zahlmeister-env-parser-test-${RUN_ID}"
 
 cleanup() {
   docker rm -f "$FRONTEND_CONTAINER" "$BACKEND_CONTAINER" "$WORKER_CONTAINER" "$DB_CONTAINER" >/dev/null 2>&1 || true
@@ -115,7 +115,9 @@ check_env_parity
 docker compose "${COMPOSE_ENV_ARGS[@]}" -f "$PROD_FILE" config -q
 docker compose "${COMPOSE_ENV_ARGS[@]}" -f "$SCRIPT_DIR/compose.yml" config -q
 bash -n "$SCRIPT_DIR/manage.sh" "$SCRIPT_DIR/predeploy.sh" "$SCRIPT_DIR"/scripts/*.sh "$PROJECT_DIR/mobile/tool/bootstrap_mobile.sh"
-grep -q '^    absolute_redirect off;cat > "$ENV_PARSER_TEST_FILE" <<'EOF'
+grep -q '^    absolute_redirect off;$' "$SCRIPT_DIR/nginx.conf"
+grep -q '^    port_in_redirect off;$' "$SCRIPT_DIR/nginx.conf"
+cat > "$ENV_PARSER_TEST_FILE" <<'EOF'
 TEST_SINGLE='alpha$beta'   
 TEST_DOUBLE="gamma$delta"   
 TEST_PLAIN=plain   
