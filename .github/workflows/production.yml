@@ -1,4 +1,5 @@
-# Images pushed by this workflow are the exact production images that passed the gate.
+# Runtime-impacting changes use the full production gate.
+# A small allowlist of operations/configuration-only changes uses the fast path.
 name: Zahlmeister Production
 
 on:
@@ -18,7 +19,90 @@ env:
   TRIVY_IMAGE: aquasec/trivy:0.74.0
 
 jobs:
+  change-scope:
+    runs-on: ubuntu-latest
+    outputs:
+      fast_path: ${{ steps.scope.outputs.fast_path }}
+      reload_runtime: ${{ steps.scope.outputs.reload_runtime }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Classify production change
+        id: scope
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          fast_path=true
+          reload_runtime=false
+
+          if [[ -z "$BEFORE_SHA" || "$BEFORE_SHA" =~ ^0+$ ]]; then
+            fast_path=false
+          else
+            while IFS= read -r -d '' file; do
+              echo "Changed: $file"
+              case "$file" in
+                docker/.env.development|docker/.env.production|docker/manage.sh|docker/scripts/reload-production-env.sh|.github/workflows/production.yml)
+                  ;;
+                *)
+                  fast_path=false
+                  ;;
+              esac
+
+              if [[ "$file" == "docker/.env.production" ]]; then
+                reload_runtime=true
+              fi
+            done < <(git diff --name-only -z "$BEFORE_SHA" "$GITHUB_SHA")
+          fi
+
+          echo "fast_path=$fast_path" >> "$GITHUB_OUTPUT"
+          echo "reload_runtime=$reload_runtime" >> "$GITHUB_OUTPUT"
+          echo "Fast path: $fast_path"
+          echo "Reload runtime: $reload_runtime"
+
+  fast-verify:
+    needs: change-scope
+    if: needs.change-scope.outputs.fast_path == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Prepare CI environment selector
+        shell: bash
+        run: |
+          printf 'ENVIRONMENT=development\n' > docker/.env
+          chmod 600 docker/.env
+
+      - name: Validate operations-only change
+        shell: bash
+        run: |
+          set -euo pipefail
+          source docker/scripts/env.sh
+          check_env_parity
+          bash -n docker/manage.sh docker/scripts/reload-production-env.sh
+          docker compose "${COMPOSE_ENV_ARGS[@]}" -f docker/compose.yml config -q
+          docker compose --env-file docker/.env.production -f docker/compose.prod.yml config -q
+
+      - name: Scan repository for committed secrets
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace:ro" \
+            "${TRIVY_IMAGE}" fs \
+            --scanners secret \
+            --skip-files /workspace/docker/.env \
+            --skip-dirs /workspace/docker/secrets \
+            --skip-dirs /workspace/docker/backups \
+            --exit-code 1 \
+            /workspace
+
   verify-build-push:
+    needs: change-scope
+    if: needs.change-scope.outputs.fast_path != 'true'
     runs-on: ubuntu-latest
     outputs:
       registry_path: ${{ steps.names.outputs.registry_path }}
@@ -59,8 +143,40 @@ jobs:
           docker push "${REGISTRY_PATH}/zahlmeister-backend:${GITHUB_SHA}"
           docker push "${REGISTRY_PATH}/zahlmeister-frontend:${GITHUB_SHA}"
 
+  fast-deploy:
+    needs: [change-scope, fast-verify]
+    if: needs.change-scope.outputs.fast_path == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Configure SSH
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Sync operations/configuration files
+        shell: bash
+        env:
+          PROD_HOST: ${{ secrets.PRODUCTION_HOST }}
+          PROD_USER: ${{ secrets.PRODUCTION_USER }}
+          RELOAD_RUNTIME: ${{ needs.change-scope.outputs.reload_runtime }}
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          ssh "${PROD_USER}@${PROD_HOST}" \
+            "cd '/opt/${REPO_NAME}' && \
+             git fetch origin main && git checkout main && git reset --hard origin/main && \
+             if [ '${RELOAD_RUNTIME}' = 'true' ]; then ./docker/scripts/reload-production-env.sh; fi"
+
   deploy:
-    needs: verify-build-push
+    needs: [change-scope, verify-build-push]
+    if: needs.change-scope.outputs.fast_path != 'true'
     runs-on: ubuntu-latest
     environment: production
     steps:

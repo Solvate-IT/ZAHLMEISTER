@@ -65,6 +65,7 @@ required_files=(
   "docker/manage.sh"
   "docker/predeploy.sh"
   "docker/scripts/env.sh"
+  "docker/scripts/reload-production-env.sh"
   "docker/scripts/deploy-production.sh"
   "docker/scripts/security-scan.sh"
   "docker/scripts/test.sh"

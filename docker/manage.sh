@@ -12,60 +12,6 @@ compose() {
 
 pause() { read -r -p "Press Enter to continue..." _; }
 
-load_deployed_images() {
-  local tag_file="$SCRIPT_DIR/.deployed-image-tag"
-  local registry_file="$SCRIPT_DIR/.deployed-image-registry"
-  local tag registry
-
-  [[ -s "$tag_file" && -s "$registry_file" ]] || {
-    echo "ERROR: Deployed image metadata is missing. Use the GitHub production deployment first." >&2
-    return 1
-  }
-
-  tag="$(tr -d '\r\n' < "$tag_file")"
-  registry="$(tr -d '\r\n' < "$registry_file")"
-  registry="${registry%/}"
-
-  [[ "$tag" =~ ^[A-Za-z0-9._-]+$ && -n "$registry" ]] || {
-    echo "ERROR: Invalid deployed image metadata." >&2
-    return 1
-  }
-
-  export BACKEND_IMAGE="$registry/zahlmeister-backend:$tag"
-  export FRONTEND_IMAGE="$registry/zahlmeister-frontend:$tag"
-}
-
-wait_service() {
-  local service="$1"
-  local timeout="${2:-120}"
-  local started now cid service_status
-
-  started="$(date +%s)"
-  while true; do
-    cid="$(compose ps -q "$service" 2>/dev/null || true)"
-    if [[ -n "$cid" ]]; then
-      service_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid" 2>/dev/null || true)"
-      case "$service_status" in
-        healthy|running)
-          echo "[OK] $service: $service_status"
-          return 0
-          ;;
-        unhealthy|exited|dead)
-          echo "ERROR: $service became $service_status." >&2
-          return 1
-          ;;
-      esac
-    fi
-
-    now="$(date +%s)"
-    if (( now - started >= timeout )); then
-      echo "ERROR: Timeout waiting for $service." >&2
-      return 1
-    fi
-    sleep 2
-  done
-}
-
 start_stack() {
   if [[ "$ENVIRONMENT" == "production" ]]; then
     compose start
@@ -104,22 +50,7 @@ reload_environment() {
     return 1
   }
 
-  echo "Reloading production environment configuration..."
-  source "$SCRIPT_DIR/scripts/env.sh"
-
-  [[ "$ENVIRONMENT" == "production" ]] || {
-    echo "ERROR: docker/.env no longer selects ENVIRONMENT=production." >&2
-    return 1
-  }
-
-  load_deployed_images
-  compose config -q
-
-  echo "Recreating backend and worker with the currently deployed images..."
-  compose up -d --no-build --no-deps --force-recreate worker backend
-  wait_service worker 60
-  wait_service backend 180
-  echo "[OK] .env reloaded. Backend and worker are using the new environment values."
+  "$SCRIPT_DIR/scripts/reload-production-env.sh"
 }
 
 health_check() {
