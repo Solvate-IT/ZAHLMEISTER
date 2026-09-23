@@ -184,7 +184,9 @@ docker run --rm \
     ! command -v ruff >/dev/null
   '
 
-docker run --rm --add-host backend:127.0.0.1 --entrypoint sh "$FRONTEND_RUNTIME_IMAGE" -c '
+docker run --rm --read-only --tmpfs /tmp:size=64m,mode=1777 --security-opt no-new-privileges:true --cap-drop ALL \
+  --add-host backend:127.0.0.1 --entrypoint sh "$FRONTEND_RUNTIME_IMAGE" -c '
+    test "$(id -u)" != "0" &&
     nginx -t &&
     test -f /usr/share/nginx/html/index.html &&
     test -f /usr/share/nginx/html/app/index.html &&
@@ -275,7 +277,10 @@ docker exec "$BACKEND_CONTAINER" python -c "import urllib.error,urllib.request; 
 try: urllib.request.urlopen(u,timeout=2); raise SystemExit('production docs must be disabled')
 except urllib.error.HTTPError as exc: assert exc.code == 404"
 
-docker run -d --name "$FRONTEND_CONTAINER" --network "$NETWORK" "$FRONTEND_RUNTIME_IMAGE" >/dev/null
+docker run -d --name "$FRONTEND_CONTAINER" --network "$NETWORK" \
+  --read-only --tmpfs /tmp:size=64m,mode=1777 \
+  --security-opt no-new-privileges:true --cap-drop ALL \
+  "$FRONTEND_RUNTIME_IMAGE" >/dev/null
 FRONTEND_READY=0
 for _ in $(seq 1 20); do
   if ! docker inspect -f '{{.State.Running}}' "$FRONTEND_CONTAINER" 2>/dev/null | grep -qx true; then
@@ -283,8 +288,8 @@ for _ in $(seq 1 20); do
     echo "Production frontend exited during smoke test." >&2
     exit 1
   fi
-  if docker exec "$FRONTEND_CONTAINER" wget -qO- http://127.0.0.1/ >/dev/null 2>&1 && \
-     docker exec "$FRONTEND_CONTAINER" wget -qO- http://127.0.0.1/api/v1/ready | grep -q 'ready'; then
+  if docker exec "$FRONTEND_CONTAINER" wget -qO- http://127.0.0.1:8080/ >/dev/null 2>&1 && \
+     docker exec "$FRONTEND_CONTAINER" wget -qO- http://127.0.0.1:8080/api/v1/ready | grep -q 'ready'; then
     FRONTEND_READY=1
     break
   fi

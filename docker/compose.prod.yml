@@ -186,6 +186,13 @@ services:
     image: ${FRONTEND_IMAGE:-zahlmeister-frontend:latest}
     pull_policy: missing
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       backend:
         condition: service_healthy
@@ -199,7 +206,7 @@ services:
       - traefik.http.routers.zahlmeister.entrypoints=websecure
       - traefik.http.routers.zahlmeister.tls=true
       - traefik.http.routers.zahlmeister.tls.certresolver=letsencrypt
-      - traefik.http.services.zahlmeister.loadbalancer.server.port=80
+      - traefik.http.services.zahlmeister.loadbalancer.server.port=8080
     logging: *default-logging
 
 volumes:
