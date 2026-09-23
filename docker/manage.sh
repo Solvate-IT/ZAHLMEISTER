@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DOCKER_DIR="$SCRIPT_DIR"
 source "$SCRIPT_DIR/scripts/env.sh"
 
@@ -34,8 +35,29 @@ backend_shell() { compose exec backend bash; }
 frontend_shell() { compose exec frontend sh; }
 apply_schema() { compose run --rm bootstrap; }
 run_tests() {
-  compose run --rm backend python -m pytest -q
-  compose run --rm frontend sh -c 'npm ci --no-audit --no-fund && npm test && npm run typecheck'
+  if [[ "$ENVIRONMENT" == "production" ]]; then
+    echo "ERROR: Tests are run from isolated test images, not inside the production stack." >&2
+    return 1
+  fi
+
+  local backend_test_image="zahlmeister-backend-test:local"
+  local frontend_test_image="zahlmeister-frontend-test:local"
+
+  (
+    cd "$PROJECT_DIR"
+    echo "== Building backend test image =="
+    docker build --target test -f "$SCRIPT_DIR/backend.Dockerfile" -t "$backend_test_image" .
+    echo "== Running backend tests =="
+    docker run --rm \
+      -e ENVIRONMENT=test \
+      -e READINESS_REQUIRE_WORKER=false \
+      "$backend_test_image" \
+      sh -c 'ruff check app tests && python -m pytest -q'
+
+    echo "== Building frontend test image and running frontend tests =="
+    docker build --target test -f "$SCRIPT_DIR/frontend.Dockerfile" -t "$frontend_test_image" .
+  )
+
   "$SCRIPT_DIR/scripts/platform-admin-access.test.sh"
 }
 
