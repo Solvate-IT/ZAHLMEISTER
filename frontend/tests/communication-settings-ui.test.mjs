@@ -7,6 +7,7 @@ const communication = readFileSync(new URL("../src/components/workspace/Communic
 test("communication channel test feedback stays local to the test button", () => {
   assert.match(communication, /setTestResults\(current=>\(\{\.\.\.current,\[channel\]:result\.ok\?"ok":"error"\}\)\)/);
   assert.match(communication, /connection-test-result/);
+  assert.match(communication, /actions connection-test-actions/);
   assert.match(communication, /testResults\[channel\]==="ok"\?"✓":"×"/);
   assert.doesNotMatch(communication, /setNotice\(result\.ok\?t\("connectionOk"\)/);
 });
