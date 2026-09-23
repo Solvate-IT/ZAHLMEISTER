@@ -86,6 +86,14 @@ def test_admin_route_has_visible_loading_fallback_and_production_artifact_check(
     assert "/usr/share/nginx/html/admin/index.html" in predeploy
 
 
+def test_predeploy_stops_after_single_success_marker() -> None:
+    predeploy = (ROOT.parent / "docker/predeploy.sh").read_text()
+    marker = 'echo "Pre-deployment checks passed."'
+
+    assert predeploy.count(marker) == 1
+    assert predeploy.split(marker, maxsplit=1)[1].strip() == ""
+
+
 def test_platform_admin_bootstrap_is_serialized_and_deploy_stops_apps_before_database() -> None:
     service = backend("app/services/platform_admin.py")
     deploy = (ROOT.parent / "docker/scripts/deploy-production.sh").read_text()
