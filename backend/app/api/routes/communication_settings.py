@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 
-from app.api.deps import get_organization
+from app.api.deps import get_organization, get_verified_organization
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.entities import (
@@ -198,7 +198,7 @@ async def get_connections(
 )
 async def connect_infobip_api_key(
     payload: InfobipConnectRequest,
-    organization: Organization = Depends(get_organization),
+    organization: Organization = Depends(get_verified_organization),
 ) -> CommunicationConnectionRead:
     try:
         await validate_api_key(payload.base_url, payload.api_key)
@@ -235,7 +235,7 @@ async def connect_infobip_api_key(
 
 @router.get("/infobip/oauth/start", response_model=InfobipOAuthStartRead)
 async def start_infobip_oauth(
-    organization: Organization = Depends(get_organization),
+    organization: Organization = Depends(get_verified_organization),
 ) -> InfobipOAuthStartRead:
     try:
         url = oauth_authorization_url(str(organization.id))
@@ -293,7 +293,7 @@ async def finish_infobip_oauth(code: str, state: str):
 
 @router.get("/microsoft365/oauth/start", response_model=Microsoft365OAuthStartRead)
 async def start_microsoft365_oauth(
-    organization: Organization = Depends(get_organization),
+    organization: Organization = Depends(get_verified_organization),
 ) -> Microsoft365OAuthStartRead:
     async with SessionLocal.begin() as session:
         connection = await session.scalar(
