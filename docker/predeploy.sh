@@ -72,6 +72,7 @@ required_files=(
   "docker/scripts/security-scan.sh"
   "docker/scripts/test.sh"
   ".github/workflows/production.yml"
+  ".github/workflows/development.yml"
 )
 
 echo
