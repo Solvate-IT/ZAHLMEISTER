@@ -188,6 +188,11 @@ docker run --rm --read-only --tmpfs /tmp:size=64m,mode=1777 --security-opt no-ne
   --add-host backend:127.0.0.1 --entrypoint sh "$FRONTEND_RUNTIME_IMAGE" -c '
     test "$(id -u)" != "0" &&
     nginx -t &&
+    nginx -T 2>&1 | grep -q "client_body_temp_path /tmp/client_body;" &&
+    nginx -T 2>&1 | grep -q "proxy_temp_path /tmp/proxy;" &&
+    nginx -T 2>&1 | grep -q "fastcgi_temp_path /tmp/fastcgi;" &&
+    nginx -T 2>&1 | grep -q "uwsgi_temp_path /tmp/uwsgi;" &&
+    nginx -T 2>&1 | grep -q "scgi_temp_path /tmp/scgi;" &&
     test -f /usr/share/nginx/html/index.html &&
     test -f /usr/share/nginx/html/app/index.html &&
     test -f /usr/share/nginx/html/payment/index.html &&
