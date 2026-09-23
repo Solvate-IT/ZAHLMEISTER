@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -264,6 +264,29 @@ def resolve_channel(
             availability=availability,
         )
     return None
+
+
+def resolve_preview_channel(
+    participant: Participant,
+    *,
+    order: list[str],
+    runtimes: dict[str, ChannelRuntime],
+    external_channels: set[str],
+    overrides: dict[str, ParticipantChannelSetting] | None = None,
+) -> ResolvedChannel | None:
+    """Choose an enabled route for a local draft, without requiring a server-side provider."""
+    draft_runtimes = {
+        channel: replace(runtime, mode="external", configured=True)
+        for channel, runtime in runtimes.items()
+        if runtime.mode != "disabled"
+    }
+    return resolve_channel(
+        participant,
+        order=order,
+        runtimes=draft_runtimes,
+        overrides=overrides,
+        external_channels=external_channels,
+    )
 
 
 async def set_channel_knowledge(

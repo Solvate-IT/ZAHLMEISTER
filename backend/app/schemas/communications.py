@@ -198,6 +198,23 @@ class DispatchResult(BaseModel):
     unreachable: list[UUID] = Field(default_factory=list)
 
 
+class DispatchPreviewRequest(BaseModel):
+    external_channels: list[Channel] = Field(default_factory=list)
+
+
+class DispatchPreviewItem(BaseModel):
+    collection_participant_id: UUID
+    name: str
+    channel: Channel
+    recipient: str
+    launch_uri: str
+
+
+class DispatchPreviewResult(BaseModel):
+    routes: list[DispatchPreviewItem] = Field(default_factory=list)
+    unreachable: list[UUID] = Field(default_factory=list)
+
+
 class TestCollectionMessageRequest(BaseModel):
     channel: Literal["email", "sms", "whatsapp"] = "email"
 

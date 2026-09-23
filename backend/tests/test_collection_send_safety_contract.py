@@ -59,8 +59,8 @@ def test_frontend_requires_confirmation_and_supports_test_delivery() -> None:
 
     assert "SendConfirmationModal" in collections
     assert "confirmSend" in collections
-    assert "testCollectionMessage" in collections
-    assert "testCollectionMessage:" in api
+    assert "previewCollectionDispatch" in collections
+    assert "previewCollectionDispatch:" in api
     assert "phone?: string | null" in types
     assert 't("phone")' in settings
     assert "confirmRealSend" in ux

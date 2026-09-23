@@ -17,13 +17,19 @@ test("real collection dispatch requires an explicit confirmation step",()=>{
   assert.doesNotMatch(collections,/if\(detail&&sendNow\)await dispatch\(detail,"initial"\)/);
 });
 
-test("test delivery targets the signed-in account and supports phone channels when configured",()=>{
-  assert.match(workspace,/<CollectionsPage user=\{user\}/);
-  assert.match(settings,/t\("phone"\)/);
+test("test preview opens one participant draft at a time without recording delivery",()=>{
+  assert.match(collections,/api\.previewCollectionDispatch/);
   assert.match(collections,/function TestMessageModal/);
-  assert.match(collections,/api\.testCollectionMessage/);
-  assert.match(collections,/row\.mode==="internal"&&row\.configured/);
-  assert.match(api,/testCollectionMessage:/);
+  assert.match(collections,/openExternalUri\(current\.launch_uri\)/);
+  const preview=collections.slice(collections.indexOf("function TestMessageModal"),collections.indexOf("function ExternalSendAssistant"));
+  assert.doesNotMatch(preview,/api\.testCollectionMessage|api\.markExternalOpened|api\.confirmExternalResult/);
+  assert.match(api,/previewCollectionDispatch:/);
+});
+
+test("channel summaries exclude disabled channels in both collection views",()=>{
+  assert.match(collections,/function activeChannelSummary/);
+  assert.match(collections,/activeChannelSummary\(item,t,/g);
+  assert.match(api,/communicationSettings:/);
 });
 
 test("send safety copy is translated through the central i18n layer",()=>{

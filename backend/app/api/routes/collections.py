@@ -23,7 +23,14 @@ from app.models.entities import (
     Payment,
     ScheduledJob,
 )
-from app.schemas.communications import DispatchExternalItem, DispatchRequest, DispatchResult
+from app.schemas.communications import (
+    DispatchExternalItem,
+    DispatchPreviewItem,
+    DispatchPreviewRequest,
+    DispatchPreviewResult,
+    DispatchRequest,
+    DispatchResult,
+)
 from app.schemas.workflow import (
     CollectionCreate,
     CollectionDetail,
@@ -34,9 +41,17 @@ from app.schemas.workflow import (
     PaymentStatusUpdate,
     QueueActionResult,
 )
-from app.services.channel_strategy import get_channel_order
+from app.services.channel_strategy import (
+    get_channel_order,
+    load_channel_runtimes,
+    load_participant_channel_settings,
+    resolve_preview_channel,
+)
+from app.services.communications import external_launch_uri
 from app.services.collection_message_overrides import serialize_collection_message_overrides
 from app.services.message_dispatch import all_routes_internal, queue_collection_messages
+from app.services.message_renderer import render_collection_message
+from app.services.participant_preferences import load_participant_locales
 from app.services.naming import unique_collection_name
 from app.services.payments import epc_qr_payload, public_payment_qr_url, public_payment_url
 from app.services.reminders import (
@@ -584,6 +599,69 @@ async def update_payment_status(
             payment_method="manual" if payload.paid else None,
             delivery_status=None,
         )
+
+
+@router.post("/{collection_id}/dispatch-preview", response_model=DispatchPreviewResult)
+async def preview_collection_dispatch(
+    collection_id: UUID,
+    payload: DispatchPreviewRequest,
+    organization: Organization = Depends(get_verified_organization),
+    session: AsyncSession = Depends(get_session),
+) -> DispatchPreviewResult:
+    collection = await _owned_collection(session, organization, collection_id)
+    _require_bank_account(organization)
+    include_link, include_qr = _effective_message_options(collection, organization)
+    _validate_message_options(include_link, include_qr)
+    rows = (
+        await session.execute(
+            select(CollectionParticipant, Participant)
+            .join(Participant, Participant.id == CollectionParticipant.participant_id)
+            .where(
+                CollectionParticipant.collection_id == collection_id,
+                CollectionParticipant.status == "open",
+            )
+            .order_by(CollectionParticipant.created_at, CollectionParticipant.id)
+        )
+    ).all()
+    participant_ids = [participant.id for _cp, participant in rows]
+    overrides = await load_participant_channel_settings(session, participant_ids)
+    locales = await load_participant_locales(session, participant_ids)
+    runtimes = await load_channel_runtimes(session, organization.id)
+    order = (
+        [collection.communication_channel]
+        if collection.communication_channel in runtimes
+        else await get_channel_order(session, organization.id)
+    )
+    routes: list[DispatchPreviewItem] = []
+    unreachable: list[UUID] = []
+    for cp, participant in rows:
+        route = resolve_preview_channel(
+            participant,
+            order=order,
+            runtimes=runtimes,
+            overrides=overrides.get(participant.id),
+            external_channels=set(payload.external_channels),
+        )
+        if route is None:
+            unreachable.append(cp.id)
+            continue
+        content = await render_collection_message(
+            session,
+            collection=collection,
+            collection_participant=cp,
+            participant=participant,
+            organization=organization,
+            participant_locale=locales.get(participant.id),
+        )
+        launch_uri, _ = external_launch_uri(route.channel, route.recipient, content.subject, content.text)
+        routes.append(DispatchPreviewItem(
+            collection_participant_id=cp.id,
+            name=participant.name,
+            channel=route.channel,
+            recipient=route.recipient,
+            launch_uri=launch_uri,
+        ))
+    return DispatchPreviewResult(routes=routes, unreachable=unreachable)
 
 
 @router.post("/{collection_id}/dispatch", response_model=DispatchResult)

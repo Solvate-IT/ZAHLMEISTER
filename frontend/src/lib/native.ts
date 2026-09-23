@@ -18,10 +18,19 @@ export function externalChannelCapabilities(): CommunicationChannel[] {
 
 export async function openExternalUri(url: string): Promise<boolean> {
   if (Capacitor.isNativePlatform()) {
-    await AppLauncher.openUrl({ url });
-    return true;
+    const result = await AppLauncher.openUrl({ url });
+    if (!result.completed) throw new Error("No app could open the message draft");
+    return result.completed;
   }
 
+  if (/^(mailto:|sms:)/i.test(url)) {
+    window.location.href = url;
+    return true;
+  }
+  if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+    window.location.href = url;
+    return true;
+  }
   const opened = window.open(url, "_blank", "noopener,noreferrer");
   if (opened) return true;
 

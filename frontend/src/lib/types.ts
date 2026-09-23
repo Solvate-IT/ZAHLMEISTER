@@ -54,6 +54,8 @@ export interface CommunicationItem { id: string; kind: string; channel: string; 
 export interface ExternalDraft { message_id: string; channel: CommunicationChannel; launch_uri: string; recipient?: string|null; subject?: string|null; body?: string|null; recipient_selection_required?: boolean; payment_qr_url?: string|null; payment_qr_filename?: string|null; }
 export interface DispatchExternalItem { collection_participant_id:string; participant_id:string; name:string; channel:CommunicationChannel; }
 export interface DispatchResult { queued_internal:number; external:DispatchExternalItem[]; unreachable:string[]; }
+export interface DispatchPreviewItem { collection_participant_id:string; name:string; channel:CommunicationChannel; recipient:string; launch_uri:string; }
+export interface DispatchPreviewResult { routes:DispatchPreviewItem[]; unreachable:string[]; }
 export interface ApiSettings { enabled: boolean; available_scopes: string[]; }
 export interface ApiCredential { id: string; name: string; token_prefix: string; scopes: string[]; created_at: string; last_used_at?: string|null; expires_at?: string|null; revoked_at?: string|null; }
 export interface ApiCredentialCreated extends ApiCredential { token: string; }

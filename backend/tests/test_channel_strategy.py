@@ -12,6 +12,7 @@ from app.services.channel_strategy import (
     default_availability,
     effective_availability,
     resolve_channel,
+    resolve_preview_channel,
 )
 
 
@@ -61,6 +62,20 @@ def test_unknown_whatsapp_is_selected_before_email() -> None:
     assert route is not None
     assert route.channel == "whatsapp"
     assert route.availability == "unknown"
+
+
+def test_preview_uses_active_order_even_without_an_internal_provider() -> None:
+    participant = _participant(telegram="annam")
+    runtimes = {
+        "email": _runtime("email", "internal", False),
+        "whatsapp": _runtime("whatsapp"),
+        "sms": _runtime("sms"),
+        "telegram": _runtime("telegram", "disabled", False),
+    }
+    route = resolve_preview_channel(participant, order=["telegram", "whatsapp", "email", "sms"], runtimes=runtimes, external_channels={"email", "whatsapp"})
+    assert route is not None and route.channel == "whatsapp"
+    route = resolve_preview_channel(participant, order=["telegram", "email", "whatsapp", "sms"], runtimes=runtimes, external_channels={"email", "whatsapp"})
+    assert route is not None and route.channel == "email"
 
 
 def test_learned_unavailable_whatsapp_falls_back_to_email() -> None:
