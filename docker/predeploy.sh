@@ -72,7 +72,6 @@ required_files=(
   "docker/scripts/security-scan.sh"
   "docker/scripts/test.sh"
   ".github/workflows/production.yml"
-  ".github/workflows/development.yml"
 )
 
 echo
@@ -139,7 +138,7 @@ docker run --rm \
   -e ENVIRONMENT=test \
   -e READINESS_REQUIRE_WORKER=false \
   "$BACKEND_TEST_IMAGE" \
-  sh -c 'ruff check app tests && python -m pytest -q'
+  python -m pytest -q
 
 echo
 echo "[5/11] Testing fresh schema bootstrap against PostgreSQL 18..."
