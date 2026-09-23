@@ -1,10 +1,8 @@
 from app.models.billing import (  # noqa: F401
     BillingCycle,
     BillingInvoice,
-    BillingLegalEntity,
     BillingPaymentTransaction,
     BillingProfile,
-    BillingTaxRegistration,
 )
 from app.models.channel_strategy import (  # noqa: F401
     CommunicationPreference,

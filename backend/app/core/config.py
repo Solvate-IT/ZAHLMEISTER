@@ -125,6 +125,7 @@ class Settings(BaseSettings):
     mollie_billing_webhook_secret: str = ""
     mollie_billing_webhook_secret_file: str = ""
     mollie_billing_environment: Literal["test", "live"] = "test"
+    billing_seller_eu_oss_enabled: bool = False
 
     google_translate_api_key: str = ""
     google_translate_api_key_file: str = ""

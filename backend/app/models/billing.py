@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -34,54 +34,6 @@ class BillingProfile(TimestampMixin, Base):
 
     __table_args__ = (Index("ix_billing_profiles_country", "country"),)
 
-
-class BillingLegalEntity(UUIDPrimaryKeyMixin, TimestampMixin, Base):
-    __tablename__ = "billing_legal_entities"
-
-    code: Mapped[str] = mapped_column(String(40), nullable=False, unique=True)
-    legal_name: Mapped[str] = mapped_column(String(240), nullable=False)
-    country: Mapped[str] = mapped_column(String(2), nullable=False)
-    billing_email: Mapped[str] = mapped_column(String(320), nullable=False)
-    street_and_number: Mapped[str] = mapped_column(String(240), nullable=False)
-    postal_code: Mapped[str] = mapped_column(String(40), nullable=False)
-    city: Mapped[str] = mapped_column(String(160), nullable=False)
-    region: Mapped[str | None] = mapped_column(String(160))
-    vat_number: Mapped[str | None] = mapped_column(String(40))
-    organization_number: Mapped[str | None] = mapped_column(String(80))
-    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-
-    __table_args__ = (
-        CheckConstraint("char_length(country) = 2", name="ck_billing_legal_entity_country"),
-        Index("ix_billing_legal_entity_active", "active"),
-    )
-
-
-class BillingTaxRegistration(UUIDPrimaryKeyMixin, TimestampMixin, Base):
-    __tablename__ = "billing_tax_registrations"
-
-    legal_entity_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("billing_legal_entities.id", ondelete="RESTRICT"), nullable=False
-    )
-    registration_type: Mapped[str] = mapped_column(String(30), nullable=False)
-    country: Mapped[str] = mapped_column(String(2), nullable=False)
-    registration_reference: Mapped[str | None] = mapped_column(String(120))
-    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-
-    __table_args__ = (
-        CheckConstraint(
-            "registration_type IN ('vat','eu_oss','gst','sales_tax')",
-            name="ck_billing_tax_registration_type",
-        ),
-        CheckConstraint("char_length(country) = 2", name="ck_billing_tax_registration_country"),
-        UniqueConstraint(
-            "legal_entity_id",
-            "registration_type",
-            "country",
-            "registration_reference",
-            name="uq_billing_tax_registration_identity",
-        ),
-        Index("ix_billing_tax_registration_active", "legal_entity_id", "active"),
-    )
 
 
 class BillingCycle(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -206,7 +158,6 @@ class BillingInvoice(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     invoice_number: Mapped[str | None] = mapped_column(String(120))
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="creating", index=True)
     payment_reference: Mapped[str | None] = mapped_column(String(200), index=True)
-    payment_url: Mapped[str | None] = mapped_column(Text)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     details_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")

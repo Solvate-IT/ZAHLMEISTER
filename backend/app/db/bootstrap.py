@@ -24,7 +24,13 @@ def _apply_compatible_schema_updates(connection: Connection) -> None:
         "ALTER TABLE communication_channel_settings DROP COLUMN IF EXISTS webhook_key"
     )
     connection.exec_driver_sql(
-        "ALTER TABLE billing_legal_entities DROP COLUMN IF EXISTS mollie_profile_id"
+        "ALTER TABLE billing_invoices DROP COLUMN IF EXISTS payment_url"
+    )
+    connection.exec_driver_sql(
+        "DROP TABLE IF EXISTS billing_tax_registrations"
+    )
+    connection.exec_driver_sql(
+        "DROP TABLE IF EXISTS billing_legal_entities"
     )
 
 

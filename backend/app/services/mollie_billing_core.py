@@ -20,10 +20,8 @@ from app.db.session import SessionLocal
 from app.models.billing import (
     BillingCycle,
     BillingInvoice,
-    BillingLegalEntity,
     BillingPaymentTransaction,
     BillingProfile,
-    BillingTaxRegistration,
 )
 from app.models.entities import Organization
 from app.models.platform import StoreSubscription
@@ -540,94 +538,25 @@ def _seller_values() -> dict[str, str | None]:
     }
 
 
-def _seller_snapshot(item: BillingLegalEntity | None) -> dict[str, str | None]:
-    if item is None:
-        values = _seller_values()
-        return {key: values.get(key) for key in (
-            "legal_name", "country", "billing_email", "street_and_number", "postal_code",
-            "city", "region", "vat_number", "organization_number",
-        )}
-    return {
-        "legal_name": item.legal_name,
-        "country": item.country,
-        "billing_email": item.billing_email,
-        "street_and_number": item.street_and_number,
-        "postal_code": item.postal_code,
-        "city": item.city,
-        "region": item.region,
-        "vat_number": item.vat_number,
-        "organization_number": item.organization_number,
-    }
-
-
-async def _ensure_legal_entity(session: AsyncSession) -> BillingLegalEntity | None:
+def _seller_snapshot() -> dict[str, str | None]:
     values = _seller_values()
     required = ("legal_name", "country", "billing_email", "street_and_number", "postal_code", "city")
-    if any(not values[key] for key in required):
-        if settings.mollie_billing_environment == "live":
-            raise MollieBillingUnavailable("Billing seller identity is incomplete")
-        return None
-    item = await session.scalar(
-        select(BillingLegalEntity).where(BillingLegalEntity.code == "platform").with_for_update()
-    )
-    if item is None:
-        item = BillingLegalEntity(
-            code="platform",
-            legal_name=str(values["legal_name"]),
-            country=str(values["country"]),
-            billing_email=str(values["billing_email"]),
-            street_and_number=str(values["street_and_number"]),
-            postal_code=str(values["postal_code"]),
-            city=str(values["city"]),
+    if any(not values[key] for key in required) and settings.mollie_billing_environment == "live":
+        raise MollieBillingUnavailable("Billing seller identity is incomplete")
+    return {
+        key: values.get(key)
+        for key in (
+            "legal_name",
+            "country",
+            "billing_email",
+            "street_and_number",
+            "postal_code",
+            "city",
+            "region",
+            "vat_number",
+            "organization_number",
         )
-        session.add(item)
-        await session.flush()
-    for key in (
-        "legal_name", "country", "billing_email", "street_and_number", "postal_code", "city",
-        "region", "vat_number", "organization_number",
-    ):
-        setattr(item, key, values[key])
-    item.active = True
-    await session.flush()
-
-    if item.vat_number:
-        registration = await session.scalar(
-            select(BillingTaxRegistration).where(
-                BillingTaxRegistration.legal_entity_id == item.id,
-                BillingTaxRegistration.registration_type == "vat",
-                BillingTaxRegistration.country == item.country,
-            ).with_for_update()
-        )
-        if registration is None:
-            session.add(BillingTaxRegistration(
-                legal_entity_id=item.id,
-                registration_type="vat",
-                country=item.country,
-                registration_reference=item.vat_number,
-                active=True,
-            ))
-        else:
-            registration.registration_reference = item.vat_number
-            registration.active = True
-    if os.getenv("BILLING_SELLER_EU_OSS_ENABLED", "false").lower() in {"1", "true", "yes"}:
-        oss = await session.scalar(
-            select(BillingTaxRegistration).where(
-                BillingTaxRegistration.legal_entity_id == item.id,
-                BillingTaxRegistration.registration_type == "eu_oss",
-                BillingTaxRegistration.country == item.country,
-            ).with_for_update()
-        )
-        if oss is None:
-            session.add(BillingTaxRegistration(
-                legal_entity_id=item.id,
-                registration_type="eu_oss",
-                country=item.country,
-                registration_reference=item.vat_number,
-                active=True,
-            ))
-        else:
-            oss.active = True
-    return item
+    }
 
 
 def _invoice_amounts(gross: Decimal, vat_rate: Decimal) -> tuple[Decimal, Decimal]:
@@ -651,7 +580,7 @@ async def _invoice_record(
     if existing is not None:
         return existing
     recipient = json.loads(cycle.recipient_json)
-    seller = await _ensure_legal_entity(session)
+    seller = _seller_snapshot()
     net, tax = _invoice_amounts(Decimal(cycle.gross_amount), Decimal(cycle.tax_rate))
     item = BillingInvoice(
         organization_id=cycle.organization_id,
@@ -672,9 +601,9 @@ async def _invoice_record(
         recipient_country=str(recipient["country"]),
         recipient_type=str(recipient["type"]),
         recipient_vat_number=recipient.get("vatNumber"),
-        seller_legal_name=seller.legal_name if seller else None,
-        seller_country=seller.country if seller else None,
-        seller_vat_number=seller.vat_number if seller else None,
+        seller_legal_name=seller.get("legal_name"),
+        seller_country=seller.get("country"),
+        seller_vat_number=seller.get("vat_number"),
         status="creating",
         payment_reference=source_payment_id,
         details_json=json.dumps(
@@ -682,7 +611,7 @@ async def _invoice_record(
                 "kind": f"{cycle.operation}_receipt",
                 "tax_rule_version": cycle.tax_rule_version,
                 "recipient": recipient,
-                "seller": _seller_snapshot(seller),
+                "seller": seller,
                 "source_payment_id": source_payment_id,
                 "billing_key": cycle.billing_key,
                 "delivery_attempts": 0,
@@ -873,7 +802,6 @@ async def _apply_invoice_payload(session: AsyncSession, item: BillingInvoice, pa
     item.external_id = remote_id
     item.invoice_number = str(payload.get("invoiceNumber")) if payload.get("invoiceNumber") else None
     item.status = _normalize_sales_invoice_status(payload.get("status"))
-    item.payment_url = None
     item.last_synced_at = datetime.now(UTC)
     details = _invoice_details(item)
     details["provider_created_at"] = payload.get("createdAt")

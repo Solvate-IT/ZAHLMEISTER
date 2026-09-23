@@ -8,6 +8,7 @@ from xml.etree import ElementTree
 
 import httpx
 
+from app.core.config import settings
 from app.core.tax_catalog import DIGITAL_SERVICE_TAX_POLICY
 from app.models.billing import BillingProfile
 
@@ -122,7 +123,7 @@ async def tax_decision(profile: BillingProfile) -> TaxDecision:
             vat_validated_at=now,
         )
 
-    if not policy.eu_oss_enabled:
+    if not settings.billing_seller_eu_oss_enabled:
         raise BillingTaxUnsupportedJurisdiction("EU consumer billing requires an enabled OSS policy")
     return TaxDecision(
         rate=policy.eu_standard_rates[country],

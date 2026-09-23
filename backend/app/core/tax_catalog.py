@@ -8,14 +8,12 @@ from decimal import Decimal
 class DigitalServiceTaxPolicy:
     version: str
     seller_country: str
-    eu_oss_enabled: bool
     eu_standard_rates: dict[str, Decimal]
 
 
 DIGITAL_SERVICE_TAX_POLICY = DigitalServiceTaxPolicy(
     version="2026-09-08",
     seller_country="AT",
-    eu_oss_enabled=True,
     eu_standard_rates={
         "AT": Decimal("20.0"),
         "BE": Decimal("21.0"),

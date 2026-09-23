@@ -35,11 +35,21 @@ async def test_austrian_customer_uses_domestic_standard_vat() -> None:
 
 
 @pytest.mark.asyncio
-async def test_eu_consumer_uses_destination_vat_and_oss() -> None:
+async def test_eu_consumer_uses_destination_vat_and_oss(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(billing_tax.settings, "billing_seller_eu_oss_enabled", True)
     decision = await tax_decision(_profile(country="DE"))
     assert decision.rate == Decimal("19.0")
     assert decision.vat_scheme == "one-stop-shop"
     assert decision.treatment == "eu_oss_consumer"
+
+
+@pytest.mark.asyncio
+async def test_eu_consumer_is_blocked_without_oss_registration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(billing_tax.settings, "billing_seller_eu_oss_enabled", False)
+    with pytest.raises(BillingTaxUnsupportedJurisdiction):
+        await tax_decision(_profile(country="DE"))
 
 
 @pytest.mark.asyncio
