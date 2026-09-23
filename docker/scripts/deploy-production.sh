@@ -75,6 +75,9 @@ echo "Registry : $REGISTRY"
 echo "Pulling immutable application images..."
 "${COMPOSE[@]}" pull backend frontend
 
+echo "Stopping application services before database preparation..."
+"${COMPOSE[@]}" stop frontend backend worker || true
+
 echo "Starting PostgreSQL..."
 "${COMPOSE[@]}" up -d db
 wait_service db
@@ -84,9 +87,6 @@ ZM_COMPOSE_FILE="$DOCKER_DIR/compose.prod.yml" \
 ZM_BACKUP_PREFIX="pre_deploy_${TAG:0:12}" \
   "$DOCKER_DIR/scripts/backup.sh" >/dev/null
 echo "[OK] Backup completed."
-
-echo "Stopping application services..."
-"${COMPOSE[@]}" stop frontend backend worker || true
 
 echo "Applying database bootstrap/migrations with the new backend image..."
 "${COMPOSE[@]}" run --rm --no-deps bootstrap
