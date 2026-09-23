@@ -205,6 +205,7 @@ docker run --rm --read-only --tmpfs /tmp:size=64m,mode=1777 --security-opt no-ne
     nginx -T 2>&1 | grep -q "fastcgi_temp_path /tmp/fastcgi;" &&
     nginx -T 2>&1 | grep -q "uwsgi_temp_path /tmp/uwsgi;" &&
     nginx -T 2>&1 | grep -q "scgi_temp_path /tmp/scgi;" &&
+    nginx -T 2>&1 | grep -q "location ~ \\.html\\$" &&
     test -f /usr/share/nginx/html/index.html &&
     test -f /usr/share/nginx/html/app/index.html &&
     test -f /usr/share/nginx/html/admin/index.html &&
@@ -306,7 +307,11 @@ for _ in $(seq 1 20); do
     echo "Production frontend exited during smoke test." >&2
     exit 1
   fi
-  if docker exec "$FRONTEND_CONTAINER" wget -qO- http://127.0.0.1:8080/ >/dev/null 2>&1 && \
+  if docker exec "$FRONTEND_CONTAINER" sh -c '
+       wget -qO /tmp/root.html http://127.0.0.1:8080/ &&
+       wget -qO /tmp/admin.html http://127.0.0.1:8080/admin/ &&
+       ! cmp -s /tmp/root.html /tmp/admin.html
+     ' >/dev/null 2>&1 && \
      docker exec "$FRONTEND_CONTAINER" wget -qO- http://127.0.0.1:8080/api/v1/ready | grep -q 'ready'; then
     FRONTEND_READY=1
     break
