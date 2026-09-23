@@ -525,7 +525,6 @@ def _reset_finished_subscription_data(data: dict[str, Any]) -> None:
 
 def _seller_values() -> dict[str, str | None]:
     return {
-        "code": "platform",
         "legal_name": os.getenv("BILLING_SELLER_LEGAL_NAME", "").strip() or None,
         "country": os.getenv("BILLING_SELLER_COUNTRY", "").strip().upper() or None,
         "billing_email": os.getenv("BILLING_SELLER_EMAIL", "").strip() or None,

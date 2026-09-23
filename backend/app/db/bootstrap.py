@@ -8,6 +8,55 @@ from app.db.session import engine
 from app.models.base import Base
 
 
+def _column_exists(connection: Connection, table_name: str, column_name: str) -> bool:
+    inspector = inspect(connection)
+    if table_name not in inspector.get_table_names():
+        return False
+    return column_name in {
+        column["name"] for column in inspector.get_columns(table_name)
+    }
+
+
+def _drop_empty_legacy_column(
+    connection: Connection,
+    table_name: str,
+    column_name: str,
+) -> None:
+    if not _column_exists(connection, table_name, column_name):
+        return
+    # Identifiers are internal constants from the call sites below, never user input.
+    row = connection.exec_driver_sql(
+        f'SELECT 1 FROM "{table_name}" '
+        f'WHERE "{column_name}" IS NOT NULL LIMIT 1'
+    ).first()
+    if row is not None:
+        raise RuntimeError(
+            f"Refusing to drop non-empty obsolete column: {table_name}.{column_name}"
+        )
+    connection.exec_driver_sql(
+        f'ALTER TABLE "{table_name}" DROP COLUMN "{column_name}"'
+    )
+
+
+def _drop_legacy_communication_mode(connection: Connection) -> None:
+    table_name = "collections"
+    column_name = "communication_mode"
+    if not _column_exists(connection, table_name, column_name):
+        return
+    unexpected = connection.exec_driver_sql(
+        'SELECT 1 FROM "collections" '
+        'WHERE "communication_mode" IS NOT NULL '
+        'AND "communication_mode" <> \'auto\' LIMIT 1'
+    ).first()
+    if unexpected is not None:
+        raise RuntimeError(
+            "Refusing to drop collections.communication_mode because non-auto values exist"
+        )
+    connection.exec_driver_sql(
+        'ALTER TABLE "collections" DROP COLUMN "communication_mode"'
+    )
+
+
 def _apply_compatible_schema_updates(connection: Connection) -> None:
     # Keep bootstrap safe for existing installations without introducing a separate
     # migration framework. Nullable columns can be added idempotently before the
@@ -15,29 +64,23 @@ def _apply_compatible_schema_updates(connection: Connection) -> None:
     connection.exec_driver_sql(
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50)"
     )
-    connection.exec_driver_sql(
-        "ALTER TABLE users DROP COLUMN IF EXISTS terms_accepted_at"
+
+    # Never discard unexpected production data silently. Legacy columns that were
+    # never part of a working feature are removed only when empty; the old collection
+    # mode is removed only when it contains its sole historical value ("auto").
+    _drop_empty_legacy_column(connection, "users", "terms_accepted_at")
+    _drop_empty_legacy_column(connection, "users", "privacy_accepted_at")
+    _drop_legacy_communication_mode(connection)
+    _drop_empty_legacy_column(
+        connection, "communication_channel_settings", "webhook_key"
     )
-    connection.exec_driver_sql(
-        "ALTER TABLE users DROP COLUMN IF EXISTS privacy_accepted_at"
-    )
-    # Remove schema-only legacy fields that no longer carry runtime semantics.
-    # These statements are idempotent and safe for both fresh and existing databases.
-    connection.exec_driver_sql(
-        "ALTER TABLE collections DROP COLUMN IF EXISTS communication_mode"
-    )
-    connection.exec_driver_sql(
-        "ALTER TABLE communication_channel_settings DROP COLUMN IF EXISTS webhook_key"
-    )
-    connection.exec_driver_sql(
-        "ALTER TABLE billing_invoices DROP COLUMN IF EXISTS payment_url"
-    )
-    connection.exec_driver_sql(
-        "DROP TABLE IF EXISTS billing_tax_registrations"
-    )
-    connection.exec_driver_sql(
-        "DROP TABLE IF EXISTS billing_legal_entities"
-    )
+    _drop_empty_legacy_column(connection, "billing_invoices", "payment_url")
+
+    # These two tables only mirrored the tracked seller configuration. Historical
+    # invoices already contain immutable seller snapshots, so no invoice history
+    # depends on these mirrors.
+    connection.exec_driver_sql("DROP TABLE IF EXISTS billing_tax_registrations")
+    connection.exec_driver_sql("DROP TABLE IF EXISTS billing_legal_entities")
 
 
 def _verify_schema(connection: Connection) -> None:
