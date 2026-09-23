@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_organization, get_session
+from app.api.deps import get_organization, get_session, get_verified_organization
 from app.api.routes.message_templates import ensure_default_template
 from app.core.config import settings
 from app.db.session import SessionLocal
@@ -592,7 +592,7 @@ async def update_payment_status(
 async def dispatch_collection(
     collection_id: UUID,
     payload: DispatchRequest,
-    organization: Organization = Depends(get_organization),
+    organization: Organization = Depends(get_verified_organization),
 ) -> DispatchResult:
     async with SessionLocal.begin() as session:
         stored_org = await session.get(Organization, organization.id)
@@ -638,7 +638,7 @@ async def dispatch_collection(
 @router.post("/{collection_id}/send", response_model=QueueActionResult)
 async def send_collection(
     collection_id: UUID,
-    organization: Organization = Depends(get_organization),
+    organization: Organization = Depends(get_verified_organization),
 ) -> QueueActionResult:
     async with SessionLocal.begin() as session:
         stored_org = await session.get(Organization, organization.id)
@@ -660,7 +660,7 @@ async def send_collection(
 @router.post("/{collection_id}/remind", response_model=QueueActionResult)
 async def remind_collection(
     collection_id: UUID,
-    organization: Organization = Depends(get_organization),
+    organization: Organization = Depends(get_verified_organization),
 ) -> QueueActionResult:
     async with SessionLocal.begin() as session:
         stored_org = await session.get(Organization, organization.id)
