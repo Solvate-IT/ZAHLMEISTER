@@ -137,6 +137,32 @@ async def get_current_user(
     return user
 
 
+def ensure_verified_email(user: User) -> User:
+    if user.email_verified_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email verification required",
+        )
+    return user
+
+
+async def require_verified_user(
+    user: User = Depends(get_current_user),
+) -> User:
+    return ensure_verified_email(user)
+
+
+async def get_verified_organization(
+    user: User = Depends(require_verified_user),
+    session: AsyncSession = Depends(get_session),
+) -> Organization:
+    organization = await session.get(Organization, user.organization_id)
+    if organization is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    await _release_dependency_transaction(session)
+    return organization
+
+
 async def require_platform_admin(
     request: Request,
     auth_session: AuthSession = Depends(get_current_admin_auth_session),
