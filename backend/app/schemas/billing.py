@@ -121,7 +121,7 @@ class BillingProfileWrite(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def validate_party(self) -> "BillingProfileWrite":
+    def validate_party(self) -> BillingProfileWrite:
         if self.customer_type == "consumer":
             if not self.given_name or not self.family_name:
                 raise ValueError("Consumer billing requires given name and family name")

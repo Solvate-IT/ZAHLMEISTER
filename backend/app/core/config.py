@@ -131,7 +131,7 @@ class Settings(BaseSettings):
     google_translate_api_url: str = "https://translation.googleapis.com/language/translate/v2"
 
     @model_validator(mode="after")
-    def load_file_secrets(self) -> "Settings":
+    def load_file_secrets(self) -> Settings:
         for value_field, file_field in _SECRET_FIELDS.items():
             path_value = getattr(self, file_field, "").strip()
             if not path_value:

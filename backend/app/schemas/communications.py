@@ -100,7 +100,7 @@ class ChannelSettingUpdate(BaseModel):
         return value or None
 
     @model_validator(mode="after")
-    def normalize_legacy_platform_mail(self) -> "ChannelSettingUpdate":
+    def normalize_legacy_platform_mail(self) -> ChannelSettingUpdate:
         # Older clients selected the central Zahlmeister mail server as smtp_imap
         # with an empty tenant configuration. Store the explicit provider now.
         if self.mode == "internal" and self.provider == "smtp_imap" and not self.fields:
