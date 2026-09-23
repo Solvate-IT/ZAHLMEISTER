@@ -33,7 +33,6 @@ show_logs() { compose logs -f --tail=200; }
 predeploy() { ZM_PRIVATE_ENV_FILE="$PRIVATE_ENV_FILE" "$SCRIPT_DIR/scripts/test.sh" all; }
 backend_shell() { compose exec backend bash; }
 frontend_shell() { compose exec frontend sh; }
-apply_schema() { compose run --rm bootstrap; }
 run_tests() {
   if [[ "$ENVIRONMENT" == "production" ]]; then
     echo "ERROR: Tests are run from isolated test images, not inside the production stack." >&2
@@ -77,8 +76,7 @@ while true; do
  6) Pre-Deployment Checks
  7) Backend Shell
  8) Frontend Shell
- 9) Database Initialize / Migrate / Verify
-10) Tests
+ 9) Tests
  q) Quit
 ------------------------------------------------------------
  Frontend: ${frontend_url}
@@ -95,8 +93,7 @@ EOF
     6) predeploy; pause ;;
     7) backend_shell ;;
     8) frontend_shell ;;
-    9) apply_schema; pause ;;
-    10) run_tests; pause ;;
+    9) run_tests; pause ;;
     q|Q) exit 0 ;;
     *) echo "Invalid selection"; pause ;;
   esac
