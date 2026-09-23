@@ -7,7 +7,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_organization, get_session
+from app.api.deps import get_organization, get_session, get_verified_organization
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.entities import BankSyncAccount, BankSyncConnection, Organization
@@ -103,7 +103,7 @@ async def get_ponto_configuration(
 
 @router.post("/ponto/start", response_model=BankSyncStartRead)
 async def start_ponto(
-    organization: Organization = Depends(get_organization),
+    organization: Organization = Depends(get_verified_organization),
 ) -> BankSyncStartRead:
     configuration = ponto.configuration_status()
     if not configuration["configured"]:
