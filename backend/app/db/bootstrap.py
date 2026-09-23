@@ -78,9 +78,30 @@ def _apply_compatible_schema_updates(connection: Connection) -> None:
 
     # These two tables only mirrored the tracked seller configuration. Historical
     # invoices already contain immutable seller snapshots, so no invoice history
-    # depends on these mirrors.
-    connection.exec_driver_sql("DROP TABLE IF EXISTS billing_tax_registrations")
-    connection.exec_driver_sql("DROP TABLE IF EXISTS billing_legal_entities")
+    # depends on these mirrors. Refuse deletion if an installation contains data
+    # outside the historical Zahlmeister shapes.
+    inspector = inspect(connection)
+    tables = set(inspector.get_table_names())
+    if "billing_tax_registrations" in tables:
+        unexpected_registration = connection.exec_driver_sql(
+            'SELECT 1 FROM "billing_tax_registrations" '
+            'WHERE "registration_type" NOT IN (\'vat\', \'eu_oss\') LIMIT 1'
+        ).first()
+        if unexpected_registration is not None:
+            raise RuntimeError(
+                "Refusing to drop billing_tax_registrations with unexpected registration types"
+            )
+        connection.exec_driver_sql("DROP TABLE billing_tax_registrations")
+    if "billing_legal_entities" in tables:
+        unexpected_entity = connection.exec_driver_sql(
+            'SELECT 1 FROM "billing_legal_entities" '
+            'WHERE "code" <> \'platform\' LIMIT 1'
+        ).first()
+        if unexpected_entity is not None:
+            raise RuntimeError(
+                "Refusing to drop billing_legal_entities with non-platform entities"
+            )
+        connection.exec_driver_sql("DROP TABLE billing_legal_entities")
 
 
 def _verify_schema(connection: Connection) -> None:
