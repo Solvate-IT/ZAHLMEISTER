@@ -1,11 +1,13 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.entities import AuthSession, Organization, User
 from app.services.auth import hash_password, normalize_email, verify_password
+
+PLATFORM_ADMIN_BOOTSTRAP_LOCK_ID = 908734201
 
 
 def _insecure_bootstrap_password(password: str) -> bool:
@@ -22,6 +24,10 @@ async def bootstrap_platform_admin() -> None:
         raise RuntimeError("PLATFORM_ADMIN_BOOTSTRAP_EMAIL must be listed in PLATFORM_ADMIN_EMAILS")
 
     async with SessionLocal.begin() as session:
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_id)"),
+            {"lock_id": PLATFORM_ADMIN_BOOTSTRAP_LOCK_ID},
+        )
         existing = await session.scalar(select(User).where(User.email == email).with_for_update())
         if _insecure_bootstrap_password(password):
             if existing is not None and verify_password(existing.password_hash, password):
