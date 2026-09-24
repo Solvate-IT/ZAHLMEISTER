@@ -1,4 +1,13 @@
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
+
+import pytest
+
+from app.api.routes import account
+from app.models.billing import BillingProfile
+from app.models.entities import Organization, User
+from app.schemas.account import ProfileUpdateRequest
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT.parent / "frontend"
@@ -12,19 +21,37 @@ def frontend(path: str) -> str:
     return (FRONTEND / path).read_text()
 
 
-def test_account_phone_is_persisted_and_exposed_for_test_delivery() -> None:
-    entities = backend("app/models/entities.py")
-    account_schema = backend("app/schemas/account.py")
-    auth_schema = backend("app/schemas/auth.py")
-    account_route = backend("app/api/routes/account.py")
-    bootstrap = backend("app/db/bootstrap.py")
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("phone", "country", "expected"),
+    [
+        ("0660 1234567", None, "+436601234567"),
+        ("030 901820", "DE", "+4930901820"),
+        ("", None, None),
+    ],
+)
+async def test_account_phone_is_persisted_and_exposed_for_test_delivery(
+    monkeypatch, phone, country, expected,
+) -> None:
+    organization = Organization(id=uuid4(), name="Test", locale="de-AT", currency="EUR")
+    user = User(
+        id=uuid4(), organization_id=organization.id, email="anna@example.com",
+        display_name="Anna", phone="+436641234567",
+    )
+    profile = BillingProfile(country=country) if country else None
+    session = AsyncMock()
+    session.get.side_effect = lambda model, _id: {
+        User: user, Organization: organization, BillingProfile: profile,
+    }[model]
+    factory = MagicMock()
+    factory.begin.return_value.__aenter__.return_value = session
+    monkeypatch.setattr(account, "SessionLocal", factory)
 
-    assert "phone: Mapped[str | None]" in entities
-    assert "phone: str | None" in account_schema
-    assert "phone: str | None" in auth_schema
-    assert "phone=user.phone" in account_route
-    assert "stored.phone = payload.phone" in account_route
-    assert "ADD COLUMN IF NOT EXISTS phone VARCHAR(50)" in bootstrap
+    result = await account.update_profile(ProfileUpdateRequest(phone=phone), user=user)
+
+    assert user.phone == expected
+    assert result.phone == expected
+    session.flush.assert_awaited_once()
 
 
 def test_backend_has_non_mutating_test_delivery_and_real_dispatch_endpoint() -> None:
