@@ -5,6 +5,7 @@ import {api,ApiError} from "@/lib/api";
 import type {ChannelSetting,CommunicationChannel,CommunicationConnection} from "@/lib/types";
 import {useI18n} from "@/lib/i18n";
 import {Modal} from "../Modal";
+import {showToast} from "../ToastHost";
 import {Loading} from "../State";
 import {ProviderOnboardingNotice} from "./ProviderOnboardingNotice";
 
@@ -41,18 +42,18 @@ export function CommunicationSettingsPanel(){
 
   async function saveMode(row:ChannelSetting,mode:"internal"|"external"|"disabled"){
     try{
-      if(mode==="disabled"||mode==="external"){await api.saveCommunicationSetting(row.channel,{mode,fields:{}});setNotice(t("saved"));await load();return}
+      if(mode==="disabled"||mode==="external"){await api.saveCommunicationSetting(row.channel,{mode,fields:{}});showToast({message:t("saved")});await load();return}
       if(row.channel==="telegram")return;
-      if(row.channel==="email"){await api.saveCommunicationSetting("email",{mode:"internal",provider:"zahlmeister_email",fields:{}});setNotice(t("saved"));await load();return}
+      if(row.channel==="email"){await api.saveCommunicationSetting("email",{mode:"internal",provider:"zahlmeister_email",fields:{}});showToast({message:t("saved")});await load();return}
       if(!infobip){setInfobipOpen(true);setNotice(t("internalRequiresInfobip"));return}
       if(!row.sender){setSettings(current=>current?.map(item=>item.channel===row.channel?{...item,mode:"internal"}:item)??current);setNotice(t("senderResourceRequired"));return}
-      await api.saveCommunicationSetting(row.channel,{mode:"internal",provider:"infobip",connection_id:infobip.id,sender:row.sender,fields:{}});setNotice(t("saved"));await load()
+      await api.saveCommunicationSetting(row.channel,{mode:"internal",provider:"infobip",connection_id:infobip.id,sender:row.sender,fields:{}});showToast({message:t("saved")});await load()
     }catch(error){setNotice(errorMessage(error,t("requestFailed")))}
   }
 
-  async function saveSender(row:ChannelSetting,sender:string){if(!infobip||!sender.trim())return;try{await api.saveCommunicationSetting(row.channel,{mode:"internal",provider:"infobip",connection_id:infobip.id,sender:sender.trim(),fields:{}});setNotice(t("saved"));await load()}catch(error){setNotice(errorMessage(error,t("requestFailed")))}}
+  async function saveSender(row:ChannelSetting,sender:string){if(!infobip||!sender.trim())return;try{await api.saveCommunicationSetting(row.channel,{mode:"internal",provider:"infobip",connection_id:infobip.id,sender:sender.trim(),fields:{}});showToast({message:t("saved")});await load()}catch(error){setNotice(errorMessage(error,t("requestFailed")))}}
 
-  async function saveEmailProvider(provider:string){try{if(provider==="platform"){await api.saveCommunicationSetting("email",{mode:"internal",provider:"zahlmeister_email",fields:{}})}else if(provider==="smtp_imap"){setMailServerOpen(true);return}else if(provider==="microsoft365"){if(!microsoft||microsoft.status!=="connected"){const result=await api.startMicrosoft365();window.location.assign(result.authorization_url);return}await api.saveCommunicationSetting("email",{mode:"internal",provider:"microsoft365",connection_id:microsoft.id,fields:{}})}setNotice(t("saved"));await load()}catch(error){setNotice(errorMessage(error,t("requestFailed")))}}
+  async function saveEmailProvider(provider:string){try{if(provider==="platform"){await api.saveCommunicationSetting("email",{mode:"internal",provider:"zahlmeister_email",fields:{}})}else if(provider==="smtp_imap"){setMailServerOpen(true);return}else if(provider==="microsoft365"){if(!microsoft||microsoft.status!=="connected"){const result=await api.startMicrosoft365();window.location.assign(result.authorization_url);return}await api.saveCommunicationSetting("email",{mode:"internal",provider:"microsoft365",connection_id:microsoft.id,fields:{}})}showToast({message:t("saved")});await load()}catch(error){setNotice(errorMessage(error,t("requestFailed")))}}
 
   async function testChannel(row:ChannelSetting,channel:CommunicationChannel){if(testingChannel)return;setTestingChannel(channel);setNotice("");setTestResults(current=>{const next={...current};delete next[channel];return next});try{if(channel==="email"&&row.mode==="internal"&&emailProvider==="platform"){await api.saveCommunicationSetting("email",{mode:"internal",provider:"zahlmeister_email",fields:{}})}const result=await api.testCommunicationChannel(channel);setTestResults(current=>({...current,[channel]:result.ok?"ok":"error"}));await load()}catch{setTestResults(current=>({...current,[channel]:"error"}))}finally{setTestingChannel(null)}}
 
@@ -63,7 +64,7 @@ export function CommunicationSettingsPanel(){
       {email?.mode==="internal"&&emailProvider==="microsoft365"&&<MicrosoftConnectionCard connection={microsoft} onChanged={load} onNotice={setNotice}/>} 
     </section>
 
-    {mailServerOpen&&<MailServerModal setting={email} onClose={()=>setMailServerOpen(false)} onSaved={async()=>{setMailServerOpen(false);setNotice(t("saved"));await load()}}/>}
+    {mailServerOpen&&<MailServerModal setting={email} onClose={()=>setMailServerOpen(false)} onSaved={async()=>{setMailServerOpen(false);showToast({message:t("saved")});await load()}}/>}
     {infobipOpen&&<InfobipModal connection={infobip} onClose={()=>setInfobipOpen(false)} onSaved={async()=>{setInfobipOpen(false);await load()}}/>}
   </>
 }

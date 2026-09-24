@@ -5,6 +5,7 @@ import "./ux.css";
 import "./mobile-workspace.css";
 import {I18nProvider} from "@/lib/i18n";
 import {NativeBridge} from "@/components/NativeBridge";
+import {ToastHost} from "@/components/ToastHost";
 
 export const metadata: Metadata = {
   title: "Zahlmeister – Ihr Geldeintreiber",
@@ -24,5 +25,5 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({children}: {children: React.ReactNode}) {
-  return <html lang="de"><body><I18nProvider><NativeBridge/>{children}</I18nProvider></body></html>;
+  return <html lang="de"><body><I18nProvider><NativeBridge/>{children}<ToastHost/></I18nProvider></body></html>;
 }

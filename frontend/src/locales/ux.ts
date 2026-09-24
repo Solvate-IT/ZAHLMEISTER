@@ -2,6 +2,9 @@ type Messages=Record<string,string>;
 
 export const uxMessages:Record<string,Messages>={
   de:{
+    paymentPromo:"Zahlungen einfach sammeln – mit Zahlmeister",
+    messagesQueued:"{count} Nachrichten wurden zum Versand übergeben.",
+    templateChangeHint:"Ein Wechsel der Vorlage ersetzt individuelle Nachrichtentexte dieser Sammelaktion.",
     openParticipantBalances:"Offene Beträge nach Teilnehmer",
     noOpenParticipantBalances:"Keine offenen Beträge.",
     openTotal:"Offen / Gesamt",
@@ -49,6 +52,9 @@ export const uxMessages:Record<string,Messages>={
     pontoOnboardingHint:"Für automatischen BankSync erfolgt das Onboarding direkt beim Verbinden über Ponto Customer Paying. Ein eigenes Ponto-Portal-Konto ist dabei optional; Ponto kann den Kunden direkt per E-Mail-Code onboarden. Je nach Ponto-Modell fallen Providergebühren an."
   },
   en:{
+    paymentPromo:"Collect payments easily with Zahlmeister",
+    messagesQueued:"{count} messages were queued for delivery.",
+    templateChangeHint:"Changing the template replaces custom message text for this collection.",
     openParticipantBalances:"Open amounts by participant",
     noOpenParticipantBalances:"No open amounts.",
     openTotal:"Open / total",

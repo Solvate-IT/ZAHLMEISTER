@@ -136,6 +136,7 @@ class CollectionUpdate(BaseModel):
     due_at: datetime | None = None
     include_payment_link: bool | None = None
     include_payment_qr: bool | None = None
+    message_template_id: UUID | None = None
 
 
 class CollectionParticipantRead(BaseModel):

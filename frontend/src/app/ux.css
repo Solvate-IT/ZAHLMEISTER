@@ -26,5 +26,17 @@
 .table tbody tr.clickable:hover td,.table tbody tr.clickable:focus-visible td{background:#eef5ff}
 .table tbody tr.clickable:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
 .workspace-body .toast{bottom:max(96px,env(safe-area-inset-bottom));max-width:calc(100vw - 32px);text-align:center}
+.app-toast{bottom:max(24px,env(safe-area-inset-bottom));display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;max-width:calc(100vw - 32px);border:1px solid #bee6dc;background:#e9f8f4;color:#075d50;text-align:center;line-height:1.4}
+.app-toast.error{border-color:#ffd5cf;background:#fff2ef;color:#832b25}
+.app-toast a{text-decoration:underline;text-underline-offset:3px;font-weight:800}
+.payment-reference{display:inline-block;padding:4px 7px;font-size:.75rem;white-space:nowrap;word-break:normal}
+.collection-progress{background:#fff;border:1px solid #dae3ed;height:10px}
+.collection-progress>span{background:var(--teal)}
+.mini-row.clickable{cursor:pointer;border-radius:8px}
+.mini-row.clickable:hover,.mini-row.clickable:focus-visible{background:#eef5ff;outline:0}
+.payment-page{display:flex;flex-direction:column}
+.payment-page .payment-layout{flex:1}
+.payment-promo{text-align:center;color:var(--muted);font-size:.85rem;padding:12px 18px}
+.payment-promo a:hover{text-decoration:underline}
 .status-pill.cancelled{background:#edf1f5;color:var(--muted)}
 @media(max-width:620px){.overview-open-metric{max-width:none}.overview-balance-table{min-width:460px}.settings-heading-actions{width:100%;justify-content:flex-start}.inline-status{white-space:normal}.auth-secondary-links{align-items:flex-start}.provider-onboarding .button{width:100%}.import-source-buttons .button{width:100%}}

@@ -6,6 +6,7 @@ import {api, ApiError} from "@/lib/api";
 import type {PublicPayment} from "@/lib/types";
 import {Capacitor} from "@capacitor/core";
 import {useI18n} from "@/lib/i18n";
+import Link from "next/link";
 import {Brand} from "./Brand";
 import {Loading} from "./State";
 
@@ -83,12 +84,14 @@ export function PublicPaymentPage() {
     }
   }
 
-  return <div className="page-bg">
-    <header className="topbar"><Brand compact/></header>
+  return <div className="page-bg payment-page">
+    <header className="topbar"><Link href="/" className="brand-link" aria-label={t("appName")}><Brand compact/></Link></header>
     <main className="payment-layout">
       {error ? <div className="card state"><strong>{t("paymentLinkInvalid")}</strong></div> : !payment ? <Loading/> : <PaymentBody payment={payment} qrUrl={api.publicPaymentQr(token)} onCopy={copy} onOnline={payOnline} onlineBusy={onlineBusy} locale={locale}/>} 
       {copied && <div className="toast" role="status">{t("copied")}</div>}
     </main>
+    <div className="payment-promo"><Link href="/">{t("paymentPromo")} →</Link></div>
+    <footer className="footer premium-footer"><div className="container footer-row"><span>© {new Date().getFullYear()} {t("portalCompanyName")}</span><div className="footer-links"><Link className="button ghost" href="/">{t("appName")}</Link><Link className="button ghost" href="/imprint/">{t("portalNavImprint")}</Link><Link className="button ghost" href="/privacy/">{t("portalNavPrivacy")}</Link></div></div></footer>
   </div>;
 }
 

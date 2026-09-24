@@ -8,6 +8,7 @@ const workspace=readFileSync(new URL("../src/components/Workspace.tsx",import.me
 const settings=readFileSync(new URL("../src/components/workspace/SettingsPage.tsx",import.meta.url),"utf8");
 const api=readFileSync(new URL("../src/lib/api.ts",import.meta.url),"utf8");
 const ux=readFileSync(new URL("../src/locales/ux.ts",import.meta.url),"utf8");
+const toast=readFileSync(new URL("../src/components/ToastHost.tsx",import.meta.url),"utf8");
 
 test("real collection dispatch requires an explicit confirmation step",()=>{
   assert.match(collections,/type PendingSendState=/);
@@ -21,9 +22,22 @@ test("real collection dispatch requires an explicit confirmation step",()=>{
 test("test message queues a single email to the signed-in creator and shows receipt",()=>{
   assert.match(collections,/api\.testCollectionMessage\(item\.id,"email"\)/);
   assert.match(collections,/testMessageQueued/);
-  assert.match(collections,/className="toast" role="status"/);
-  assert.match(collections,/setTimeout\(\(\)=>setTestToast\(""\),2000\)/);
+  assert.match(collections,/showToast\(\{message:t\("testMessageQueued"/);
+  assert.match(toast,/setTimeout\(\(\) => setToast\(null\), toast\.action \? 8000 : 2000\)/);
   assert.doesNotMatch(collections,/function TestMessageModal/);
+});
+
+test("send errors remain visible over the confirmation dialog and link to payment settings",()=>{
+  assert.match(collections,/showToast\(\{message:t\("paymentAccountRequired"\),kind:"error",action:/);
+  assert.match(collections,/href:"\/app\?view=settings&section=payment"/);
+  assert.match(toast,/className=\{`toast app-toast/);
+});
+
+test("the selected template is used for both test and real sending",()=>{
+  assert.match(collections,/templates\.length>1/);
+  assert.match(collections,/onTest\(templateId\)/);
+  assert.match(collections,/dispatch\(pending\.item,pending\.kind,templateId\)/);
+  assert.match(collections,/api\.updateCollection\(item\.id,\{message_template_id:templateId\}\)/);
 });
 
 test("manual send prepares the draft before the user clicks to open an app",()=>{

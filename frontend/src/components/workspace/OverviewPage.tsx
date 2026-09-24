@@ -8,7 +8,7 @@ import {Loading,ErrorState,Empty} from "../State";
 type OverviewTarget="lists"|"collections"|"settings";
 type CreateAction="list"|"collection";
 
-export function OverviewPage({onNavigate}:{onNavigate:(v:OverviewTarget,create?:CreateAction)=>void}){
+export function OverviewPage({onNavigate}:{onNavigate:(v:OverviewTarget,create?:CreateAction,id?:string)=>void}){
   const {t,locale}=useI18n();
   const [lists,setLists]=useState<ParticipantListSummary[]>([]);
   const [collections,setCollections]=useState<CollectionSummary[]>([]);
@@ -48,11 +48,11 @@ export function OverviewPage({onNavigate}:{onNavigate:(v:OverviewTarget,create?:
     <div className="split">
       <section className="card">
         <div className="row between"><h3>{t("recentCollections")}</h3><button className="button ghost small" onClick={()=>onNavigate("collections")}>{t("all")}</button></div>
-        {collections.length===0?<Empty text={t("noCollections")}/>:collections.slice(0,5).map(collection=>{const openCount=Math.max(0,collection.participant_count-collection.paid_count);const openAmount=Number(collection.amount)*openCount;return <div className="mini-row" key={collection.id}><div><strong>{collection.name}</strong><div className="muted">{t("openTotal")}: {openCount}/{collection.participant_count}</div><div className="progress"><span style={{width:`${collection.participant_count?openCount/collection.participant_count*100:0}%`}}/></div></div><strong>{money(openAmount,collection.currency)}</strong></div>})}
+        {collections.length===0?<Empty text={t("noCollections")}/>:collections.slice(0,3).map(collection=>{const openCount=Math.max(0,collection.participant_count-collection.paid_count);const openAmount=Number(collection.amount)*openCount;return <div className="mini-row clickable" role="button" tabIndex={0} onClick={()=>onNavigate("collections",undefined,collection.id)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onNavigate("collections",undefined,collection.id)}}} key={collection.id}><div><strong>{collection.name}</strong><div className="muted">{t("openTotal")}: {openCount}/{collection.participant_count}</div><div className="progress collection-progress"><span style={{width:`${collection.participant_count?collection.paid_count/collection.participant_count*100:0}%`}}/></div></div><strong>{money(openAmount,collection.currency)}</strong></div>})}
       </section>
       <section className="card">
         <div className="row between"><h3>{t("participantLists")}</h3><button className="button ghost small" onClick={()=>onNavigate("lists")}>{t("all")}</button></div>
-        {lists.length===0?<Empty text={t("noLists")}/>:lists.slice(0,7).map(list=><div className="mini-row" key={list.id}><strong>{list.name}</strong><span>{t("people",{count:list.participant_count})}</span></div>)}
+        {lists.length===0?<Empty text={t("noLists")}/>:lists.slice(0,3).map(list=><div className="mini-row clickable" role="button" tabIndex={0} onClick={()=>onNavigate("lists",undefined,list.id)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onNavigate("lists",undefined,list.id)}}} key={list.id}><strong>{list.name}</strong><span>{t("people",{count:list.participant_count})}</span></div>)}
       </section>
     </div>
 

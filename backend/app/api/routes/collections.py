@@ -651,6 +651,13 @@ async def update_collection(
             item.name = await unique_collection_name(
                 session, stored_org, payload.name, exclude_id=item.id
             )
+        if payload.message_template_id is not None and payload.message_template_id != item.message_template_id:
+            template = await session.get(MessageTemplate, payload.message_template_id)
+            if template is None or template.organization_id != stored_org.id:
+                raise HTTPException(status_code=404, detail="Message template not found")
+            _require_open_collection(item)
+            item.message_template_id = template.id
+            item.message_overrides_json = None
         if payload.due_at is not None:
             if item.send_at is not None and payload.due_at.date() < item.send_at.date():
                 raise HTTPException(

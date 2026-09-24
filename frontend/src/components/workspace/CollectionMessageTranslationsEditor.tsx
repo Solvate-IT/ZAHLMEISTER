@@ -5,6 +5,7 @@ import {useEffect,useMemo,useState} from "react";
 import {ApiError,api} from "@/lib/api";
 import {useI18n} from "@/lib/i18n";
 import type {CollectionMessageTranslations} from "@/lib/types";
+import {showToast} from "../ToastHost";
 
 function languageName(uiLocale:string,language:string):string{
   try{return new Intl.DisplayNames([uiLocale],{type:"language"}).of(language)??language.toUpperCase()}catch{return language.toUpperCase()}
@@ -47,6 +48,7 @@ export function CollectionMessageTranslationsEditor({collectionId}:{collectionId
     try{
       const next=await api.saveCollectionMessageTranslation(collectionId,language,body.trim());
       setData(next);setSavedBody(body.trim());
+      showToast({message:t("saved")});
     }catch{setError(t("requestFailed"))}finally{setBusy(false)}
   }
 
@@ -56,6 +58,7 @@ export function CollectionMessageTranslationsEditor({collectionId}:{collectionId
     try{
       const next=await api.translateCollectionMessageLanguages(collectionId,language,body.trim());
       setData(next);setSavedBody(body.trim());
+      showToast({message:t("saved")});
     }catch(err){setError(err instanceof ApiError&&err.status===502?t("translationFailed"):t("requestFailed"))}finally{setBusy(false)}
   }
 

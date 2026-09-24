@@ -4,6 +4,7 @@ import {useEffect,useMemo,useState} from "react";
 
 import {ApiError,api} from "@/lib/api";
 import {supportedLocales,useI18n} from "@/lib/i18n";
+import {showToast} from "../ToastHost";
 import type {MessageTemplate,TemplateTranslationStatus} from "@/lib/types";
 
 function languageName(uiLocale:string,language:string):string{
@@ -44,7 +45,7 @@ export function TemplateSettingsPanel(){
         {items.map(item=><TemplateListButton key={item.id} active={!creating&&selectedId===item.id} onClick={()=>{setCreating(false);setSelectedId(item.id)}} label={item.name} secondary={item.is_default?t("defaultTemplate"):undefined}/>) }
       </div>
       <div style={{flex:"1 1 420px",minWidth:"min(100%, 360px)"}}>
-        {creating?<NewTemplateEditor languages={languages} onCreated={async item=>{setCreating(false);setSelectedId(item.id);setNotice(t("templateSaved"));await load(item.id)}}/>:selected?<TemplateEditor item={selected} translation={translation} languages={languages} onChanged={async updated=>{setSelectedId(updated.id);setNotice(t("templateSaved"));await load(updated.id)}} onDeleted={async()=>{setNotice(t("saved"));setCreating(false);await load(null)}}/>:<div className="empty">{t("noData")}</div>}
+        {creating?<NewTemplateEditor languages={languages} onCreated={async item=>{setCreating(false);setSelectedId(item.id);showToast({message:t("saved")});await load(item.id)}}/>:selected?<TemplateEditor item={selected} translation={translation} languages={languages} onChanged={async updated=>{setSelectedId(updated.id);showToast({message:t("saved")});await load(updated.id)}} onDeleted={async()=>{setNotice(t("saved"));setCreating(false);await load(null)}}/>:<div className="empty">{t("noData")}</div>}
       </div>
     </div>
   </section>
