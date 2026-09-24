@@ -3,6 +3,7 @@ import io
 from openpyxl import Workbook
 
 from app.services.imports import parse_import
+from app.api.routes.imports import _phone_key
 
 
 def test_csv_import_preview() -> None:
@@ -34,3 +35,7 @@ def test_excel_import_joins_first_and_last_name() -> None:
     assert len(preview.participants) == 1
     assert preview.participants[0].name == "Anna Muster"
     assert preview.participants[0].phone == "+43 660 1234567"
+
+
+def test_import_matches_existing_local_and_new_international_numbers() -> None:
+    assert _phone_key("0660 1234567", "AT") == _phone_key("+43 660 1234567", "AT")

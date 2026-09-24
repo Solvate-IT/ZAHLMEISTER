@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_organization, get_session
 from app.db.session import SessionLocal
+from app.models.billing import BillingProfile
 from app.models.entities import CollectionParticipant, Organization, Participant, ParticipantList
 from app.schemas.workflow import (
     ParticipantChannelRead,
@@ -29,6 +30,7 @@ from app.services.channel_strategy import (
     set_channel_knowledge,
 )
 from app.services.naming import unique_participant_list_name
+from app.services.phone_numbers import normalize_phone_number, preferred_phone_region
 from app.services.participant_preferences import (
     load_participant_locales,
     save_participant_locale,
@@ -65,21 +67,37 @@ def _participant_read(
 
 def _participant_values(
     payload: ParticipantCreate | ParticipantUpdate,
+    region: str,
 ) -> tuple[str | None, str | None, str]:
     email = (payload.email or "").strip() or None
-    phone = (payload.phone or "").strip() or None
-    phone_digits = "".join(char for char in (phone or "") if char.isdigit())
-    return email, phone, phone_digits
+    try:
+        phone = normalize_phone_number(payload.phone, region)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return email, phone, phone or ""
+
+
+async def _phone_region(session: AsyncSession, organization: Organization) -> str:
+    profile = await session.get(BillingProfile, organization.id)
+    return preferred_phone_region(organization.locale, profile.country if profile else None)
+
+
+def _existing_phone_key(value: str | None, region: str) -> str:
+    try:
+        return normalize_phone_number(value, region) or ""
+    except ValueError:
+        return "".join(char for char in (value or "") if char.isdigit())
 
 
 async def _duplicate_participant(
     session: AsyncSession,
     list_id: UUID,
     payload: ParticipantCreate | ParticipantUpdate,
+    region: str,
     *,
     exclude_id: UUID | None = None,
 ) -> Participant | None:
-    email, _, phone_digits = _participant_values(payload)
+    email, _, phone_digits = _participant_values(payload, region)
     rows = (
         await session.execute(select(Participant).where(Participant.list_id == list_id))
     ).scalars().all()
@@ -90,7 +108,7 @@ async def _duplicate_participant(
             if row.id != exclude_id
             and row.name.casefold() == payload.name.casefold()
             and (row.email or "").casefold() == (email or "").casefold()
-            and "".join(char for char in (row.phone or "") if char.isdigit()) == phone_digits
+            and _existing_phone_key(row.phone, region) == phone_digits
         ),
         None,
     )
@@ -229,8 +247,9 @@ async def add_participant(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Free plan supports up to {FREE_PARTICIPANTS_PER_LIST} participants per list",
             )
-        email, phone, _ = _participant_values(payload)
-        duplicate = await _duplicate_participant(session, item.id, payload)
+        region = await _phone_region(session, stored_org)
+        email, phone, _ = _participant_values(payload, region)
+        duplicate = await _duplicate_participant(session, item.id, payload, region)
         if duplicate is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="Participant already exists"
@@ -265,14 +284,15 @@ async def update_participant(
         item, participant = await _owned_participant(
             session, stored_org, list_id, participant_id, for_update=True
         )
+        region = await _phone_region(session, stored_org)
         duplicate = await _duplicate_participant(
-            session, item.id, payload, exclude_id=participant.id
+            session, item.id, payload, region, exclude_id=participant.id
         )
         if duplicate is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="Participant already exists"
             )
-        email, phone, _ = _participant_values(payload)
+        email, phone, _ = _participant_values(payload, region)
         old_email = participant.email
         old_phone = participant.phone
         old_addresses = channel_addresses(participant)
@@ -285,7 +305,7 @@ async def update_participant(
         locale = await save_participant_locale(session, participant.id, payload.locale)
         if (old_email or "").casefold() != (email or "").casefold():
             await reset_channel_knowledge(session, participant.id, "email")
-        if old_phone != phone:
+        if _existing_phone_key(old_phone, region) != (phone or ""):
             await reset_channel_knowledge(session, participant.id, "whatsapp")
             await reset_channel_knowledge(session, participant.id, "sms")
         if old_addresses.get("telegram") != (payload.channel_addresses or {}).get("telegram"):

@@ -14,6 +14,7 @@ from urllib.parse import quote, urlencode
 
 from app.core.config import settings
 from app.services.message_renderer import CanonicalMessage
+from app.services.phone_numbers import normalize_phone_number
 from app.services.payments import render_qr_png
 
 
@@ -30,12 +31,17 @@ class IncomingMail:
 
 
 def normalize_phone(value: str | None) -> str:
-    if not value:
+    try:
+        return normalize_phone_number(value) or ""
+    except ValueError:
+        # Some providers return international digits without the leading +.
+        digits = "".join(char for char in (value or "") if char.isdigit())
+        if value and not value.strip().startswith(("+", "0")) and len(digits) >= 10:
+            try:
+                return normalize_phone_number(f"+{digits}") or ""
+            except ValueError:
+                pass
         return ""
-    value = value.strip()
-    prefix = "+" if value.startswith("+") else ""
-    digits = "".join(char for char in value if char.isdigit())
-    return f"{prefix}{digits}" if digits else ""
 
 
 def external_launch_uri(
@@ -56,7 +62,10 @@ def external_launch_uri(
     if channel == "whatsapp":
         if not recipient:
             raise ValueError("WhatsApp recipient missing")
-        digits = "".join(char for char in recipient if char.isdigit())
+        normalized = normalize_phone(recipient)
+        if not normalized:
+            raise ValueError("WhatsApp recipient must include a valid country code")
+        digits = normalized[1:]
         return f"https://wa.me/{digits}?text={quote(body)}", False
     if channel == "telegram":
         if not recipient:

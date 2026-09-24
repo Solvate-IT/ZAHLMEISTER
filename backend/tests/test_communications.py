@@ -5,6 +5,7 @@ from app.services.communications import (
     _effective_smtp_config,
     external_launch_uri,
     normalize_phone,
+    recipient_for_channel,
 )
 
 
@@ -14,12 +15,12 @@ def test_external_mail_sms_whatsapp_uris_are_prefilled() -> None:
     )
     sms, sms_select = external_launch_uri("sms", "+43 660 123", None, "Bitte zahlen")
     whatsapp, whatsapp_select = external_launch_uri(
-        "whatsapp", "+43 660 123", None, "Bitte zahlen"
+        "whatsapp", "0660 1234567", None, "Bitte zahlen"
     )
     assert mail.startswith("mailto:anna%40example.test?")
     assert "subject=Ausflug" in mail
     assert sms.startswith("sms:%2B43%20660%20123?body=")
-    assert whatsapp.startswith("https://wa.me/43660123?text=")
+    assert whatsapp.startswith("https://wa.me/436601234567?text=")
     assert not mail_select and not sms_select and not whatsapp_select
 
 
@@ -35,7 +36,16 @@ def test_telegram_requires_saved_recipient() -> None:
 
 def test_phone_normalization() -> None:
     assert normalize_phone("+43 (660) 12-34") == "+436601234"
+    assert normalize_phone("0660 1234567") == "+436601234567"
+    assert normalize_phone("4915123456789") == "+4915123456789"
     assert normalize_phone(None) == ""
+
+
+def test_legacy_local_whatsapp_recipient_is_international_at_dispatch() -> None:
+    recipient = recipient_for_channel("whatsapp", email=None, phone="0660 1234567")
+    assert recipient == "+436601234567"
+    url, _ = external_launch_uri("whatsapp", recipient, None, "Bitte zahlen")
+    assert url.startswith("https://wa.me/436601234567?")
 
 
 def test_transport_requests_cannot_override_canonical_message() -> None:

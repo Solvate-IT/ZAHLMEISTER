@@ -5,11 +5,13 @@ from sqlalchemy import select
 
 from app.api.deps import get_organization
 from app.db.session import SessionLocal
+from app.models.billing import BillingProfile
 from app.models.entities import Organization, Participant, ParticipantList
 from app.schemas.imports import ImportCommitRequest, ImportCommitResponse, ImportPreview
 from app.services.channel_strategy import reset_channel_knowledge
 from app.services.imports import ImportParseError, parse_import
 from app.services.plans import FREE_PARTICIPANTS_PER_LIST, is_pro
+from app.services.phone_numbers import normalize_phone_number, preferred_phone_region
 
 router = APIRouter(prefix="/participant-lists", tags=["participant-lists"])
 
@@ -18,8 +20,11 @@ def _email_key(value: str | None) -> str:
     return (value or "").strip().casefold()
 
 
-def _phone_key(value: str | None) -> str:
-    return "".join(char for char in (value or "") if char.isdigit())
+def _phone_key(value: str | None, region: str) -> str:
+    try:
+        return normalize_phone_number(value, region) or ""
+    except ValueError:
+        return "".join(char for char in (value or "") if char.isdigit())
 
 
 async def _owned_list(
@@ -65,18 +70,25 @@ async def commit_import(
         ).scalars().all()
         initial_count = len(existing_rows)
         pro = await is_pro(session, organization.id)
+        profile = await session.get(BillingProfile, organization.id)
+        region = preferred_phone_region(organization.locale, profile.country if profile else None)
 
         by_email = {_email_key(row.email): row for row in existing_rows if _email_key(row.email)}
-        by_phone = {_phone_key(row.phone): row for row in existing_rows if _phone_key(row.phone)}
+        by_phone = {_phone_key(row.phone, region): row for row in existing_rows if _phone_key(row.phone, region)}
         new_rows: list[Participant] = []
         updated_ids: set[UUID] = set()
         skipped = 0
 
         for item in payload.participants:
             email = str(item.email).strip().lower() if item.email else None
-            phone = item.phone.strip() if item.phone else None
+            try:
+                phone = normalize_phone_number(item.phone, region)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=422, detail=f"Invalid phone number for {item.name}: {item.phone}"
+                ) from exc
             email_key = _email_key(email)
-            phone_key = _phone_key(phone)
+            phone_key = _phone_key(phone, region)
             email_match = by_email.get(email_key) if email_key else None
             phone_match = by_phone.get(phone_key) if phone_key else None
 
@@ -103,7 +115,7 @@ async def commit_import(
                 if changed:
                     if _email_key(old_email) != _email_key(target.email):
                         await reset_channel_knowledge(session, target.id, "email")
-                    if _phone_key(old_phone) != _phone_key(target.phone):
+                    if _phone_key(old_phone, region) != _phone_key(target.phone, region):
                         await reset_channel_knowledge(session, target.id, "whatsapp")
                         await reset_channel_knowledge(session, target.id, "sms")
                     updated_ids.add(target.id)

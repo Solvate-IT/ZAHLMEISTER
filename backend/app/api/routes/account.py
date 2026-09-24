@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_auth_session, get_current_user, get_session
 from app.db.session import SessionLocal
+from app.models.billing import BillingProfile
 from app.models.channel_strategy import CommunicationPreference, ParticipantChannelSetting
 from app.models.entities import (
     ApiCredential,
@@ -38,6 +39,7 @@ from app.schemas.account import ChangePasswordRequest, DeleteAccountRequest, Pro
 from app.schemas.auth import UserRead
 from app.services.account import invalidate_user_sessions
 from app.services.auth import hash_password, verify_password
+from app.services.phone_numbers import normalize_phone_number, preferred_phone_region
 
 router = APIRouter(prefix="/account", tags=["account"])
 
@@ -73,7 +75,14 @@ async def update_profile(
         if payload.organization_name is not None:
             organization.name = payload.organization_name
         if "phone" in payload.model_fields_set:
-            stored.phone = payload.phone
+            profile = await session.get(BillingProfile, organization.id)
+            region = preferred_phone_region(
+                payload.locale or organization.locale, profile.country if profile else None
+            )
+            try:
+                stored.phone = normalize_phone_number(payload.phone, region)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
         if payload.locale is not None:
             organization.locale = payload.locale
         if payload.currency is not None:

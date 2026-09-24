@@ -215,7 +215,7 @@ docker run --rm --read-only --tmpfs /tmp:size=64m,mode=1777 --security-opt no-ne
     test -f /usr/share/nginx/html/robots.txt &&
     test -f /usr/share/nginx/html/sitemap.xml &&
     test -f /usr/share/nginx/html/manifest.webmanifest &&
-    test -f /usr/share/nginx/html/favicon.png &&
+    test -f /usr/share/nginx/html/favicon.svg &&
     test -f /usr/share/nginx/html/icons/Icon-512.png &&
     test -f /usr/share/nginx/html/brand/logo.png &&
     test -d /usr/share/nginx/html/_next/static

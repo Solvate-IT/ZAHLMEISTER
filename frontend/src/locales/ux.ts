@@ -2,6 +2,7 @@ type Messages=Record<string,string>;
 
 export const uxMessages:Record<string,Messages>={
   de:{
+    invalidPhoneNumber:"Ungültige Telefonnummer. Bitte mit Ländervorwahl eingeben, z. B. +43 660 1234567.",
     paymentPromo:"Zahlungen einfach sammeln – mit Zahlmeister",
     messagesQueued:"{count} Nachrichten wurden zum Versand übergeben.",
     templateChangeHint:"Ein Wechsel der Vorlage ersetzt individuelle Nachrichtentexte dieser Sammelaktion.",
@@ -52,6 +53,7 @@ export const uxMessages:Record<string,Messages>={
     pontoOnboardingHint:"Für automatischen BankSync erfolgt das Onboarding direkt beim Verbinden über Ponto Customer Paying. Ein eigenes Ponto-Portal-Konto ist dabei optional; Ponto kann den Kunden direkt per E-Mail-Code onboarden. Je nach Ponto-Modell fallen Providergebühren an."
   },
   en:{
+    invalidPhoneNumber:"Invalid phone number. Please include the country code, e.g. +43 660 1234567.",
     paymentPromo:"Collect payments easily with Zahlmeister",
     messagesQueued:"{count} messages were queued for delivery.",
     templateChangeHint:"Changing the template replaces custom message text for this collection.",
