@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 
 const collections=readFileSync(new URL("../src/components/workspace/CollectionsPage.tsx",import.meta.url),"utf8");
+const lists=readFileSync(new URL("../src/components/workspace/ListsPage.tsx",import.meta.url),"utf8");
 const workspace=readFileSync(new URL("../src/components/Workspace.tsx",import.meta.url),"utf8");
 const settings=readFileSync(new URL("../src/components/workspace/SettingsPage.tsx",import.meta.url),"utf8");
 const api=readFileSync(new URL("../src/lib/api.ts",import.meta.url),"utf8");
@@ -17,19 +18,42 @@ test("real collection dispatch requires an explicit confirmation step",()=>{
   assert.doesNotMatch(collections,/if\(detail&&sendNow\)await dispatch\(detail,"initial"\)/);
 });
 
-test("test preview opens one participant draft at a time without recording delivery",()=>{
-  assert.match(collections,/api\.previewCollectionDispatch/);
-  assert.match(collections,/function TestMessageModal/);
-  assert.match(collections,/openExternalUri\(current\.launch_uri\)/);
-  const preview=collections.slice(collections.indexOf("function TestMessageModal"),collections.indexOf("function ExternalSendAssistant"));
-  assert.doesNotMatch(preview,/api\.testCollectionMessage|api\.markExternalOpened|api\.confirmExternalResult/);
-  assert.match(api,/previewCollectionDispatch:/);
+test("test message queues a single email to the signed-in creator and shows receipt",()=>{
+  assert.match(collections,/api\.testCollectionMessage\(item\.id,"email"\)/);
+  assert.match(collections,/testMessageQueued/);
+  assert.match(collections,/className="toast" role="status"/);
+  assert.match(collections,/setTimeout\(\(\)=>setTestToast\(""\),2000\)/);
+  assert.doesNotMatch(collections,/function TestMessageModal/);
+});
+
+test("manual send prepares the draft before the user clicks to open an app",()=>{
+  const assistant=collections.slice(collections.indexOf("function ExternalSendAssistant"),collections.indexOf("function Metric"));
+  assert.match(assistant,/api\.createExternalDraft/);
+  assert.match(assistant,/draft\.launch_uri/);
+  assert.match(assistant,/openExternalUri\(draft\.launch_uri\)/);
+});
+
+test("delete and cancel actions are kept separate from delivery",()=>{
+  assert.match(api,/deleteCollection:/);
+  assert.match(api,/cancelCollection:/);
+  assert.match(collections,/item\.status==="cancelled"/);
+  assert.match(collections,/api\.deleteCollection/);
+  assert.match(collections,/api\.cancelCollection/);
 });
 
 test("channel summaries exclude disabled channels in both collection views",()=>{
   assert.match(collections,/function activeChannelSummary/);
   assert.match(collections,/activeChannelSummary\(item,t,/g);
+  assert.match(collections,/enabledChannels\.map\(channel=>/);
+  assert.match(lists,/contactChannels\.filter\(channel=>!organizationDisabled\?\.has\(channel\)\)/);
   assert.match(api,/communicationSettings:/);
+});
+
+test("collection and list rows open by mouse and keyboard",()=>{
+  assert.match(collections,/onClick=\{\(\)=>void open\(c\.id\)\}/);
+  assert.match(lists,/onClick=\{\(\)=>void openList\(l\.id\)\}/);
+  assert.match(collections,/onKeyDown=\{e=>\{if\(e\.key==="Enter"/);
+  assert.match(lists,/onKeyDown=\{e=>\{if\(e\.key==="Enter"/);
 });
 
 test("send safety copy is translated through the central i18n layer",()=>{

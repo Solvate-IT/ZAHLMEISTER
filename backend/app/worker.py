@@ -114,7 +114,7 @@ async def fail_job(job: ScheduledJob, error: Exception) -> None:
                     message_id = None
                 if message_id is not None:
                     message = await session.get(CommunicationMessage, message_id, with_for_update=True)
-                    if message is not None and message.status not in {"sent", "delivered", "read"}:
+                    if message is not None and message.status not in {"sent", "delivered", "read", "skipped"}:
                         message.status = "failed"
                         message.error = stored.last_error
     logger.warning(
@@ -174,6 +174,8 @@ async def _queue_message_jobs(collection_id: UUID, *, kind: str) -> int:
         collection = await session.get(Collection, collection_id, with_for_update=True)
         if collection is None:
             raise ValueError(f"Collection {collection_id} not found")
+        if collection.status == "cancelled":
+            return 0
         organization = await session.get(Organization, collection.organization_id)
         if organization is None or not organization.bank_account_name or not organization.bank_iban:
             raise ValueError("Receiving bank account is not configured")
@@ -198,6 +200,8 @@ async def send_collection(job: ScheduledJob) -> None:
         collection = await session.get(Collection, collection_id, with_for_update=True)
         if collection is None:
             raise ValueError(f"Collection {collection_id} not found")
+        if collection.status == "cancelled":
+            return
         first_activation = collection.status != "active"
         collection.status = "active"
         send_at = collection.send_at or datetime.now(UTC)
@@ -264,6 +268,11 @@ async def send_message(job: ScheduledJob) -> None:
         if cp is None:
             raise ValueError("Collection participant missing")
         if message.status in {"sent", "delivered", "read"}:
+            return
+        collection = await session.get(Collection, message.collection_id)
+        if message.status != "queued" or (message.kind != "test" and (collection is None or collection.status == "cancelled")):
+            message.status = "skipped"
+            message.error = "Collection cancelled or message no longer queued"
             return
         if message.kind == "reminder" and cp.status != "open":
             message.status = "skipped"

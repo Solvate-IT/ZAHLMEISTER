@@ -94,6 +94,8 @@ async def queue_collection_messages(
     """Resolve the configured channel strategy once per participant and queue internal sends."""
     if kind not in {"initial", "reminder"}:
         raise ValueError("Unsupported dispatch kind")
+    if collection.status == "cancelled":
+        return DispatchOutcome()
 
     stmt = (
         select(CollectionParticipant, Participant)

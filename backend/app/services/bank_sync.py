@@ -87,7 +87,7 @@ async def _targets(session: AsyncSession, organization_id: UUID) -> list[MatchTa
             select(CollectionParticipant, Collection, Participant)
             .join(Collection, Collection.id == CollectionParticipant.collection_id)
             .join(Participant, Participant.id == CollectionParticipant.participant_id)
-            .where(Collection.organization_id == organization_id, CollectionParticipant.status == "open")
+            .where(Collection.organization_id == organization_id, Collection.status != "cancelled", CollectionParticipant.status == "open")
         )
     ).all()
     return [
@@ -196,6 +196,7 @@ async def sync_connection(session: AsyncSession, connection: BankSyncConnection)
         .join(CollectionParticipant, CollectionParticipant.collection_id == Collection.id)
         .where(
             Collection.organization_id == connection.organization_id,
+            Collection.status != "cancelled",
             CollectionParticipant.status == "open",
         )
     )

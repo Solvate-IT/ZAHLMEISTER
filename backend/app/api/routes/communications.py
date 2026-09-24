@@ -127,6 +127,8 @@ async def test_collection_message(
         collection = await session.get(Collection, collection_id)
         if stored_org is None or collection is None or collection.organization_id != stored_org.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collection not found")
+        if collection.status == "cancelled":
+            raise HTTPException(status_code=409, detail="Collection has been cancelled")
 
         row = (
             await session.execute(
@@ -146,6 +148,8 @@ async def test_collection_message(
         runtimes = await load_channel_runtimes(session, stored_org.id)
 
         if payload.channel == "email":
+            if runtimes["email"].mode == "disabled":
+                raise HTTPException(status_code=409, detail="Email channel is disabled")
             recipient = user.email.strip()
             if not settings.smtp_host.strip() or not settings.mail_from_address.strip():
                 raise HTTPException(
@@ -237,6 +241,8 @@ async def create_external_draft(
         cp, collection, participant = await _owned_context(
             session, stored_org, collection_id, cp_id, for_update=True
         )
+        if collection.status == "cancelled":
+            raise HTTPException(status_code=409, detail="Collection has been cancelled")
         runtimes = await load_channel_runtimes(session, stored_org.id)
         runtime = runtimes.get(payload.channel)
         if runtime is None or runtime.mode != "external":
@@ -428,6 +434,8 @@ async def queue_internal_message(
         cp, collection, participant = await _owned_context(
             session, stored_org, collection_id, cp_id, for_update=True
         )
+        if collection.status == "cancelled":
+            raise HTTPException(status_code=409, detail="Collection has been cancelled")
         existing = await session.scalar(
             select(CommunicationMessage)
             .where(

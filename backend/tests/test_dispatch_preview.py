@@ -20,6 +20,7 @@ async def test_preview_respects_priority_and_disabled_channels_without_writing(m
     )
     collection = SimpleNamespace(
         id=uuid4(),
+        status="draft",
         communication_channel="auto",
         message_include_payment_link=None,
         message_include_payment_qr=None,

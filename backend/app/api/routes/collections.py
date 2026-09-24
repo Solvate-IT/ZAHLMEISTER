@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_organization, get_session, get_verified_organization
@@ -13,6 +13,8 @@ from app.api.routes.message_templates import ensure_default_template
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.entities import (
+    BankTransaction,
+    OnlinePaymentAttempt,
     Collection,
     CollectionParticipant,
     CommunicationMessage,
@@ -61,6 +63,131 @@ from app.services.reminders import (
 )
 
 router = APIRouter(prefix="/collections", tags=["collections"])
+
+
+def can_delete_collection(
+    item: Collection, *, has_messages: bool, has_payments: bool, has_attempts: bool
+) -> bool:
+    return item.status in {"draft", "scheduled"} and not (
+        has_messages or has_payments or has_attempts
+    )
+
+
+def _require_open_collection(item: Collection) -> None:
+    if item.status == "cancelled":
+        raise HTTPException(status_code=409, detail="Collection has been cancelled")
+
+
+async def _collection_jobs(session: AsyncSession, item: Collection) -> list[ScheduledJob]:
+    message_ids = set((await session.execute(select(CommunicationMessage.id).where(
+        CommunicationMessage.collection_id == item.id
+    ))).scalars().all())
+    message_payloads = [json.dumps({"message_id": str(message_id)}) for message_id in message_ids]
+    jobs = (await session.execute(select(ScheduledJob).where(
+        ScheduledJob.organization_id == item.organization_id,
+        ScheduledJob.job_type.in_(["send_collection", "send_reminders", "send_message"]),
+        or_(ScheduledJob.payload.like(f"%{item.id}%"), ScheduledJob.payload.in_(message_payloads)),
+    ))).scalars().all()
+    matching = []
+    for job in jobs:
+        try:
+            payload = json.loads(job.payload)
+            match = (job.job_type == "send_message" and UUID(payload["message_id"]) in message_ids) or (
+                job.job_type != "send_message" and UUID(payload["collection_id"]) == item.id
+            )
+        except (ValueError, TypeError, KeyError):
+            continue
+        if match:
+            matching.append(job)
+    return matching
+
+
+@router.delete("/{collection_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_collection(
+    collection_id: UUID, organization: Organization = Depends(get_organization)
+) -> None:
+    async with SessionLocal.begin() as session:
+        item = await _owned_collection(session, organization, collection_id, for_update=True)
+        cp_ids = select(CollectionParticipant.id).where(
+            CollectionParticipant.collection_id == item.id
+        )
+        messages = await session.scalar(
+            select(CommunicationMessage.id)
+            .where(
+                CommunicationMessage.collection_id == item.id, CommunicationMessage.kind != "test"
+            )
+            .limit(1)
+        )
+        payments = await session.scalar(
+            select(Payment.id).where(Payment.collection_participant_id.in_(cp_ids)).limit(1)
+        )
+        attempts = await session.scalar(
+            select(OnlinePaymentAttempt.id)
+            .where(OnlinePaymentAttempt.collection_participant_id.in_(cp_ids))
+            .limit(1)
+        )
+        bank_match = await session.scalar(
+            select(BankTransaction.id)
+            .where(BankTransaction.candidate_collection_participant_id.in_(cp_ids))
+            .limit(1)
+        )
+        if not can_delete_collection(
+            item,
+            has_messages=bool(messages),
+            has_payments=bool(payments or bank_match),
+            has_attempts=bool(attempts),
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Collection has already been activated or has delivery/payment history; cancel it instead",
+            )
+        for job in await _collection_jobs(session, item):
+            await session.delete(job)
+        await session.delete(item)
+
+
+@router.post("/{collection_id}/cancel", response_model=CollectionRead)
+async def cancel_collection(
+    collection_id: UUID, organization: Organization = Depends(get_organization)
+) -> CollectionRead:
+    async with SessionLocal.begin() as session:
+        item = await _owned_collection(session, organization, collection_id, for_update=True)
+        if item.status == "cancelled":
+            raise HTTPException(status_code=409, detail="Collection is already cancelled")
+        item.status = "cancelled"
+        now = datetime.now(UTC)
+        await session.execute(
+            CommunicationMessage.__table__.update()
+            .where(
+                CommunicationMessage.collection_id == item.id,
+                CommunicationMessage.kind != "test",
+                CommunicationMessage.status == "queued",
+            )
+            .values(status="skipped", error="Collection cancelled")
+        )
+        for job in await _collection_jobs(session, item):
+            if job.status == "pending":
+                job.status = "cancelled"
+                job.finished_at = now
+        total = (
+            await session.scalar(
+                select(func.count(CollectionParticipant.id)).where(
+                    CollectionParticipant.collection_id == item.id
+                )
+            )
+            or 0
+        )
+        paid = (
+            await session.scalar(
+                select(func.count(CollectionParticipant.id)).where(
+                    CollectionParticipant.collection_id == item.id,
+                    CollectionParticipant.status == "paid",
+                )
+            )
+            or 0
+        )
+        order = await get_channel_order(session, organization.id)
+        return _summary(item, total, paid, organization, order)
 
 
 async def _owned_collection(
@@ -282,6 +409,7 @@ async def list_open_balances(
             .join(Collection, Collection.id == CollectionParticipant.collection_id)
             .where(
                 Collection.organization_id == organization.id,
+                Collection.status != "cancelled",
                 CollectionParticipant.status != "paid",
             )
             .group_by(
@@ -609,6 +737,7 @@ async def preview_collection_dispatch(
     session: AsyncSession = Depends(get_session),
 ) -> DispatchPreviewResult:
     collection = await _owned_collection(session, organization, collection_id)
+    _require_open_collection(collection)
     _require_bank_account(organization)
     include_link, include_qr = _effective_message_options(collection, organization)
     _validate_message_options(include_link, include_qr)
@@ -674,6 +803,7 @@ async def dispatch_collection(
         stored_org = await session.get(Organization, organization.id)
         assert stored_org is not None
         item = await _owned_collection(session, stored_org, collection_id, for_update=True)
+        _require_open_collection(item)
         _require_bank_account(stored_org)
         include_link, include_qr = _effective_message_options(item, stored_org)
         _validate_message_options(include_link, include_qr)
@@ -720,6 +850,7 @@ async def send_collection(
         stored_org = await session.get(Organization, organization.id)
         assert stored_org is not None
         item = await _owned_collection(session, stored_org, collection_id, for_update=True)
+        _require_open_collection(item)
         _require_bank_account(stored_org)
         include_link, include_qr = _effective_message_options(item, stored_org)
         _validate_message_options(include_link, include_qr)
@@ -742,6 +873,7 @@ async def remind_collection(
         stored_org = await session.get(Organization, organization.id)
         assert stored_org is not None
         item = await _owned_collection(session, stored_org, collection_id, for_update=True)
+        _require_open_collection(item)
         _require_bank_account(stored_org)
         include_link, include_qr = _effective_message_options(item, stored_org)
         _validate_message_options(include_link, include_qr)

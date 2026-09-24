@@ -40,6 +40,7 @@ async def _open_targets(session: AsyncSession, organization_id: UUID) -> list[Ma
             .join(Participant, Participant.id == CollectionParticipant.participant_id)
             .where(
                 Collection.organization_id == organization_id,
+                Collection.status != "cancelled",
                 CollectionParticipant.status == "open",
             )
         )
