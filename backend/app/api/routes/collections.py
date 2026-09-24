@@ -78,6 +78,22 @@ def _require_open_collection(item: Collection) -> None:
         raise HTTPException(status_code=409, detail="Collection has been cancelled")
 
 
+async def _require_manual_payment_change(
+    session: AsyncSession, collection_participant_id: UUID
+) -> None:
+    external_method = await session.scalar(
+        select(Payment.method).where(
+            Payment.collection_participant_id == collection_participant_id,
+            Payment.method != "manual",
+        ).limit(1)
+    )
+    if external_method is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Automatically recorded payments cannot be changed manually",
+        )
+
+
 async def _collection_jobs(session: AsyncSession, item: Collection) -> list[ScheduledJob]:
     message_ids = set((await session.execute(select(CommunicationMessage.id).where(
         CommunicationMessage.collection_id == item.id
@@ -706,6 +722,7 @@ async def update_payment_status(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Participant not found")
         participant = await session.get(Participant, cp.participant_id)
         assert participant is not None
+        await _require_manual_payment_change(session, cp.id)
         if payload.paid:
             if cp.status != "paid":
                 cp.status = "paid"
