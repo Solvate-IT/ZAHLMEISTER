@@ -33,11 +33,11 @@ test("send errors remain visible over the confirmation dialog and link to paymen
   assert.match(toast,/className=\{`toast app-toast/);
 });
 
-test("the selected template is used for both test and real sending",()=>{
+test("real sending uses the selected template while standalone tests use the saved collection",()=>{
   assert.match(collections,/templates\.length>1/);
-  assert.match(collections,/onTest\(templateId\)/);
   assert.match(collections,/dispatch\(pending\.item,pending\.kind,templateId\)/);
   assert.match(collections,/api\.updateCollection\(item\.id,\{message_template_id:templateId\}\)/);
+  assert.match(collections,/api\.testCollectionMessage\(item\.id,"email"\)/);
 });
 
 test("manual send prepares the draft before the user clicks to open an app",()=>{

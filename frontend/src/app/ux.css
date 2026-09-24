@@ -22,6 +22,16 @@
 .variable-help-list{display:grid;gap:0;padding:0 11px 9px}
 .variable-help-list .row{padding:7px 0;border-top:1px solid var(--border)}
 .variable-help-list code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--blue)}
+.collection-message-details{border:1px solid var(--border);border-radius:12px;background:#fafcff}
+.collection-message-details>summary{cursor:pointer;padding:12px 14px;font-weight:700}
+.collection-message-details>.card{margin:0 12px 12px;box-shadow:none}
+.collection-message-details>p{margin:0;padding:0 14px 14px}
+.send-template{display:grid;gap:5px}
+.send-template-row{display:grid;grid-template-columns:minmax(105px,auto) minmax(0,1fr);align-items:center;gap:10px}
+.send-template-row label{font-size:.85rem;font-weight:700}
+.send-template-row .select{min-width:0;padding:8px 10px}
+.send-confirm-actions{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr)}
+.send-confirm-actions .button{min-width:0;text-align:center}
 .table tbody tr.clickable{cursor:pointer}
 .table tbody tr.clickable:hover td,.table tbody tr.clickable:focus-visible td{background:#eef5ff}
 .table tbody tr.clickable:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}

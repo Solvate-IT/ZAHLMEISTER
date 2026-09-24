@@ -64,7 +64,6 @@ export function CollectionMessageTranslationsEditor({collectionId}:{collectionId
 
   if(!data&&busy)return <div className="muted">{t("loading")}</div>;
   return <div className="card stack">
-    <strong>{t("collectionMessageTranslations")}</strong>
     <p className="muted">{t("collectionMessageTranslationsHint")}</p>
     <div className="field"><label>{t("messageLanguage")}</label><select className="select" value={language} onChange={event=>changeLanguage(event.target.value)}>{languages.map(code=><option key={code} value={code}>{languageName(locale,code)}{data?.translations[code]?" ✓":""}</option>)}</select></div>
     <div className="field"><label>{t("message")}</label><textarea className="textarea" style={{minHeight:220}} value={body} onChange={event=>setBody(event.target.value)}/></div>
