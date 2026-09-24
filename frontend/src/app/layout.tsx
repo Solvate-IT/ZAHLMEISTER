@@ -10,15 +10,15 @@ import {ToastHost} from "@/components/ToastHost";
 export const metadata: Metadata = {
   title: "Zahlmeister – Ihr Geldeintreiber",
   description: "Zahlungen einfach einsammeln und nachverfolgen.",
-  manifest: "/manifest.webmanifest?v=3",
+  manifest: "/manifest.webmanifest?v=4",
   icons: {
     icon: [{url: "/favicon.svg", type: "image/svg+xml"}],
     shortcut: "/favicon.svg",
-    apple: [{url: "/icons/apple-touch-icon.png?v=3", sizes: "180x180", type: "image/png"}],
+    apple: [{url: "/icons/apple-touch-v4.png", sizes: "180x180", type: "image/png"}],
   },
 };
 export const viewport: Viewport = {
-  themeColor: "#183A67",
+  themeColor: "#285481",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
