@@ -17,17 +17,16 @@ test("phone bottom navigation is slightly larger with a generous touch target", 
   assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.mobile-nav button\{[^}]*min-height:52px[^}]*font-size:\.82rem/);
 });
 
-test("participant row actions use accessible inline svg controls on phones", () => {
+test("participant deletion uses an accessible inline svg control on phones", () => {
   assert.match(lists, /className="table participant-table"/);
   assert.match(lists, /className="actions participant-row-actions"/);
-  assert.match(lists, /className="button secondary small participant-action"[^>]*aria-label=\{t\("edit"\)\}/);
   assert.match(lists, /className="button ghost small danger-text participant-action"[^>]*aria-label=\{t\("delete"\)\}/);
   assert.match(lists, /participant-action-icon/);
   assert.match(lists, /<svg/);
   assert.doesNotMatch(lists, /✏|🗑/);
 });
 
-test("phone participant rows keep actions side by side and reduce row height", () => {
+test("phone participant rows keep the remaining action compact and reduce row height", () => {
   assert.match(css, /\.participant-action-icon\{display:none/);
   assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.participant-table\{min-width:560px/);
   assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.participant-table th,\.participant-table td\{padding:9px 10px/);

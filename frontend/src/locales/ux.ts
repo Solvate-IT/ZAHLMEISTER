@@ -47,8 +47,8 @@ export const uxMessages:Record<string,Messages>={
     registerWithProvider:"Beim Anbieter registrieren",
     infobipOnboardingTitle:"Infobip-Konto erforderlich · kostenpflichtiger Anbieter",
     infobipOnboardingHint:"Für internen SMS- und WhatsApp-Versand benötigst du ein eigenes Infobip-Konto. Die Registrierung erfolgt direkt bei Infobip; nach der Testphase fallen je nach Nutzung und Kanal Providerkosten an.",
-    mollieOnboardingTitle:"Mollie-Konto erforderlich · Transaktionskosten",
-    mollieOnboardingHint:"Für Online-Zahlungen benötigst du ein eigenes, von Mollie freigeschaltetes Händlerkonto. Registrierung und Verifizierung erfolgen direkt bei Mollie; für Zahlungen gelten die Mollie-Transaktionsgebühren.",
+    mollieOnboardingTitle:"Mollie-Konto erforderlich · Transaktionsgebühren",
+    mollieOnboardingHint:"Für Online-Zahlungen benötigst du ein eigenes Mollie-Kundenkonto, das für den Zahlungsempfang freigeschaltet ist. Registrierung und Verifizierung erfolgen direkt bei Mollie. Für Zahlungen gelten die Mollie-Transaktionsgebühren.",
     pontoOnboardingTitle:"Ponto-Onboarding · kostenpflichtiger Anbieter",
     pontoOnboardingHint:"Für automatischen BankSync erfolgt das Onboarding direkt beim Verbinden über Ponto Customer Paying. Ein eigenes Ponto-Portal-Konto ist dabei optional; Ponto kann den Kunden direkt per E-Mail-Code onboarden. Je nach Ponto-Modell fallen Providergebühren an."
   },
@@ -99,7 +99,7 @@ export const uxMessages:Record<string,Messages>={
     infobipOnboardingTitle:"Infobip account required · paid provider",
     infobipOnboardingHint:"Internal SMS and WhatsApp delivery requires your own Infobip account. Registration takes place directly at Infobip; provider charges apply after the trial depending on usage and channel.",
     mollieOnboardingTitle:"Mollie account required · transaction fees",
-    mollieOnboardingHint:"Online payments require your own Mollie merchant account approved by Mollie. Registration and verification take place directly at Mollie; Mollie transaction fees apply to payments.",
+    mollieOnboardingHint:"Online payments require your own Mollie customer account approved to receive payments. Registration and verification take place directly at Mollie. Mollie transaction fees apply to payments.",
     pontoOnboardingTitle:"Ponto onboarding · paid provider",
     pontoOnboardingHint:"Automatic BankSync onboarding starts directly from Connect using Ponto Customer Paying. A separate Ponto portal account is optional; Ponto can onboard the customer by email verification code. Provider charges apply according to the Ponto model."
   }
