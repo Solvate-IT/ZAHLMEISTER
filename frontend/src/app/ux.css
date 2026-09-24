@@ -40,6 +40,12 @@
 .app-toast.error{border-color:#ffd5cf;background:#fff2ef;color:#832b25}
 .app-toast a{text-decoration:underline;text-underline-offset:3px;font-weight:800}
 .payment-reference{display:inline-block;padding:4px 7px;font-size:.75rem;white-space:nowrap;word-break:normal}
+.collection-row-actions{align-items:center;flex-wrap:nowrap;white-space:nowrap;gap:8px}
+.collection-row-actions .button{flex:0 0 auto;white-space:nowrap}
+.collection-copy-button.button.small{width:40px;min-width:40px;height:40px;padding:0}
+.collection-copy-button svg{display:block;width:19px;height:19px}
+.collection-participants-table th:nth-child(5),.collection-participants-table td:nth-child(5){min-width:195px}
+.collection-delivery-button.button.small{white-space:nowrap}
 .collection-progress{background:#fff;border:1px solid #dae3ed;height:10px}
 .collection-progress>span{background:var(--teal)}
 .mini-row.clickable{cursor:pointer;border-radius:8px}
