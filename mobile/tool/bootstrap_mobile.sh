@@ -99,48 +99,7 @@ if plist_path.exists():
             project.write_text(text)
 PY
 
-# Keep compatibility with existing checked-in icon resources first. The canonical
-# vector logo below is then used by Capacitor Assets to generate the final native
-# Android/iOS resources, including adaptive launcher variants.
-for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-  src="$ROOT_DIR/assets/brand/native/android/mipmap-$density/ic_launcher.png"
-  target_dir="$ROOT_DIR/android/app/src/main/res/mipmap-$density"
-  if [[ -f "$src" && -d "$target_dir" ]]; then
-    cp "$src" "$target_dir/ic_launcher.png"
-    cp "$src" "$target_dir/ic_launcher_round.png"
-    cp "$src" "$target_dir/ic_launcher_foreground.png"
-  fi
-done
-if [[ -d "$ROOT_DIR/ios/App/App/Assets.xcassets/AppIcon.appiconset" ]]; then
-  icon_dir="$ROOT_DIR/ios/App/App/Assets.xcassets/AppIcon.appiconset"
-  cp "$ROOT_DIR"/assets/brand/native/ios/Icon-App-*.png "$icon_dir/"
-  cat > "$icon_dir/Contents.json" <<'JSON'
-{
-  "images": [
-    {"idiom":"iphone","size":"20x20","scale":"2x","filename":"Icon-App-20x20@2x.png"},
-    {"idiom":"iphone","size":"20x20","scale":"3x","filename":"Icon-App-20x20@3x.png"},
-    {"idiom":"iphone","size":"29x29","scale":"2x","filename":"Icon-App-29x29@2x.png"},
-    {"idiom":"iphone","size":"29x29","scale":"3x","filename":"Icon-App-29x29@3x.png"},
-    {"idiom":"iphone","size":"40x40","scale":"2x","filename":"Icon-App-40x40@2x.png"},
-    {"idiom":"iphone","size":"40x40","scale":"3x","filename":"Icon-App-40x40@3x.png"},
-    {"idiom":"iphone","size":"60x60","scale":"2x","filename":"Icon-App-60x60@2x.png"},
-    {"idiom":"iphone","size":"60x60","scale":"3x","filename":"Icon-App-60x60@3x.png"},
-    {"idiom":"ipad","size":"20x20","scale":"1x","filename":"Icon-App-20x20@1x.png"},
-    {"idiom":"ipad","size":"20x20","scale":"2x","filename":"Icon-App-20x20@2x.png"},
-    {"idiom":"ipad","size":"29x29","scale":"1x","filename":"Icon-App-29x29@1x.png"},
-    {"idiom":"ipad","size":"29x29","scale":"2x","filename":"Icon-App-29x29@2x.png"},
-    {"idiom":"ipad","size":"40x40","scale":"1x","filename":"Icon-App-40x40@1x.png"},
-    {"idiom":"ipad","size":"40x40","scale":"2x","filename":"Icon-App-40x40@2x.png"},
-    {"idiom":"ipad","size":"76x76","scale":"1x","filename":"Icon-App-76x76@1x.png"},
-    {"idiom":"ipad","size":"76x76","scale":"2x","filename":"Icon-App-76x76@2x.png"},
-    {"idiom":"ipad","size":"83.5x83.5","scale":"2x","filename":"Icon-App-83.5x83.5@2x.png"},
-    {"idiom":"ios-marketing","size":"1024x1024","scale":"1x","filename":"Icon-App-1024x1024@1x.png"}
-  ],
-  "info": {"author":"xcode","version":1}
-}
-JSON
-fi
-
+# Generate native launcher icons directly from assets/logo.svg.
 ASSET_ARGS=(
   generate
   --assetPath "$ROOT_DIR/assets"
