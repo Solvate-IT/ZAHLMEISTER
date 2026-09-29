@@ -2,7 +2,7 @@
 .participant-action-icon path,.participant-action-icon line,.participant-action-icon polyline{vector-effect:non-scaling-stroke}
 
 @media(max-width:620px){
-  .workspace-header{height:64px;padding:0 12px}
+  .workspace-header{height:auto;min-height:64px;padding:6px 12px}
   .workspace-body{font-size:.94rem;padding:14px 10px 98px}
   .workspace-body .input,.workspace-body .select,.workspace-body .textarea{font-size:1rem}
   .page-title{gap:12px;margin-bottom:14px}

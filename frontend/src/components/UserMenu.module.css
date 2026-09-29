@@ -1,0 +1,11 @@
+.menu{position:relative;min-width:0;max-width:100%}
+.trigger{display:flex;align-items:center;gap:6px;min-height:44px;padding:8px;border-radius:10px;cursor:pointer;list-style:none}
+.trigger::-webkit-details-marker{display:none}
+.trigger span{overflow-wrap:anywhere;min-width:0}
+.trigger svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5}
+.trigger:hover,.menu[open] .trigger{background:#e9f2ff;color:var(--blue)}
+.trigger:focus-visible,.options button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.options{position:absolute;right:0;top:100%;z-index:1;min-width:190px;max-width:calc(100vw - 24px);padding:6px;background:white;border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow)}
+.options button{display:block;width:100%;min-height:44px;padding:10px 12px;border:0;border-radius:8px;background:transparent;text-align:left;overflow-wrap:anywhere}
+.options button:hover{background:#e9f2ff;color:var(--blue)}
+@media(max-width:620px){.trigger{font-size:.86rem;padding:6px}.trigger span{max-width:38vw}}
