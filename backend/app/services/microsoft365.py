@@ -20,6 +20,7 @@ from app.db.session import SessionLocal
 from app.models.entities import CommunicationConnection
 from app.services.message_renderer import CanonicalMessage
 from app.services.payments import render_qr_png
+from app.services.retry import RetryableError, retry_after_seconds
 from app.services.secrets import decrypt_config, encrypt_config
 
 
@@ -214,6 +215,13 @@ async def _graph(connection_id, method: str, path: str, **kwargs) -> httpx.Respo
         response = await client.request(method, url, headers=headers, **kwargs)
     if response.status_code == 401:
         raise ValueError("Microsoft 365 authorization is no longer valid; reconnect the mailbox")
+    if response.status_code == 429 or response.status_code >= 500:
+        # Throttling (Exchange Online allows about 30 messages per minute and
+        # mailbox) and outages are temporary: retry, honouring Graph's Retry-After.
+        raise RetryableError(
+            f"Microsoft Graph returned HTTP {response.status_code}",
+            retry_after=retry_after_seconds(response.headers.get("Retry-After")),
+        )
     if response.status_code >= 400:
         try:
             payload = response.json()
@@ -323,6 +331,10 @@ def _headers(message: dict[str, Any]) -> dict[str, str]:
     return result
 
 
+# Pages of 100 messages read per sync round; a larger backlog continues next round.
+_INBOX_MAX_PAGES = 10
+
+
 async def fetch_inbox(connection_id, cursor: str | None) -> tuple[list[MicrosoftMail], str]:
     if cursor:
         try:
@@ -334,19 +346,30 @@ async def fetch_inbox(connection_id, cursor: str | None) -> tuple[list[Microsoft
     # Small overlap protects against delivery/order timing. Duplicates are removed by external_id.
     query_since = since - timedelta(minutes=2)
     filter_value = query_since.isoformat().replace("+00:00", "Z")
-    path = (
+    # Oldest first, following Graph's paging: the cursor then only ever advances
+    # past messages that were actually read, so a burst is never skipped.
+    path: str | None = (
         "/me/mailFolders/inbox/messages"
-        "?$top=100&$orderby=receivedDateTime%20desc"
+        "?$top=100&$orderby=receivedDateTime%20asc"
         "&$select=id,conversationId,internetMessageId,receivedDateTime,subject,from,toRecipients,body,internetMessageHeaders"
         f"&$filter=receivedDateTime%20ge%20{filter_value}"
     )
-    response = await _graph(
-        connection_id,
-        "GET",
-        path,
-        headers={"Prefer": 'IdType="ImmutableId", outlook.body-content-type="text"'},
-    )
-    rows = response.json().get("value") or []
+    rows: list[Any] = []
+    graph_base = settings.microsoft365_graph_url.rstrip("/")
+    for _page in range(_INBOX_MAX_PAGES):
+        if path is None:
+            break
+        response = await _graph(
+            connection_id,
+            "GET",
+            path,
+            headers={"Prefer": 'IdType="ImmutableId", outlook.body-content-type="text"'},
+        )
+        payload = response.json()
+        rows.extend(payload.get("value") or [])
+        next_link = str(payload.get("@odata.nextLink") or "")
+        # Follow only links on the configured Graph host.
+        path = next_link.removeprefix(graph_base) if next_link.startswith(graph_base + "/") else None
     result: list[MicrosoftMail] = []
     newest = since
     for item in rows:

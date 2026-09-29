@@ -1,5 +1,6 @@
 import asyncio
 import smtplib
+import ssl
 from email.message import EmailMessage
 
 from app.core.config import settings
@@ -26,7 +27,9 @@ def _send(subject: str, recipient: str, body: str) -> None:
 
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30) as client:
         if settings.smtp_starttls:
-            client.starttls()
+            # Without an explicit context smtplib does not verify the certificate,
+            # and these messages carry password-reset and verification links.
+            client.starttls(context=ssl.create_default_context())
         if settings.smtp_username:
             client.login(settings.smtp_username, settings.smtp_password)
         client.send_message(message)
