@@ -62,3 +62,7 @@
 
 .workspace-body>.notice{margin-bottom:20px}
 @media(max-width:620px){.workspace-body>.notice{margin-bottom:16px}}
+
+.consent-field{display:flex;gap:10px;align-items:flex-start;font-size:.92rem;line-height:1.45}
+.consent-field input{margin-top:3px;flex:none}
+.legal-section+.legal-section{margin-top:18px}
