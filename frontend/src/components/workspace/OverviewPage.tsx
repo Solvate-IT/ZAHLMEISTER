@@ -38,7 +38,7 @@ export function OverviewPage({onNavigate}:{onNavigate:(v:OverviewTarget,create?:
   return <>
     <div className="page-title"><div><h1>{t("overview")}</h1><div className="muted">{t("subtitle")}</div></div><div className="actions"><button className="button secondary" onClick={()=>onNavigate("lists","list")}>{t("newList")}</button><button className="button" onClick={()=>onNavigate("collections","collection")}>{t("newCollection")}</button></div></div>
 
-    <div className="grid-4">
+    <div className="grid-4 overview-metrics">
       <Metric label={t("participantLists")} value={lists.length}/>
       <Metric label={t("participants")} value={participants}/>
       <Metric label={t("collections")} value={collections.length}/>

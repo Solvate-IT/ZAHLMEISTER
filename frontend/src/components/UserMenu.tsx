@@ -15,7 +15,7 @@ export function UserMenu({name, onSettings, onLogout}: {
   const openedByHover = useRef(false);
 
   useEffect(() => {
-    function closeOutside(event: PointerEvent) {
+    function closeOutside(event: PointerEvent | FocusEvent) {
       if (event.target instanceof Node && !details.current?.contains(event.target)) {
         details.current?.removeAttribute("open");
       }
@@ -27,9 +27,11 @@ export function UserMenu({name, onSettings, onLogout}: {
       }
     }
     document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("focusin", closeOutside);
     document.addEventListener("keydown", closeOnEscape);
     return () => {
       document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("focusin", closeOutside);
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, []);
@@ -50,9 +52,6 @@ export function UserMenu({name, onSettings, onLogout}: {
       if (event.pointerType === "mouse" && !event.currentTarget.contains(document.activeElement)) {
         event.currentTarget.open = false;
       }
-    }}
-    onBlur={event => {
-      if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false;
     }}>
     <summary ref={trigger} className={styles.trigger} onClick={event => {
       // The first mouse click must not undo opening on pointer entry.
