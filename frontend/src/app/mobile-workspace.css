@@ -28,3 +28,13 @@
   .participant-action-label{display:none}
   .participant-action-icon{display:inline-flex;width:18px;height:18px}
 }
+
+.table.contact-list-table{min-width:0;table-layout:fixed;width:100%}
+.contact-list-table th,.contact-list-table td{overflow-wrap:anywhere}
+.contact-list-table th:last-child,.contact-list-table td:last-child{width:35%;text-align:right}
+@media(max-width:620px){
+  .workspace-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .workspace-metrics .metric{min-width:0;padding:13px;overflow-wrap:anywhere}
+  .workspace-metrics .metric .value{font-size:1.45rem}
+  .contact-list-table th,.contact-list-table td{padding:10px}
+}
