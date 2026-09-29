@@ -28,3 +28,5 @@ COPY backend/pyproject.toml ./
 COPY backend/app ./app
 RUN pip install --no-cache-dir -e ".[dev]"
 COPY backend/ .
+# Verify async database dependencies in the actual runtime environment.
+RUN python -c "from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine; from sqlalchemy.util.concurrency import greenlet_spawn; import asyncio; asyncio.run(greenlet_spawn(lambda: None))"

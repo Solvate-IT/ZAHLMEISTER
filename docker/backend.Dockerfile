@@ -51,5 +51,7 @@ CMD ["python", "-m", "pytest", "-q"]
 FROM base AS runtime
 COPY --chown=app:app backend/locales ./locales
 USER app
+# Verify async database dependencies in the actual runtime environment.
+RUN python -c "from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine; from sqlalchemy.util.concurrency import greenlet_spawn; import asyncio; asyncio.run(greenlet_spawn(lambda: None))"
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
