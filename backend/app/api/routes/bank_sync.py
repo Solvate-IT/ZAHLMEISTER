@@ -21,7 +21,12 @@ from app.schemas.bank_sync import (
     PontoConfigurationRead,
 )
 from app.services import ponto
-from app.services.bank_sync import refresh_accounts, sync_connection
+from app.services.bank_sync import (
+    apply_remote_accounts,
+    fetch_remote_accounts,
+    mark_connection_error,
+    sync_connection,
+)
 from app.services.bank_sync_providers import get_bank_sync_provider
 
 router = APIRouter(prefix="/bank-sync", tags=["bank-sync"])
@@ -205,12 +210,21 @@ async def finish_ponto(
 
     if connection_id is not None:
         try:
+            # Read the account list before taking the row lock: no provider call
+            # ever runs while this connection's row is locked.
+            async with SessionLocal() as session:
+                item = await session.get(BankSyncConnection, connection_id)
+                if item is None:
+                    logger.warning("Ponto connection disappeared before account refresh: %s", connection_id)
+                    return _ponto_redirect("error")
+                session.expunge(item)
+            remote_accounts = await fetch_remote_accounts(item)
             async with SessionLocal.begin() as session:
                 item = await session.get(BankSyncConnection, connection_id, with_for_update=True)
                 if item is None:
                     logger.warning("Ponto connection disappeared before account refresh: %s", connection_id)
                     return _ponto_redirect("error")
-                await refresh_accounts(session, item)
+                await apply_remote_accounts(session, item, remote_accounts)
                 item.status = "connected"
                 item.last_error = None
                 item.last_tested_at = now
@@ -289,7 +303,7 @@ async def update_account(
 
 @router.post("/sync", response_model=BankSyncRunRead)
 async def sync_now(organization: Organization = Depends(get_organization)) -> BankSyncRunRead:
-    async with SessionLocal.begin() as session:
+    async with SessionLocal() as session:
         item = await session.scalar(
             select(BankSyncConnection).where(
                 BankSyncConnection.organization_id == organization.id,
@@ -298,13 +312,15 @@ async def sync_now(organization: Organization = Depends(get_organization)) -> Ba
         )
         if not _is_established_connection(item) or item.status not in {"connected", "error"}:
             raise HTTPException(status_code=409, detail="BankSync is not connected")
-        try:
-            result = await sync_connection(session, item)
-        except Exception as exc:
-            item.status = "error"
-            item.last_error = str(exc)[:2000]
-            raise HTTPException(status_code=502, detail=item.last_error) from exc
-        return BankSyncRunRead(**result)
+        connection_id = item.id
+    try:
+        result = await sync_connection(connection_id)
+    except Exception as exc:
+        error = str(exc)[:2000]
+        # Recorded in its own transaction: the failed sync has rolled back.
+        await mark_connection_error(connection_id, error)
+        raise HTTPException(status_code=502, detail=error) from exc
+    return BankSyncRunRead(**result)
 
 
 @router.delete("/connection", status_code=204)

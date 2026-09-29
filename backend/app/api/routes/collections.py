@@ -1,14 +1,14 @@
-import json
 import secrets
 import uuid
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import delete, func, or_, select
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_organization, get_session, get_verified_organization
+from app.api.pagination import Page, page_params, set_total_count, total_count
 from app.api.routes.message_templates import ensure_default_template
 from app.core.config import settings
 from app.db.session import SessionLocal
@@ -43,6 +43,7 @@ from app.schemas.workflow import (
     PaymentStatusUpdate,
     QueueActionResult,
 )
+from app.services.auth import organization_has_verified_member
 from app.services.channel_strategy import (
     get_channel_order,
     load_channel_runtimes,
@@ -51,6 +52,14 @@ from app.services.channel_strategy import (
 )
 from app.services.communications import external_launch_uri
 from app.services.collection_message_overrides import serialize_collection_message_overrides
+from app.services.jobs import (
+    JOB_SEND_COLLECTION,
+    JOB_SEND_MESSAGE,
+    JOB_SEND_REMINDERS,
+    collection_send_job,
+    reminder_dedupe_key,
+    reminder_job,
+)
 from app.services.message_dispatch import all_routes_internal, queue_collection_messages
 from app.services.message_renderer import render_collection_message
 from app.services.participant_preferences import load_participant_locales
@@ -95,27 +104,20 @@ async def _require_manual_payment_change(
 
 
 async def _collection_jobs(session: AsyncSession, item: Collection) -> list[ScheduledJob]:
-    message_ids = set((await session.execute(select(CommunicationMessage.id).where(
-        CommunicationMessage.collection_id == item.id
-    ))).scalars().all())
-    message_payloads = [json.dumps({"message_id": str(message_id)}) for message_id in message_ids]
-    jobs = (await session.execute(select(ScheduledJob).where(
-        ScheduledJob.organization_id == item.organization_id,
-        ScheduledJob.job_type.in_(["send_collection", "send_reminders", "send_message"]),
-        or_(ScheduledJob.payload.like(f"%{item.id}%"), ScheduledJob.payload.in_(message_payloads)),
-    ))).scalars().all()
-    matching = []
-    for job in jobs:
-        try:
-            payload = json.loads(job.payload)
-            match = (job.job_type == "send_message" and UUID(payload["message_id"]) in message_ids) or (
-                job.job_type != "send_message" and UUID(payload["collection_id"]) == item.id
+    """Every send, reminder and delivery job of one collection (indexed by collection_id)."""
+    return list(
+        (
+            await session.execute(
+                select(ScheduledJob).where(
+                    ScheduledJob.organization_id == item.organization_id,
+                    ScheduledJob.collection_id == item.id,
+                    ScheduledJob.job_type.in_(
+                        [JOB_SEND_COLLECTION, JOB_SEND_REMINDERS, JOB_SEND_MESSAGE]
+                    ),
+                )
             )
-        except (ValueError, TypeError, KeyError):
-            continue
-        if match:
-            matching.append(job)
-    return matching
+        ).scalars().all()
+    )
 
 
 @router.delete("/{collection_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -217,21 +219,6 @@ async def _owned_collection(
     if item is None or item.organization_id != organization.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collection not found")
     return item
-
-
-async def _active_job_exists(
-    session: AsyncSession, *, job_type: str, payload: str
-) -> bool:
-    job_id = await session.scalar(
-        select(ScheduledJob.id)
-        .where(
-            ScheduledJob.job_type == job_type,
-            ScheduledJob.payload == payload,
-            ScheduledJob.status.in_(["pending", "running"]),
-        )
-        .limit(1)
-    )
-    return job_id is not None
 
 
 def _require_bank_account(organization: Organization) -> None:
@@ -354,28 +341,20 @@ async def _schedule_reminders(
         now=now,
     )
     for rule_key, scheduled_at in schedules:
-        payload = json.dumps(
-            {
-                "collection_id": str(collection.id),
-                "automatic": True,
-                "rule": rule_key,
-            }
-        )
         exists = await session.scalar(
             select(ScheduledJob.id)
             .where(
-                ScheduledJob.job_type == "send_reminders",
-                ScheduledJob.payload == payload,
+                ScheduledJob.dedupe_key == reminder_dedupe_key(collection.id, rule_key),
                 ScheduledJob.status.in_(["pending", "running", "done"]),
             )
             .limit(1)
         )
         if exists is None:
             session.add(
-                ScheduledJob(
+                reminder_job(
                     organization_id=collection.organization_id,
-                    job_type="send_reminders",
-                    payload=payload,
+                    collection_id=collection.id,
+                    rule_key=rule_key,
                     scheduled_at=scheduled_at,
                 )
             )
@@ -383,17 +362,25 @@ async def _schedule_reminders(
 
 @router.get("", response_model=list[CollectionRead])
 async def list_collections(
+    response: Response,
+    page: Page = Depends(page_params),
     organization: Organization = Depends(get_organization),
     session: AsyncSession = Depends(get_session),
 ) -> list[CollectionRead]:
+    set_total_count(
+        response,
+        await total_count(
+            session, select(Collection.id).where(Collection.organization_id == organization.id)
+        ),
+    )
     total_expr = func.count(CollectionParticipant.id)
     paid_expr = func.count(CollectionParticipant.id).filter(CollectionParticipant.status == "paid")
-    stmt = (
+    stmt = page.apply(
         select(Collection, total_expr, paid_expr)
         .outerjoin(CollectionParticipant, CollectionParticipant.collection_id == Collection.id)
         .where(Collection.organization_id == organization.id)
         .group_by(Collection.id)
-        .order_by(Collection.created_at.desc())
+        .order_by(Collection.created_at.desc(), Collection.id)
     )
     rows = (await session.execute(stmt)).all()
     channel_order = await get_channel_order(session, organization.id)
@@ -405,13 +392,14 @@ async def list_collections(
 
 @router.get("/open-balances", response_model=list[ParticipantOpenBalanceRead])
 async def list_open_balances(
+    response: Response,
+    page: Page = Depends(page_params),
     organization: Organization = Depends(get_organization),
     session: AsyncSession = Depends(get_session),
 ) -> list[ParticipantOpenBalanceRead]:
     amount_expr = func.sum(Collection.amount)
     count_expr = func.count(CollectionParticipant.id)
-    rows = (
-        await session.execute(
+    balances = (
             select(
                 Participant.id,
                 Participant.name,
@@ -436,9 +424,10 @@ async def list_open_balances(
                 Collection.currency,
             )
             .having(amount_expr > 0)
-            .order_by(amount_expr.desc(), Participant.name.asc())
-        )
-    ).all()
+            .order_by(amount_expr.desc(), Participant.name.asc(), Participant.id)
+    )
+    set_total_count(response, await total_count(session, balances))
+    rows = (await session.execute(page.apply(balances))).all()
     return [
         ParticipantOpenBalanceRead(
             participant_id=participant_id,
@@ -512,6 +501,14 @@ async def create_collection(
             )
         scheduled = send_at > now
         if scheduled:
+            # A scheduled send goes out later without anybody signed in, through the
+            # platform's own mail sender by default, so it needs the same verified
+            # email address as an immediate send (checked again by the worker).
+            if not await organization_has_verified_member(session, stored_org.id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Email verification required",
+                )
             _require_bank_account(stored_org)
         item = Collection(
             organization_id=stored_org.id,
@@ -565,10 +562,9 @@ async def create_collection(
                     ),
                 )
             session.add(
-                ScheduledJob(
+                collection_send_job(
                     organization_id=stored_org.id,
-                    job_type="send_collection",
-                    payload=json.dumps({"collection_id": str(item.id)}),
+                    collection_id=item.id,
                     scheduled_at=send_at,
                 )
             )
@@ -597,37 +593,57 @@ async def get_collection(
     delivery_statuses: dict[UUID, str] = {}
     delivery_channels: dict[UUID, str] = {}
     communication_counts: dict[UUID, int] = {}
-    cp_ids = [cp.id for cp, _participant in rows]
-    if cp_ids:
-        payment_rows = (
+    if rows:
+        # Aggregated in the database, one row per participant, keyed on the
+        # collection instead of an IN list of every participant id.
+        latest_payments = (
             await session.execute(
-                select(Payment.collection_participant_id, Payment.method, Payment.booked_at)
-                .where(Payment.collection_participant_id.in_(cp_ids))
-                .order_by(Payment.booked_at.desc())
+                select(Payment.collection_participant_id, Payment.method)
+                .join(
+                    CollectionParticipant,
+                    CollectionParticipant.id == Payment.collection_participant_id,
+                )
+                .where(CollectionParticipant.collection_id == item.id)
+                .order_by(Payment.collection_participant_id, Payment.booked_at.desc())
+                .distinct(Payment.collection_participant_id)
             )
         ).all()
-        for cp_id, method, _booked_at in payment_rows:
-            payment_methods.setdefault(cp_id, method)
+        payment_methods = {cp_id: method for cp_id, method in latest_payments}
 
-        message_rows = (
+        visible_messages = (
+            CommunicationMessage.collection_id == item.id,
+            CommunicationMessage.kind != "test",
+        )
+        latest_messages = (
             await session.execute(
                 select(
                     CommunicationMessage.collection_participant_id,
                     CommunicationMessage.status,
                     CommunicationMessage.channel,
-                    CommunicationMessage.created_at,
                 )
-                .where(
-                    CommunicationMessage.collection_participant_id.in_(cp_ids),
-                    CommunicationMessage.kind != "test",
+                .where(*visible_messages)
+                .order_by(
+                    CommunicationMessage.collection_participant_id,
+                    CommunicationMessage.created_at.desc(),
                 )
-                .order_by(CommunicationMessage.created_at.desc())
+                .distinct(CommunicationMessage.collection_participant_id)
             )
         ).all()
-        for cp_id, message_status, channel, _created_at in message_rows:
-            communication_counts[cp_id] = communication_counts.get(cp_id, 0) + 1
-            delivery_statuses.setdefault(cp_id, message_status)
-            delivery_channels.setdefault(cp_id, channel)
+        for cp_id, message_status, channel in latest_messages:
+            delivery_statuses[cp_id] = message_status
+            delivery_channels[cp_id] = channel
+        communication_counts = dict(
+            (
+                await session.execute(
+                    select(
+                        CommunicationMessage.collection_participant_id,
+                        func.count(CommunicationMessage.id),
+                    )
+                    .where(*visible_messages)
+                    .group_by(CommunicationMessage.collection_participant_id)
+                )
+            ).all()
+        )
 
     channel_order = await get_channel_order(session, organization.id)
     include_link, include_qr = _effective_message_options(item, organization)

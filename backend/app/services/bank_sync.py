@@ -19,6 +19,7 @@ from app.models.entities import (
     Participant,
     Payment,
 )
+from app.db.session import SessionLocal
 from app.services.bank_imports import MatchTarget, ParsedBankTransaction, decide_match
 from app.services.bank_sync_providers import get_bank_sync_provider
 from app.services.locks import transaction_lock
@@ -135,9 +136,14 @@ async def _apply_auto_payment(session: AsyncSession, tx: BankTransaction, cp_id:
     return True
 
 
-async def refresh_accounts(session: AsyncSession, connection: BankSyncConnection) -> list[BankSyncAccount]:
-    provider = get_bank_sync_provider(connection.provider)
-    remote = await provider.list_accounts(connection)
+async def fetch_remote_accounts(connection: BankSyncConnection) -> list[dict]:
+    """The provider's account list. Network only: call it with no transaction open."""
+    return await get_bank_sync_provider(connection.provider).list_accounts(connection)
+
+
+async def apply_remote_accounts(
+    session: AsyncSession, connection: BankSyncConnection, remote: list[dict]
+) -> list[BankSyncAccount]:
     existing = {
         row.external_id: row
         for row in (
@@ -178,12 +184,86 @@ async def refresh_accounts(session: AsyncSession, connection: BankSyncConnection
     return result
 
 
-async def sync_connection(session: AsyncSession, connection: BankSyncConnection) -> dict[str, int | datetime]:
+async def _sync_snapshot(connection_id: UUID) -> tuple[BankSyncConnection, dict[str, bool], bool]:
+    """A detached copy of the connection, which accounts are enabled, and whether
+    anything is open to match — read in one short transaction."""
+    async with SessionLocal() as session:
+        connection = await session.get(BankSyncConnection, connection_id)
+        if connection is None:
+            raise ValueError("BankSync connection not found")
+        enabled = {
+            row.external_id: row.enabled
+            for row in (
+                await session.execute(
+                    select(BankSyncAccount).where(BankSyncAccount.connection_id == connection_id)
+                )
+            ).scalars().all()
+        }
+        has_open_participants = (
+            await session.scalar(
+                select(CollectionParticipant.id)
+                .join(Collection, Collection.id == CollectionParticipant.collection_id)
+                .where(
+                    Collection.organization_id == connection.organization_id,
+                    Collection.status != "cancelled",
+                    CollectionParticipant.status == "open",
+                )
+                .limit(1)
+            )
+            is not None
+        )
+        session.expunge(connection)
+    return connection, enabled, has_open_participants
+
+
+async def sync_connection(connection_id: UUID) -> dict[str, int | datetime]:
+    """Import new bank transactions for one connection and match them.
+
+    The provider is read with no database transaction open; its result is then
+    applied in one short transaction. Holding the connection's row lock across
+    the provider calls used to make token refresh wait on itself (a deadlock the
+    database cannot detect) and serialized every other access to the connection.
+    """
+    connection, enabled, has_open_participants = await _sync_snapshot(connection_id)
+    provider = get_bank_sync_provider(connection.provider)
+    remote_accounts = await provider.list_accounts(connection)
+    remote_transactions: dict[str, list[dict]] = {}
+    # With no open collection there is nothing useful to match, so do not pull
+    # unrelated account history at all.
+    if has_open_participants:
+        for item in remote_accounts:
+            external_id = parse_ponto_account(item)["external_id"]
+            if external_id and enabled.get(external_id, True):
+                remote_transactions[external_id] = await provider.list_transactions(
+                    connection, external_id
+                )
+
+    async with SessionLocal.begin() as session:
+        stored = await session.get(BankSyncConnection, connection_id, with_for_update=True)
+        if stored is None or stored.status == "disconnected":
+            raise ValueError("BankSync connection is no longer connected")
+        return await _apply_sync(session, stored, remote_accounts, remote_transactions)
+
+
+async def mark_connection_error(connection_id: UUID, error: str) -> None:
+    async with SessionLocal.begin() as session:
+        connection = await session.get(BankSyncConnection, connection_id, with_for_update=True)
+        if connection is not None:
+            connection.status = "error"
+            connection.last_error = error[:2000]
+
+
+async def _apply_sync(
+    session: AsyncSession,
+    connection: BankSyncConnection,
+    remote_accounts: list[dict],
+    remote_transactions: dict[str, list[dict]],
+) -> dict[str, int | datetime]:
     organization = await session.get(Organization, connection.organization_id)
     if organization is None:
         raise ValueError("BankSync organization not found")
     await transaction_lock(session, "bank-ingestion", organization.id)
-    accounts = await refresh_accounts(session, connection)
+    accounts = await apply_remote_accounts(session, connection, remote_accounts)
     targets = await _targets(session, connection.organization_id)
     imported = auto_matched = needs_review = duplicates = 0
     now = datetime.now(UTC)
@@ -221,8 +301,7 @@ async def sync_connection(session: AsyncSession, connection: BankSyncConnection)
     for account in accounts:
         if not account.enabled:
             continue
-        provider = get_bank_sync_provider(connection.provider)
-        for item in await provider.list_transactions(connection, account.external_id):
+        for item in remote_transactions.get(account.external_id, []):
             parsed = parse_ponto_transaction(item, account.currency)
             if parsed is None:
                 continue

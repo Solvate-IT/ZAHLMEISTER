@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
 
 import httpx
+from sqlalchemy import inspect as sa_inspect
 
 from app.core.config import settings
 from app.models.entities import BankSyncConnection
@@ -248,7 +249,20 @@ def apply_authorization(connection: BankSyncConnection, config: dict[str, Any]) 
     connection.last_error = None
 
 
+def _adopt_config(connection: BankSyncConnection, stored: BankSyncConnection) -> None:
+    """Give a detached caller copy the refreshed token, so the following requests of
+    the same sync use it without another database round trip."""
+    if connection is not stored and sa_inspect(connection).detached:
+        connection.encrypted_config = stored.encrypted_config
+
+
 async def access_token(connection: BankSyncConnection) -> str:
+    """A valid access token, refreshed single-flight when expired.
+
+    The refresh locks the connection row in its own short transaction. Callers
+    must therefore not hold that row lock themselves while calling the API
+    (see app.services.bank_sync.sync_connection).
+    """
     config = decrypt_config(connection.encrypted_config)
     stored_environment = str(config.get("ponto_environment") or "")
     if stored_environment and stored_environment != settings.ponto_connect_environment:
@@ -269,6 +283,7 @@ async def access_token(connection: BankSyncConnection) -> str:
             raise ValueError("Ponto connection belongs to a different environment; reconnect it")
         fresh_token = str(fresh_config.get("access_token") or "")
         if fresh_token and float(fresh_config.get("expires_at") or 0) > time.time():
+            _adopt_config(connection, stored)
             return fresh_token
         refresh = str(fresh_config.get("refresh_token") or "")
         if not refresh:
@@ -290,6 +305,7 @@ async def access_token(connection: BankSyncConnection) -> str:
         )
         stored.encrypted_config = encrypt_config(fresh_config)
         stored.last_error = None
+        _adopt_config(connection, stored)
         return str(payload["access_token"])
 
 

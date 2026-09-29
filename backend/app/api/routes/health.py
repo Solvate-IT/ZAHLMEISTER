@@ -1,8 +1,8 @@
 import hmac
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Header, HTTPException, status
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 
 from app.core.config import settings
 from app.db.session import SessionLocal, engine
@@ -17,16 +17,30 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-async def _worker_state() -> tuple[str, float | None]:
+def _worker_heartbeats():
+    # One row per worker process ("worker:<host>:<pid>"); "worker" is the name a
+    # single worker used before the queue ran several processes.
+    return or_(RuntimeHeartbeat.name == "worker", RuntimeHeartbeat.name.like("worker:%"))
+
+
+async def _worker_state() -> tuple[str, float | None, int]:
+    now = datetime.now(UTC)
     async with SessionLocal() as session:
-        heartbeat = await session.get(RuntimeHeartbeat, "worker")
-    if heartbeat is None:
-        return "missing", None
-    seen = heartbeat.last_seen_at
-    if seen.tzinfo is None:
-        seen = seen.replace(tzinfo=UTC)
-    age = max(0.0, (datetime.now(UTC) - seen).total_seconds())
-    return ("ok" if age <= settings.worker_stale_seconds else "stale"), age
+        newest = await session.scalar(
+            select(func.max(RuntimeHeartbeat.last_seen_at)).where(_worker_heartbeats())
+        )
+        alive = await session.scalar(
+            select(func.count()).select_from(RuntimeHeartbeat).where(
+                _worker_heartbeats(),
+                RuntimeHeartbeat.last_seen_at >= now - timedelta(seconds=settings.worker_stale_seconds),
+            )
+        )
+    if newest is None:
+        return "missing", None, 0
+    if newest.tzinfo is None:
+        newest = newest.replace(tzinfo=UTC)
+    age = max(0.0, (now - newest).total_seconds())
+    return ("ok" if age <= settings.worker_stale_seconds else "stale"), age, int(alive or 0)
 
 
 @router.get("/ready")
@@ -47,7 +61,7 @@ async def ready() -> dict[str, str]:
             raise HTTPException(status_code=503, detail="billing configuration is incomplete")
 
     if settings.readiness_require_worker:
-        worker_status, _ = await _worker_state()
+        worker_status, _, _ = await _worker_state()
         if worker_status != "ok":
             raise HTTPException(status_code=503, detail="worker unavailable")
     return {"status": "ready"}
@@ -77,7 +91,7 @@ async def operational_metrics(
         oldest = await session.scalar(
             select(func.min(ScheduledJob.scheduled_at)).where(ScheduledJob.status == "pending")
         )
-    worker_status, worker_age = await _worker_state()
+    worker_status, worker_age, workers_alive = await _worker_state()
     if oldest is not None and oldest.tzinfo is None:
         oldest = oldest.replace(tzinfo=UTC)
     oldest_age = max(0.0, (now - oldest).total_seconds()) if oldest else 0.0
@@ -87,6 +101,7 @@ async def operational_metrics(
         "worker": {
             "status": worker_status,
             "heartbeat_age_seconds": round(worker_age, 2) if worker_age is not None else None,
+            "processes_alive": workers_alive,
         },
         "jobs": {
             "pending": int(pending or 0),

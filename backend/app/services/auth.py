@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -40,6 +41,24 @@ def verify_password(password_hash: str | None, password: str) -> bool:
 def verify_missing_user_password(password: str) -> None:
     """Spend roughly the same Argon2 work for unknown users to reduce timing leaks."""
     verify_password(_DUMMY_PASSWORD_HASH, password)
+
+
+async def organization_has_verified_member(session: AsyncSession, organization_id) -> bool:
+    """Whether work may run on behalf of the organization without a request.
+
+    Interactive sends require a verified user (deps.get_verified_organization);
+    scheduled work re-checks this in the worker, since nobody is signed in then.
+    """
+    member = await session.scalar(
+        select(User.id)
+        .where(
+            User.organization_id == organization_id,
+            User.is_active.is_(True),
+            User.email_verified_at.is_not(None),
+        )
+        .limit(1)
+    )
+    return member is not None
 
 
 def is_platform_admin(user: User) -> bool:
