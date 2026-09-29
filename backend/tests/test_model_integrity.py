@@ -86,7 +86,6 @@ def test_orm_metadata_preserves_required_schema_objects() -> None:
 
 def test_obsolete_schema_fields_and_tables_stay_removed() -> None:
     assert "webhook_key" not in CommunicationChannelSetting.__table__.c
-    assert "terms_accepted_at" not in User.__table__.c
     assert "privacy_accepted_at" not in User.__table__.c
     assert "payment_url" not in BillingInvoice.__table__.c
     assert "billing_legal_entities" not in Base.metadata.tables
@@ -99,3 +98,9 @@ def test_subscription_provider_and_status_are_database_constrained() -> None:
         "ck_store_subscriptions_status",
     }
     assert "uq_store_subscription_org_provider" in _unique_constraint_names(StoreSubscription)
+
+
+def test_terms_acceptance_is_recorded_with_its_version() -> None:
+    # Consent to the terms of use is evidence: when, and to which published text.
+    assert "terms_accepted_at" in User.__table__.c
+    assert "terms_version" in User.__table__.c

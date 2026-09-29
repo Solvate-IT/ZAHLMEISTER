@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Numeric, SmallInteger, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,7 +27,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "users"
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
     )
     email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -36,6 +36,9 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Evidence of consent to the terms of use: when, and which published version.
+    terms_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    terms_version: Mapped[str | None] = mapped_column(String(20))
 
 
 class AuthSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -184,7 +187,7 @@ class Collection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
     )
     participant_list_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("participant_lists.id", ondelete="RESTRICT"), nullable=False
+        UUID(as_uuid=True), ForeignKey("participant_lists.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
@@ -220,7 +223,7 @@ class CollectionParticipant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("collections.id", ondelete="CASCADE"), nullable=False
     )
     participant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("participants.id", ondelete="RESTRICT"), nullable=False
+        UUID(as_uuid=True), ForeignKey("participants.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     payment_reference: Mapped[str] = mapped_column(String(80), nullable=False, unique=True)
     public_token: Mapped[str] = mapped_column(String(80), nullable=False, unique=True, index=True)
@@ -243,7 +246,7 @@ class Payment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "payments"
 
     collection_participant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("collection_participants.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("collection_participants.id", ondelete="CASCADE"), nullable=False, index=True
     )
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
@@ -281,7 +284,7 @@ class OnlinePaymentAttempt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "online_payment_attempts"
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
     )
     collection_participant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -323,10 +326,10 @@ class CommunicationMessage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "communication_messages"
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
     )
     collection_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("collections.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("collections.id", ondelete="CASCADE"), nullable=False, index=True
     )
     collection_participant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("collection_participants.id", ondelete="CASCADE"), nullable=False
@@ -434,12 +437,12 @@ class BankTransaction(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="unmatched", index=True)
     candidate_collection_participant_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("collection_participants.id", ondelete="SET NULL")
+        UUID(as_uuid=True), ForeignKey("collection_participants.id", ondelete="SET NULL"), index=True
     )
     match_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
     match_reason: Mapped[str | None] = mapped_column(String(200))
     applied_payment_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("payments.id", ondelete="SET NULL")
+        UUID(as_uuid=True), ForeignKey("payments.id", ondelete="SET NULL"), index=True
     )
     raw_details: Mapped[str | None] = mapped_column(Text)
 
@@ -462,15 +465,40 @@ class ScheduledJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "scheduled_jobs"
 
     organization_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE")
+        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), index=True
     )
     job_type: Mapped[str] = mapped_column(String(60), nullable=False)
     payload: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
+    # Lower runs first: interactive work (test messages) ahead of periodic syncs
+    # ahead of bulk sends. See app.services.jobs for the values.
+    priority: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=100, server_default=text("100")
+    )
     scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     attempts: Mapped[int] = mapped_column(nullable=False, default=0)
     last_error: Mapped[str | None] = mapped_column(Text)
+    # Typed references replace lookups by payload text, which scanned the table.
+    collection_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("collections.id", ondelete="CASCADE"), index=True
+    )
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("communication_messages.id", ondelete="CASCADE"), index=True
+    )
+    # Identifies one logical unit of work (a reminder rule, a periodic sync) so it
+    # is enqueued at most once while pending or running.
+    dedupe_key: Mapped[str | None] = mapped_column(String(200), index=True)
 
-    __table_args__ = (Index("ix_jobs_due", "status", "scheduled_at"),)
+    __table_args__ = (
+        Index("ix_jobs_claim", "status", "priority", "scheduled_at"),
+        Index(
+            "uq_scheduled_jobs_active_dedupe",
+            "dedupe_key",
+            unique=True,
+            postgresql_where=text(
+                "dedupe_key IS NOT NULL AND status IN ('pending', 'running')"
+            ),
+        ),
+    )

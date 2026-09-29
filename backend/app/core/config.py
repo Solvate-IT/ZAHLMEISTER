@@ -60,6 +60,28 @@ class Settings(BaseSettings):
     job_retry_max_seconds: int = 900
     job_retry_jitter: float = 0.20
     job_stale_after_seconds: int = 900
+    job_retention_days: int = 30
+
+    # Connection pool per process. PostgreSQL's default of 100 connections covers
+    # two API workers plus the background worker with room for maintenance tools.
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    db_pool_timeout_seconds: int = 10
+    db_pool_recycle_seconds: int = 1800
+    # Server-side guards: a runaway query, a lock wait or a transaction left open
+    # across a slow network call fails instead of stalling the whole process.
+    db_statement_timeout_ms: int = 60_000
+    db_lock_timeout_ms: int = 10_000
+    db_idle_in_transaction_timeout_ms: int = 120_000
+
+    # Background worker: concurrent job slots per process, and how many of them a
+    # single organization may occupy so one large send cannot starve the others.
+    worker_concurrency: int = 4
+    worker_max_jobs_per_organization: int = 2
+    worker_poll_seconds: float = 1.0
+    # CPU- or subprocess-heavy request work (OCR imports, PDF/XLSX exports) runs in
+    # threads; this bounds how many run at once per API process.
+    blocking_task_concurrency: int = 2
 
     mail_delivery_mode: str = "console"
     mail_from_address: str = "noreply@zahlmeister.local"
