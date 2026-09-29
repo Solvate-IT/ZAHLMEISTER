@@ -37,6 +37,7 @@ from app.models.participant_preferences import ParticipantPreference
 from app.models.platform import StoreSubscription
 from app.schemas.account import ChangePasswordRequest, DeleteAccountRequest, ProfileUpdateRequest
 from app.schemas.auth import UserRead
+from app.services.blocking import run_blocking
 from app.services.account import invalidate_user_sessions
 from app.services.auth import hash_password, verify_password
 from app.services.phone_numbers import normalize_phone_number, preferred_phone_region
@@ -103,6 +104,14 @@ async def change_password(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
         stored.password_hash = hash_password(payload.new_password)
         await invalidate_user_sessions(session, stored.id, keep_session_id=auth_session.id)
+
+
+def _zip_bytes(files: dict[str, bytes]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for filename, content in files.items():
+            archive.writestr(filename, content)
+    return buffer.getvalue()
 
 
 def _csv_bytes(rows: list[dict]) -> bytes:
@@ -427,7 +436,7 @@ async def export_account_data(
                     "send_at": _dt(x.send_at),
                     "due_at": _dt(x.due_at),
                     "message_template_id": str(x.message_template_id) if x.message_template_id else "",
-                    "message_body_override": x.message_body_override or "",
+                    "message_overrides_json": x.message_overrides_json or "",
                     "reminder_rules_json": x.reminder_rules_json,
                     "message_include_payment_link": x.message_include_payment_link,
                     "message_include_payment_qr": x.message_include_payment_qr,
@@ -665,13 +674,10 @@ async def export_account_data(
         ),
     }
 
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for filename, content in files.items():
-            archive.writestr(filename, content)
+    archive = await run_blocking(_zip_bytes, files)
     stamp = datetime.now(UTC).strftime("%Y%m%d")
     return Response(
-        content=buffer.getvalue(),
+        content=archive,
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="zahlmeister-data-{stamp}.zip"'},
     )

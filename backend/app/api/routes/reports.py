@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_organization, get_session
 from app.models.entities import Collection, CollectionParticipant, Organization, Participant, Payment
+from app.services.blocking import run_blocking
 from app.services.reports import (
     CollectionReportData,
     CollectionReportRow,
@@ -81,13 +82,13 @@ async def export_collection(
     )
 
     if format == "pdf":
-        content = collection_pdf(data, detailed=detailed)
+        content = await run_blocking(collection_pdf, data, detailed=detailed)
         media_type = "application/pdf"
     elif format == "xlsx":
-        content = collection_xlsx(data, detailed=detailed)
+        content = await run_blocking(collection_xlsx, data, detailed=detailed)
         media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     else:
-        content = collection_csv(data, detailed=detailed)
+        content = await run_blocking(collection_csv, data, detailed=detailed)
         media_type = "text/csv; charset=utf-8"
 
     suffix = "detail" if detailed else "summary"

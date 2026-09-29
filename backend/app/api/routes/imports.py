@@ -9,6 +9,7 @@ from app.models.billing import BillingProfile
 from app.models.entities import Organization, Participant, ParticipantList
 from app.schemas.imports import ImportCommitRequest, ImportCommitResponse, ImportPreview
 from app.services.channel_strategy import reset_channel_knowledge
+from app.services.blocking import run_blocking
 from app.services.imports import ImportParseError, parse_import
 from app.services.plans import FREE_PARTICIPANTS_PER_LIST, is_pro
 from app.services.phone_numbers import normalize_phone_number, preferred_phone_region
@@ -45,7 +46,9 @@ async def import_preview(
 ) -> ImportPreview:
     data = await file.read(10 * 1024 * 1024 + 1)
     try:
-        return parse_import(file.filename or "upload", file.content_type, data)
+        # OCR of scanned PDFs runs pdftoppm/tesseract for up to minutes: never on
+        # the event loop.
+        return await run_blocking(parse_import, file.filename or "upload", file.content_type, data)
     except ImportParseError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
