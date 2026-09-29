@@ -59,3 +59,6 @@
 .workspace-header{height:auto;min-height:68px;padding-top:6px;padding-bottom:6px}
 .workspace-header>div:first-child{min-width:0;overflow-wrap:anywhere}
 .workspace-header .top-actions{flex-wrap:nowrap;min-width:0}
+
+.workspace-body>.notice{margin-bottom:20px}
+@media(max-width:620px){.workspace-body>.notice{margin-bottom:16px}}
