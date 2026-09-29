@@ -199,7 +199,7 @@ docker run --rm \
   '
 
 docker run --rm --read-only --tmpfs /tmp:size=64m,mode=1777 --security-opt no-new-privileges:true --cap-drop ALL \
-  --add-host backend:127.0.0.1 --entrypoint sh "$FRONTEND_RUNTIME_IMAGE" -c '
+  --add-host zahlmeister-api-internal:127.0.0.1 --entrypoint sh "$FRONTEND_RUNTIME_IMAGE" -c '
     test "$(id -u)" != "0" &&
     nginx -t &&
     nginx -T 2>&1 | grep -q "client_body_temp_path /tmp/client_body;" &&
@@ -265,7 +265,7 @@ runtime_security=(
 
 docker run -d --name "$WORKER_CONTAINER" "${runtime_security[@]}" "${runtime_env[@]}" \
   "$BACKEND_RUNTIME_IMAGE" python -m app.worker >/dev/null
-docker run -d --name "$BACKEND_CONTAINER" --network-alias backend "${runtime_security[@]}" "${runtime_env[@]}" \
+docker run -d --name "$BACKEND_CONTAINER" --network-alias zahlmeister-api-internal "${runtime_security[@]}" "${runtime_env[@]}" \
   "$BACKEND_RUNTIME_IMAGE" uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --no-access-log >/dev/null
 
 RUNTIME_READY=0
