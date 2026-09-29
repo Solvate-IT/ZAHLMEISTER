@@ -13,6 +13,15 @@ class RegisterRequest(BaseModel):
     display_name: str | None = Field(default=None, max_length=200)
     locale: str = Field(default="en", max_length=20)
     currency: str = Field(default="EUR", min_length=3, max_length=3)
+    # Explicit consent to the terms of use; registration without it is refused.
+    accept_terms: bool
+
+    @field_validator("accept_terms")
+    @classmethod
+    def require_terms_acceptance(cls, value: bool) -> bool:
+        if value is not True:
+            raise ValueError("The terms of use must be accepted")
+        return value
 
     @field_validator("email")
     @classmethod

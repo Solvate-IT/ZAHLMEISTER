@@ -1,4 +1,6 @@
 from datetime import UTC, datetime
+from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 
@@ -87,3 +89,59 @@ def test_platform_admin_requires_verified_active_allowlisted_user(monkeypatch) -
 
 def test_admin_sessions_are_short_lived() -> None:
     assert ADMIN_SESSION_HOURS == 8
+
+
+def test_registration_requires_explicit_terms_acceptance() -> None:
+    from pydantic import ValidationError
+
+    from app.schemas.auth import RegisterRequest
+
+    base = {"email": "anna@example.test", "password": "correct-horse-7"}
+    for missing_or_refused in ({}, {"accept_terms": False}):
+        with pytest.raises(ValidationError):
+            RegisterRequest(**base, **missing_or_refused)
+    assert RegisterRequest(**base, accept_terms=True).accept_terms is True
+
+
+@pytest.mark.asyncio
+async def test_registration_records_when_and_which_terms_were_accepted(monkeypatch) -> None:
+    from fastapi import BackgroundTasks
+
+    from app.api.routes import auth as auth_routes
+    from app.core.legal import TERMS_VERSION
+    from app.models.entities import User
+    from app.schemas.auth import RegisterRequest
+
+    added = []
+
+    class Session:
+        async def scalar(self, _statement):
+            return None
+
+        def add(self, value):
+            if getattr(value, "id", None) is None:
+                value.id = uuid4()
+            added.append(value)
+
+        async def flush(self):
+            pass
+
+    session = Session()
+    factory = MagicMock()
+    factory.begin.return_value.__aenter__.return_value = session
+    monkeypatch.setattr(auth_routes, "SessionLocal", factory)
+
+    async def token(*_args, **_kwargs):
+        return "token"
+
+    monkeypatch.setattr(auth_routes, "create_action_token", token)
+    monkeypatch.setattr(auth_routes, "create_auth_session", token)
+    monkeypatch.setattr(auth_routes, "auth_response", lambda *_args: "response")
+
+    await auth_routes.register(
+        RegisterRequest(email="anna@example.test", password="correct-horse-7", accept_terms=True),
+        BackgroundTasks(),
+    )
+    user = next(item for item in added if isinstance(item, User))
+    assert user.terms_accepted_at is not None
+    assert user.terms_version == TERMS_VERSION

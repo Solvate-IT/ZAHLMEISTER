@@ -15,6 +15,7 @@ from app.api.deps import (
     require_platform_admin,
 )
 from app.core.config import settings
+from app.core.legal import TERMS_VERSION
 from app.db.session import SessionLocal
 from app.models.entities import AuthSession, Organization, User
 from app.models.platform import PlatformAdminAudit
@@ -102,6 +103,9 @@ async def register(payload: RegisterRequest, background_tasks: BackgroundTasks) 
                 email=email,
                 display_name=display_name,
                 password_hash=hash_password(payload.password),
+                # Evidence of consent: when, and to which published version.
+                terms_accepted_at=datetime.now(UTC),
+                terms_version=TERMS_VERSION,
             )
             session.add(user)
             await session.flush()
