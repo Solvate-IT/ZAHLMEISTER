@@ -164,21 +164,27 @@ async def create_online_checkout(token: str) -> OnlineCheckoutRead:
                 idempotency_key=str(attempt.id),
             )
         except Exception as exc:
+            # Recorded and committed; the error response follows after the
+            # transaction, since raising inside it would roll the record back.
             attempt.status = "failed"
             attempt.last_error = str(exc)[:2000]
             connection.last_error = attempt.last_error
-            raise HTTPException(status_code=502, detail="Online payment could not be started") from exc
-
-        attempt.external_id = checkout.external_id
-        attempt.checkout_url = checkout.checkout_url
-        attempt.status = checkout.status
-        attempt.expires_at = checkout.expires_at
-        connection.last_error = None
-        return OnlineCheckoutRead(
-            provider=connection.provider,
-            checkout_url=checkout.checkout_url,
-            attempt_id=attempt.id,
-        )
+            failure: Exception | None = exc
+        else:
+            failure = None
+            attempt.external_id = checkout.external_id
+            attempt.checkout_url = checkout.checkout_url
+            attempt.status = checkout.status
+            attempt.expires_at = checkout.expires_at
+            connection.last_error = None
+            result = OnlineCheckoutRead(
+                provider=connection.provider,
+                checkout_url=checkout.checkout_url,
+                attempt_id=attempt.id,
+            )
+    if failure is not None:
+        raise HTTPException(status_code=502, detail="Online payment could not be started") from failure
+    return result
 
 
 

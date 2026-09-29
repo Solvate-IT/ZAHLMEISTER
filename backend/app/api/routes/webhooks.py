@@ -19,7 +19,7 @@ from app.services.channel_strategy import set_channel_knowledge
 from app.services.communications import normalize_phone
 from app.services.infobip import verify_webhook_basic_authorization
 from app.services.message_dispatch import queue_failed_channel_fallback
-from app.services.mollie import mollie_provider
+from app.services.mollie import authorization_for_connection_id, mollie_provider
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -459,15 +459,16 @@ async def mollie_webhook(webhook_key: str, request: Request) -> Response:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook") from exc
     posted_id = str(form.get("id") or "").strip()
 
-    async with SessionLocal.begin() as session:
+    # 1) Identify the attempt. No locks: the provider call below must not run while
+    #    rows are locked, or a burst of payments for one organization would queue
+    #    behind each other's round trip to Mollie.
+    async with SessionLocal() as session:
         attempt = await session.scalar(
-            select(OnlinePaymentAttempt)
-            .where(OnlinePaymentAttempt.webhook_key == webhook_key)
-            .with_for_update()
+            select(OnlinePaymentAttempt).where(OnlinePaymentAttempt.webhook_key == webhook_key)
         )
         if attempt is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook not found")
-        connection = await session.get(OnlinePaymentConnection, attempt.connection_id, with_for_update=True)
+        connection = await session.get(OnlinePaymentConnection, attempt.connection_id)
         if connection is None or connection.provider != "mollie":
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment connection not found")
         external_id = posted_id or attempt.external_id or ""
@@ -475,63 +476,85 @@ async def mollie_webhook(webhook_key: str, request: Request) -> Response:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Payment id missing")
         if attempt.external_id and external_id != attempt.external_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Payment id mismatch")
+        attempt_id = attempt.id
+        connection_id = connection.id
 
-        try:
-            provider_payment = await mollie_provider.get_payment(session, connection, external_id)
-        except Exception as exc:
-            connection.last_error = str(exc)[:2000]
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Payment status unavailable") from exc
+    # 2) Ask Mollie with no transaction open.
+    try:
+        authorization, testmode = await authorization_for_connection_id(connection_id)
+        provider_payment = await mollie_provider.fetch_payment(
+            authorization=authorization, testmode=testmode, external_id=external_id
+        )
+    except Exception as exc:
+        async with SessionLocal.begin() as session:
+            stored_connection = await session.get(OnlinePaymentConnection, connection_id)
+            if stored_connection is not None:
+                stored_connection.last_error = str(exc)[:2000]
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Payment status unavailable") from exc
 
-        if provider_payment.external_id != external_id:
+    if provider_payment.external_id != external_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Payment id mismatch")
+
+    # 3) Apply the result in one short transaction.
+    mismatch: str | None = None
+    async with SessionLocal.begin() as session:
+        attempt = await session.get(OnlinePaymentAttempt, attempt_id, with_for_update=True)
+        if attempt is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook not found")
+        if attempt.external_id and external_id != attempt.external_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Payment id mismatch")
         if (
             provider_payment.amount != attempt.amount
             or provider_payment.currency.upper() != attempt.currency.upper()
         ):
+            # Recorded, then answered after the commit: raising here would roll back.
             attempt.status = "failed"
             attempt.last_error = "Provider payment amount or currency does not match"
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=attempt.last_error)
+            mismatch = attempt.last_error
+        else:
+            attempt.external_id = provider_payment.external_id
+            attempt.status = provider_payment.status
+            attempt.payment_method = provider_payment.method
+            attempt.paid_at = provider_payment.paid_at
+            attempt.expires_at = provider_payment.expires_at
+            attempt.last_error = None
+            stored_connection = await session.get(OnlinePaymentConnection, connection_id)
+            if stored_connection is not None and stored_connection.last_error is not None:
+                stored_connection.last_error = None
 
-        attempt.external_id = provider_payment.external_id
-        attempt.status = provider_payment.status
-        attempt.payment_method = provider_payment.method
-        attempt.paid_at = provider_payment.paid_at
-        attempt.expires_at = provider_payment.expires_at
-        attempt.last_error = None
-        connection.last_error = None
-
-        if provider_payment.status == "paid":
-            cp = await session.get(CollectionParticipant, attempt.collection_participant_id, with_for_update=True)
-            if cp is None:
-                raise HTTPException(status_code=404, detail="Collection participant not found")
-            existing = await session.scalar(
-                select(Payment.id).where(
-                    Payment.provider == "mollie",
-                    Payment.external_reference == provider_payment.external_id,
-                )
-            )
-            booked_at = provider_payment.paid_at or datetime.now(UTC)
-            if existing is None:
-                session.add(
-                    Payment(
-                        collection_participant_id=cp.id,
-                        amount=provider_payment.amount,
-                        currency=provider_payment.currency,
-                        method="online",
-                        provider="mollie",
-                        external_reference=provider_payment.external_id,
-                        booked_at=booked_at,
-                        details=json.dumps(
-                            {
-                                "provider_method": provider_payment.method,
-                                "online_payment_attempt_id": str(attempt.id),
-                            },
-                            ensure_ascii=False,
-                        ),
+            if provider_payment.status == "paid":
+                cp = await session.get(CollectionParticipant, attempt.collection_participant_id, with_for_update=True)
+                if cp is None:
+                    raise HTTPException(status_code=404, detail="Collection participant not found")
+                existing = await session.scalar(
+                    select(Payment.id).where(
+                        Payment.provider == "mollie",
+                        Payment.external_reference == provider_payment.external_id,
                     )
                 )
-            if cp.status != "paid":
-                cp.status = "paid"
-                cp.paid_at = booked_at
-
+                booked_at = provider_payment.paid_at or datetime.now(UTC)
+                if existing is None:
+                    session.add(
+                        Payment(
+                            collection_participant_id=cp.id,
+                            amount=provider_payment.amount,
+                            currency=provider_payment.currency,
+                            method="online",
+                            provider="mollie",
+                            external_reference=provider_payment.external_id,
+                            booked_at=booked_at,
+                            details=json.dumps(
+                                {
+                                    "provider_method": provider_payment.method,
+                                    "online_payment_attempt_id": str(attempt.id),
+                                },
+                                ensure_ascii=False,
+                            ),
+                        )
+                    )
+                if cp.status != "paid":
+                    cp.status = "paid"
+                    cp.paid_at = booked_at
+    if mismatch is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=mismatch)
     return Response(status_code=200)

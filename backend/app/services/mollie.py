@@ -14,6 +14,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.db.session import SessionLocal
 from app.models.entities import OnlinePaymentConnection
 from app.services.online_payment_providers import OnlineCheckout, OnlinePaymentStatus
 from app.services.secrets import decrypt_config, encrypt_config
@@ -133,27 +134,66 @@ def oauth_connection_config(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _fresh_access_token(connection: OnlinePaymentConnection) -> str | None:
+    config = decrypt_config(connection.encrypted_config)
+    access_token = str(config.get("access_token") or "")
+    if access_token and float(config.get("expires_at") or 0) > time.time() + 180:
+        return access_token
+    return None
+
+
 async def authorization_for_connection(
     session: AsyncSession, connection: OnlinePaymentConnection
 ) -> str:
+    """The Authorization header for a connection attached to ``session``.
+
+    Refreshing is single-flight: the row is locked and the token checked again
+    before the refresh token is redeemed, so concurrent requests cannot each spend
+    Mollie's rotating refresh token and invalidate one another.
+    """
     if connection.provider != PROVIDER:
         raise ValueError(f"Unsupported online payment provider: {connection.provider}")
+    access_token = _fresh_access_token(connection)
+    if access_token:
+        return f"Bearer {access_token}"
+    await session.refresh(connection, with_for_update=True)
+    access_token = _fresh_access_token(connection)
+    if access_token:
+        return f"Bearer {access_token}"
     config = decrypt_config(connection.encrypted_config)
-    access_token = str(config.get("access_token") or "")
-    expires_at = float(config.get("expires_at") or 0)
-    if not access_token or expires_at <= time.time() + 180:
-        payload = await _refresh_oauth_token(config)
-        config["access_token"] = str(payload["access_token"])
-        if payload.get("refresh_token"):
-            config["refresh_token"] = str(payload["refresh_token"])
-        config["expires_at"] = time.time() + int(payload.get("expires_in") or 3600)
-        if payload.get("scope"):
-            config["scope"] = str(payload["scope"])
-        connection.encrypted_config = encrypt_config(config)
-        connection.last_error = None
-        await session.flush()
-        access_token = str(config["access_token"])
-    return f"Bearer {access_token}"
+    payload = await _refresh_oauth_token(config)
+    config["access_token"] = str(payload["access_token"])
+    if payload.get("refresh_token"):
+        config["refresh_token"] = str(payload["refresh_token"])
+    config["expires_at"] = time.time() + int(payload.get("expires_in") or 3600)
+    if payload.get("scope"):
+        config["scope"] = str(payload["scope"])
+    connection.encrypted_config = encrypt_config(config)
+    connection.last_error = None
+    await session.flush()
+    return f"Bearer {config['access_token']}"
+
+
+async def authorization_for_connection_id(connection_id) -> tuple[str, bool]:
+    """Authorization header and test-mode flag, for callers that hold no lock.
+
+    Only an expired token takes the connection row lock, in a transaction of its
+    own that ends before the caller's request to Mollie starts.
+    """
+    async with SessionLocal() as session:
+        connection = await session.get(OnlinePaymentConnection, connection_id)
+        if connection is None:
+            raise ValueError("Online payment connection not found")
+        if connection.provider != PROVIDER:
+            raise ValueError(f"Unsupported online payment provider: {connection.provider}")
+        access_token = _fresh_access_token(connection)
+        if access_token:
+            return f"Bearer {access_token}", _testmode(connection)
+    async with SessionLocal.begin() as session:
+        connection = await session.get(OnlinePaymentConnection, connection_id, with_for_update=True)
+        if connection is None:
+            raise ValueError("Online payment connection not found")
+        return await authorization_for_connection(session, connection), _testmode(connection)
 
 
 def _testmode(connection: OnlinePaymentConnection) -> bool:
@@ -333,7 +373,15 @@ class MollieProvider:
         external_id: str,
     ) -> OnlinePaymentStatus:
         authorization = await authorization_for_connection(session, connection)
-        params = {"testmode": "true"} if _testmode(connection) else None
+        return await self.fetch_payment(
+            authorization=authorization, testmode=_testmode(connection), external_id=external_id
+        )
+
+    async def fetch_payment(
+        self, *, authorization: str, testmode: bool, external_id: str
+    ) -> OnlinePaymentStatus:
+        """Payment status from Mollie. Network only: needs no session or lock."""
+        params = {"testmode": "true"} if testmode else None
         payload = await _request_json(
             "GET", f"payments/{external_id}", authorization=authorization, params=params
         )
