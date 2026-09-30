@@ -99,10 +99,12 @@ if plist_path.exists():
             project.write_text(text)
 PY
 
-# Generate native launcher icons directly from assets/logo.svg.
+# Generate native launcher icons directly from assets/logo.svg. The asset path
+# must stay relative: capacitor-assets joins it onto the project root, and an
+# absolute path makes it report "Asset directory not found" and exit 0.
 ASSET_ARGS=(
   generate
-  --assetPath "$ROOT_DIR/assets"
+  --assetPath assets
   --iconBackgroundColor "#06183F"
   --iconBackgroundColorDark "#06183F"
   --splashBackgroundColor "#F7F9FD"

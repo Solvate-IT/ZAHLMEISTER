@@ -57,12 +57,16 @@ required_files=(
   "mobile/package-lock.json"
   "mobile/capacitor.config.ts"
   "mobile/tool/bootstrap_mobile.sh"
+  "mobile/tool/build_android.sh"
+  "mobile/tool/android_device.sh"
+  "mobile/android/app/build.gradle"
   "docker/.env.development"
   "docker/.env.production"
   "docker/compose.yml"
   "docker/compose.prod.yml"
   "docker/backend.Dockerfile"
   "docker/frontend.Dockerfile"
+  "docker/mobile.Dockerfile"
   "docker/nginx.conf"
   "docker/manage.sh"
   "docker/predeploy.sh"
@@ -94,8 +98,8 @@ echo "[2/11] Checking Git tracking and packaging inputs..."
   runtime_paths=(
     backend/app backend/locales backend/pyproject.toml
     frontend/src frontend/public frontend/package.json frontend/package-lock.json frontend/next.config.ts frontend/tsconfig.json
-    mobile/assets mobile/mobile-links mobile/tool mobile/package.json mobile/package-lock.json mobile/capacitor.config.ts
-    docker/.env.development docker/.env.production docker/backend.Dockerfile docker/frontend.Dockerfile
+    mobile/assets mobile/mobile-links mobile/tool mobile/package.json mobile/package-lock.json mobile/capacitor.config.ts mobile/android
+    docker/.env.development docker/.env.production docker/backend.Dockerfile docker/frontend.Dockerfile docker/mobile.Dockerfile docker/mobile.Dockerfile.dockerignore
     docker/compose.yml docker/compose.prod.yml docker/nginx.conf docker/manage.sh docker/predeploy.sh docker/scripts
   )
   untracked="$(git status --porcelain --untracked-files=all -- "${runtime_paths[@]}" | awk 'substr($0,1,2)=="??" {print substr($0,4)}')"
@@ -114,7 +118,7 @@ echo "[3/11] Validating environment parity, Compose and scripts..."
 check_env_parity
 docker compose "${COMPOSE_ENV_ARGS[@]}" -f "$PROD_FILE" config -q
 docker compose "${COMPOSE_ENV_ARGS[@]}" -f "$SCRIPT_DIR/compose.yml" config -q
-bash -n "$SCRIPT_DIR/manage.sh" "$SCRIPT_DIR/predeploy.sh" "$SCRIPT_DIR"/scripts/*.sh "$PROJECT_DIR/mobile/tool/bootstrap_mobile.sh"
+bash -n "$SCRIPT_DIR/manage.sh" "$SCRIPT_DIR/predeploy.sh" "$SCRIPT_DIR"/scripts/*.sh "$PROJECT_DIR/mobile/tool/bootstrap_mobile.sh" "$PROJECT_DIR/mobile/tool/build_android.sh" "$PROJECT_DIR/mobile/tool/android_device.sh"
 grep -q '^    absolute_redirect off;$' "$SCRIPT_DIR/nginx.conf"
 grep -q '^    port_in_redirect off;$' "$SCRIPT_DIR/nginx.conf"
 cat > "$ENV_PARSER_TEST_FILE" <<'EOF'
@@ -329,7 +333,9 @@ echo
 echo "[10/11] Checking Capacitor source and legacy runtime references..."
 grep -q 'appId: "at.solvate.zahlmeister"' mobile/capacitor.config.ts
 grep -q 'webDir: "../frontend/out"' mobile/capacitor.config.ts
-! grep -R --exclude-dir=node_modules -niE '(^|[^[:alnum:]_])(flutter|dart)([^[:alnum:]_]|$)' frontend mobile docker/frontend.Dockerfile docker/frontend.Dockerfile.dev docker/compose.yml 2>/dev/null || {
+grep -q 'applicationId "at.solvate.zahlmeister"' mobile/android/app/build.gradle
+# Local Gradle/Next output and built APK/AAB files are binary and not source.
+! grep -R --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=.gradle -niE '(^|[^[:alnum:]_])(flutter|dart)([^[:alnum:]_]|$)' frontend mobile docker/frontend.Dockerfile docker/frontend.Dockerfile.dev docker/mobile.Dockerfile docker/compose.yml 2>/dev/null || {
   echo "Flutter/Dart references remain in the new frontend/mobile runtime paths." >&2
   exit 1
 }
@@ -337,11 +343,11 @@ grep -q 'webDir: "../frontend/out"' mobile/capacitor.config.ts
 echo
 echo "[11/11] Checking secrets, keys and backup exclusions..."
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  if git ls-files 'docker/secrets/production/*' 'docker/backups/*' | grep -vE '/\.gitkeep$' | grep -q .; then
+  if git ls-files 'docker/secrets/production/*' 'docker/secrets/android/*' 'docker/backups/*' | grep -vE '/\.gitkeep$' | grep -q .; then
     echo "Production secrets or backups must not be tracked by Git." >&2
     exit 1
   fi
-  if git ls-files | grep -E '\.(pem|key|p12|pfx|crt|cer)$' | grep -q .; then
+  if git ls-files | grep -E '\.(pem|key|p12|pfx|crt|cer|jks|keystore)$' | grep -q .; then
     echo "Certificate/private-key material must not be tracked by Git." >&2
     exit 1
   fi

@@ -1,8 +1,12 @@
 FROM python:3.14.7-slim AS base
 
+# Build-time only: apt runs without a terminal, so debconf must not try to prompt.
+ARG DEBIAN_FRONTEND=noninteractive
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_ROOT_USER_ACTION=ignore \
     PATH="/home/app/.local/bin:${PATH}"
 
 RUN set -eux; \

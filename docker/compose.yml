@@ -181,7 +181,67 @@ services:
       - frontend_node_modules:/app/node_modules
       - frontend_next:/app/.next
 
+  # Android APK/AAB toolchain. Never started by `up`; manage.sh -> 11) Android
+  # App runs it with `compose --profile tools run --rm mobile`.
+  mobile:
+    profiles: ["tools"]
+    build:
+      context: ..
+      dockerfile: docker/mobile.Dockerfile
+      args:
+        # Matched to the host user so artifacts land host-owned.
+        UID: ${HOST_UID:-1000}
+        GID: ${HOST_GID:-1000}
+    image: zahlmeister-mobile-build:local
+    # Google ships the Android build tools for x86_64 only.
+    platform: linux/amd64
+    restart: "no"
+    # tini as PID 1: forwards signals and reaps the Gradle/adb daemons.
+    init: true
+    environment:
+      ZAHLMEISTER_SIGNING_DIR: /run/secrets/android
+    volumes:
+      - ../frontend:/src/frontend:ro
+      - ../mobile:/src/mobile:ro
+      - ../mobile/dist:/out
+      - ./secrets/android:/run/secrets/android:ro
+      - mobile_gradle:/home/dev/.gradle
+      # Keeps the debug signing key stable, so a newer debug APK updates the
+      # installed one in place.
+      - mobile_android_user:/home/dev/.android
+
+  # adb and bundletool against a USB-connected phone (Linux hosts), for
+  # manage.sh -> 11) Android App -> 5) Device. adb runs as root because
+  # /dev/bus/usb nodes are root-owned without Android udev rules; access is
+  # limited to USB character devices (major 189). Host networking lets the
+  # adb server and the WebView DevTools forward listen on the host's
+  # localhost:5037 and :9222, where Chrome's chrome://inspect finds them.
+  mobile-device:
+    profiles: ["tools"]
+    image: zahlmeister-mobile-build:local
+    pull_policy: never
+    platform: linux/amd64
+    restart: "no"
+    init: true
+    user: "0:0"
+    network_mode: host
+    device_cgroup_rules:
+      - "c 189:* rmw"
+    environment:
+      HOME: /home/dev
+      ZAHLMEISTER_SIGNING_DIR: /run/secrets/android
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+      - ../mobile/dist:/dist:ro
+      - ../mobile/tool:/tool:ro
+      - ./secrets/android:/run/secrets/android:ro
+      # The adb key (the phone remembers "Always allow") and the debug
+      # keystore bundletool signs debug AAB installs with.
+      - mobile_android_user:/home/dev/.android
+
 volumes:
   postgres18_data:
   frontend_node_modules:
   frontend_next:
+  mobile_gradle:
+  mobile_android_user:

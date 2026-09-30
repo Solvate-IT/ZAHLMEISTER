@@ -2,6 +2,7 @@
 secrets/development/*
 secrets/production/*
 secrets/ponto/*
+secrets/android/
 !secrets/production/.gitkeep
 !secrets/ponto/.gitkeep
 
