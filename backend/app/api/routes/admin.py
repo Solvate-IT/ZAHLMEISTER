@@ -2,11 +2,12 @@ import json
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_session, require_platform_admin
+from app.api.pagination import Page, page_params, set_total_count, total_count
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.entities import Collection, Organization, Participant, ParticipantList, User
@@ -30,24 +31,62 @@ from app.services.billing import (
 router = APIRouter(prefix="/admin", tags=["platform-admin"])
 
 
-def _admin_org_ids(rows: list[tuple[UUID, str]]) -> set[UUID]:
-    admin_emails = settings.platform_admin_emails
-    return {organization_id for organization_id, email in rows if email.casefold() in admin_emails}
+async def _admin_org_ids(session: AsyncSession) -> set[UUID]:
+    """Organizations of platform administrators: not customers."""
+    admin_emails = sorted(settings.platform_admin_emails)
+    if not admin_emails:
+        return set()
+    return set(
+        (
+            await session.execute(
+                select(User.organization_id).where(func.lower(User.email).in_(admin_emails))
+            )
+        ).scalars().all()
+    )
 
 
-async def _customer_rows(session: AsyncSession) -> list[PlatformCustomerRead]:
-    organizations = (
-        await session.execute(select(Organization).order_by(Organization.created_at.desc()))
+def _customer_organizations(admin_org_ids: set[UUID]):
+    statement = select(Organization)
+    if admin_org_ids:
+        statement = statement.where(Organization.id.not_in(admin_org_ids))
+    return statement
+
+
+async def _customer_rows(
+    session: AsyncSession,
+    *,
+    organization_ids: list[UUID] | None = None,
+    page: Page | None = None,
+) -> tuple[list[PlatformCustomerRead], int]:
+    """Customer rows for one page (or for the given organizations) and the total.
+
+    Every aggregate is restricted to the organizations of the page, so the cost is
+    bounded by the page size rather than by the number of customers.
+    """
+    statement = _customer_organizations(await _admin_org_ids(session))
+    if organization_ids is not None:
+        statement = statement.where(Organization.id.in_(organization_ids))
+    total = await total_count(session, statement)
+    statement = statement.order_by(Organization.created_at.desc(), Organization.id)
+    if page is not None:
+        statement = page.apply(statement)
+    organizations = (await session.execute(statement)).scalars().all()
+    ids = [organization.id for organization in organizations]
+    if not ids:
+        return [], total
+
+    users = (
+        await session.execute(
+            select(User).where(User.organization_id.in_(ids)).order_by(User.created_at)
+        )
     ).scalars().all()
-    users = (await session.execute(select(User).order_by(User.created_at))).scalars().all()
-    admin_org_ids = _admin_org_ids([(user.organization_id, user.email) for user in users])
 
     list_counts = dict(
         (
             await session.execute(
-                select(ParticipantList.organization_id, func.count(ParticipantList.id)).group_by(
-                    ParticipantList.organization_id
-                )
+                select(ParticipantList.organization_id, func.count(ParticipantList.id))
+                .where(ParticipantList.organization_id.in_(ids))
+                .group_by(ParticipantList.organization_id)
             )
         ).all()
     )
@@ -56,6 +95,7 @@ async def _customer_rows(session: AsyncSession) -> list[PlatformCustomerRead]:
             await session.execute(
                 select(ParticipantList.organization_id, func.count(Participant.id))
                 .join(Participant, Participant.list_id == ParticipantList.id)
+                .where(ParticipantList.organization_id.in_(ids))
                 .group_by(ParticipantList.organization_id)
             )
         ).all()
@@ -63,16 +103,19 @@ async def _customer_rows(session: AsyncSession) -> list[PlatformCustomerRead]:
     collection_counts = dict(
         (
             await session.execute(
-                select(Collection.organization_id, func.count(Collection.id)).group_by(
-                    Collection.organization_id
-                )
+                select(Collection.organization_id, func.count(Collection.id))
+                .where(Collection.organization_id.in_(ids))
+                .group_by(Collection.organization_id)
             )
         ).all()
     )
     subscriptions = (
         await session.execute(
             select(StoreSubscription)
-            .where(StoreSubscription.status.in_(ENTITLED_STATUSES))
+            .where(
+                StoreSubscription.organization_id.in_(ids),
+                StoreSubscription.status.in_(ENTITLED_STATUSES),
+            )
             .order_by(StoreSubscription.expires_at.desc().nullsfirst())
         )
     ).scalars().all()
@@ -89,8 +132,6 @@ async def _customer_rows(session: AsyncSession) -> list[PlatformCustomerRead]:
 
     result: list[PlatformCustomerRead] = []
     for organization in organizations:
-        if organization.id in admin_org_ids:
-            continue
         org_users = users_by_org.get(organization.id, [])
         subscription = subscription_by_org.get(organization.id)
         primary = org_users[0] if org_users else None
@@ -119,21 +160,19 @@ async def _customer_rows(session: AsyncSession) -> list[PlatformCustomerRead]:
                 collections=int(collection_counts.get(organization.id, 0)),
             )
         )
-    return result
+    return result, total
+
+
+async def _customer_row(session: AsyncSession, organization_id: UUID) -> PlatformCustomerRead | None:
+    rows, _total = await _customer_rows(session, organization_ids=[organization_id])
+    return rows[0] if rows else None
 
 
 async def _customer_detail(
     session: AsyncSession,
     organization_id: UUID,
 ) -> PlatformCustomerDetailRead | None:
-    summary_row = next(
-        (
-            item
-            for item in await _customer_rows(session)
-            if item.organization_id == str(organization_id)
-        ),
-        None,
-    )
+    summary_row = await _customer_row(session, organization_id)
     if summary_row is None:
         return None
 
@@ -192,21 +231,46 @@ async def summary(
     _: User = Depends(require_platform_admin),
     session: AsyncSession = Depends(get_session),
 ) -> PlatformAdminSummary:
-    customers = await _customer_rows(session)
+    admin_org_ids = await _admin_org_ids(session)
+    customers = await total_count(session, _customer_organizations(admin_org_ids))
+    active_users_statement = select(func.count(User.id)).where(User.is_active.is_(True))
+    if admin_org_ids:
+        active_users_statement = active_users_statement.where(User.organization_id.not_in(admin_org_ids))
+    active_users = int(await session.scalar(active_users_statement) or 0)
+    # Only paying organizations have entitled subscriptions: a small set, checked
+    # with the same rule as everywhere else.
+    now = datetime.now(UTC)
+    entitled = (
+        await session.execute(
+            select(StoreSubscription).where(StoreSubscription.status.in_(ENTITLED_STATUSES))
+        )
+    ).scalars().all()
+    pro_customers = len(
+        {
+            subscription.organization_id
+            for subscription in entitled
+            if subscription.organization_id not in admin_org_ids
+            and subscription_is_entitled(subscription, now=now)
+        }
+    )
     return PlatformAdminSummary(
-        customers=len(customers),
-        free_customers=sum(1 for item in customers if item.plan == "free"),
-        pro_customers=sum(1 for item in customers if item.plan == "pro"),
-        active_users=sum(item.active_user_count for item in customers),
+        customers=customers,
+        free_customers=customers - pro_customers,
+        pro_customers=pro_customers,
+        active_users=active_users,
     )
 
 
 @router.get("/customers", response_model=list[PlatformCustomerRead])
 async def customers(
+    response: Response,
+    page: Page = Depends(page_params),
     _: User = Depends(require_platform_admin),
     session: AsyncSession = Depends(get_session),
 ) -> list[PlatformCustomerRead]:
-    return await _customer_rows(session)
+    rows, total = await _customer_rows(session, page=page)
+    set_total_count(response, total)
+    return rows
 
 
 @router.get("/customers/{organization_id}", response_model=PlatformCustomerDetailRead)
@@ -253,8 +317,7 @@ async def update_customer(
                 )
             )
     async with SessionLocal() as session:
-        rows = await _customer_rows(session)
-        item = next((row for row in rows if row.organization_id == str(organization_id)), None)
+        item = await _customer_row(session, organization_id)
         if item is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
         return item
@@ -308,11 +371,10 @@ async def grant_pro(
             )
         )
     async with SessionLocal() as session:
-        return next(
-            row
-            for row in await _customer_rows(session)
-            if row.organization_id == str(organization_id)
-        )
+        item = await _customer_row(session, organization_id)
+        if item is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
+        return item
 
 
 @router.post("/customers/{organization_id}/revoke-admin-pro", response_model=PlatformCustomerRead)
@@ -348,8 +410,7 @@ async def revoke_admin_pro(
                 )
             )
     async with SessionLocal() as session:
-        rows = await _customer_rows(session)
-        item = next((row for row in rows if row.organization_id == str(organization_id)), None)
+        item = await _customer_row(session, organization_id)
         if item is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
         return item

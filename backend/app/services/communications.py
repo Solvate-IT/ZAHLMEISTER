@@ -1,9 +1,13 @@
 import asyncio
+import hashlib
 import imaplib
 import ipaddress
 import re
 import smtplib
 import socket
+import ssl
+import threading
+import time
 from dataclasses import dataclass
 from email import policy
 from email.message import EmailMessage
@@ -150,6 +154,124 @@ def _effective_smtp_config(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def tls_context() -> ssl.SSLContext:
+    """Certificate- and hostname-verifying TLS for every mail server connection.
+
+    smtplib and imaplib fall back to an unverified context when none is given,
+    which would let anyone on the network path read mail passwords and messages.
+    """
+    return ssl.create_default_context()
+
+
+@dataclass(frozen=True)
+class _SmtpEndpoint:
+    host: str
+    port: int
+    use_ssl: bool
+    starttls: bool
+    username: str
+    password_digest: str
+
+
+def _close_smtp(client: smtplib.SMTP) -> None:
+    try:
+        client.quit()
+    except Exception:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+def _open_smtp(endpoint: _SmtpEndpoint, password: str, *, timeout: float = 30) -> smtplib.SMTP:
+    context = tls_context()
+    if endpoint.use_ssl:
+        client: smtplib.SMTP = smtplib.SMTP_SSL(
+            endpoint.host, endpoint.port, timeout=timeout, context=context
+        )
+    else:
+        client = smtplib.SMTP(endpoint.host, endpoint.port, timeout=timeout)
+    try:
+        if endpoint.starttls and not endpoint.use_ssl:
+            client.starttls(context=context)
+        if endpoint.username:
+            client.login(endpoint.username, password)
+    except Exception:
+        _close_smtp(client)
+        raise
+    return client
+
+
+class SmtpConnectionPool:
+    """Authenticated SMTP connections kept for reuse across deliveries.
+
+    A TLS handshake plus login costs more than sending one message, so bulk sends
+    reuse a connection per endpoint (host, port, TLS mode, credentials). Deliveries
+    run in threads (asyncio.to_thread), hence the lock. An idle connection is
+    checked with NOOP before reuse and dropped after ``idle_seconds``.
+    """
+
+    def __init__(self, *, idle_seconds: float = 60.0, max_idle_per_endpoint: int = 4) -> None:
+        self._idle_seconds = idle_seconds
+        self._max_idle = max_idle_per_endpoint
+        self._lock = threading.Lock()
+        self._idle: dict[_SmtpEndpoint, list[tuple[smtplib.SMTP, float]]] = {}
+
+    def acquire(self, endpoint: _SmtpEndpoint, password: str) -> smtplib.SMTP:
+        while True:
+            with self._lock:
+                entries = self._idle.get(endpoint) or []
+                entry = entries.pop() if entries else None
+            if entry is None:
+                return _open_smtp(endpoint, password)
+            client, released_at = entry
+            if time.monotonic() - released_at > self._idle_seconds:
+                _close_smtp(client)
+                continue
+            try:
+                code, _message = client.noop()
+            except (smtplib.SMTPException, OSError):
+                code = 0
+            if code == 250:
+                return client
+            _close_smtp(client)
+
+    def release(self, endpoint: _SmtpEndpoint, client: smtplib.SMTP) -> None:
+        with self._lock:
+            entries = self._idle.setdefault(endpoint, [])
+            if len(entries) < self._max_idle:
+                entries.append((client, time.monotonic()))
+                return
+        _close_smtp(client)
+
+    def close_all(self) -> None:
+        with self._lock:
+            idle, self._idle = self._idle, {}
+        for entries in idle.values():
+            for client, _released_at in entries:
+                _close_smtp(client)
+
+
+SMTP_POOL = SmtpConnectionPool()
+
+
+def _smtp_endpoint(config: dict[str, Any]) -> tuple[_SmtpEndpoint, str]:
+    host = str(config.get("smtp_host") or "").strip()
+    smtp_ssl = bool(config.get("smtp_ssl", False))
+    port = int(config.get("smtp_port") or (465 if smtp_ssl else 587))
+    username = str(config.get("smtp_username") or "").strip()
+    password = str(config.get("smtp_password") or "")
+    endpoint = _SmtpEndpoint(
+        host=host,
+        port=port,
+        use_ssl=smtp_ssl,
+        starttls=bool(config.get("smtp_starttls", not smtp_ssl)),
+        username=username,
+        password_digest=hashlib.sha256(password.encode("utf-8")).hexdigest(),
+    )
+    return endpoint, password
+
+
 def _smtp_send(
     recipient: str,
     content: CanonicalMessage,
@@ -157,16 +279,13 @@ def _smtp_send(
     message_id: str,
 ) -> None:
     config = _effective_smtp_config(config)
-    host = str(config.get("smtp_host") or "").strip()
-    port = int(config.get("smtp_port") or (465 if config.get("smtp_ssl") else 587))
-    username = str(config.get("smtp_username") or "").strip()
-    password = str(config.get("smtp_password") or "")
-    from_address = str(config.get("from_address") or username).strip()
+    endpoint, password = _smtp_endpoint(config)
+    from_address = str(config.get("from_address") or endpoint.username).strip()
     from_name = str(config.get("from_name") or "Zahlmeister").strip()
     reply_to = str(config.get("reply_to") or "").strip()
-    if not host or not from_address:
+    if not endpoint.host or not from_address:
         raise ValueError("SMTP host and sender address are required")
-    _ensure_public_mail_host(host)
+    _ensure_public_mail_host(endpoint.host)
 
     message = EmailMessage()
     message["Subject"] = content.subject or ""
@@ -184,15 +303,14 @@ def _smtp_send(
             filename="zahlmeister-payment-qr.png",
         )
 
-    smtp_ssl = bool(config.get("smtp_ssl", False))
-    starttls = bool(config.get("smtp_starttls", not smtp_ssl))
-    client_cls = smtplib.SMTP_SSL if smtp_ssl else smtplib.SMTP
-    with client_cls(host, port, timeout=30) as client:
-        if starttls and not smtp_ssl:
-            client.starttls()
-        if username:
-            client.login(username, password)
+    client = SMTP_POOL.acquire(endpoint, password)
+    try:
         client.send_message(message)
+    except BaseException:
+        # The connection's state is unknown after a failure; never reuse it.
+        _close_smtp(client)
+        raise
+    SMTP_POOL.release(endpoint, client)
 
 
 async def send_smtp_email(
@@ -223,6 +341,35 @@ def _extract_text(message) -> str:
         ).strip()
 
 
+def _open_imap(host: str, port: int, *, use_ssl: bool, starttls: bool) -> imaplib.IMAP4:
+    context = tls_context()
+    if use_ssl:
+        return imaplib.IMAP4_SSL(host, port, ssl_context=context, timeout=_IMAP_TIMEOUT_SECONDS)
+    client = imaplib.IMAP4(host, port, timeout=_IMAP_TIMEOUT_SECONDS)
+    if starttls:
+        try:
+            client.starttls(ssl_context=context)
+        except Exception:
+            client.shutdown()
+            raise
+    return client
+
+
+# Messages fetched per sync round. Rounds run every minute; a backlog is worked off
+# over several rounds because the cursor only advances past what was read.
+_IMAP_BATCH = 250
+_IMAP_TIMEOUT_SECONDS = 30
+
+
+def _imap_uids_to_fetch(found: list[int], last_uid: int) -> list[int]:
+    uids = sorted(uid for uid in found if uid > last_uid)
+    if last_uid == 0:
+        # First sync of a mailbox: replies to Zahlmeister messages cannot predate the
+        # connection, so start at the newest messages instead of the whole history.
+        return uids[-_IMAP_BATCH:]
+    return uids[:_IMAP_BATCH]
+
+
 def _imap_fetch(config: dict[str, Any], last_uid: int) -> list[IncomingMail]:
     host = str(config.get("imap_host") or "").strip()
     port = int(config.get("imap_port") or (993 if config.get("imap_ssl", True) else 143))
@@ -234,22 +381,23 @@ def _imap_fetch(config: dict[str, Any], last_uid: int) -> list[IncomingMail]:
         return []
     _ensure_public_mail_host(host)
     use_ssl = bool(config.get("imap_ssl", True))
-    client = imaplib.IMAP4_SSL(host, port) if use_ssl else imaplib.IMAP4(host, port)
+    client = _open_imap(
+        host,
+        port,
+        use_ssl=use_ssl,
+        starttls=not use_ssl and bool(config.get("imap_starttls", True)),
+    )
     try:
-        if not use_ssl and bool(config.get("imap_starttls", True)):
-            client.starttls()
         client.login(username, password)
         client.select(str(config.get("imap_folder") or "INBOX"), readonly=True)
-        typ, data = client.uid("search", None, "ALL")
+        # Only UIDs above the cursor. "n:*" also matches the highest existing UID
+        # when n is larger, which the filter in _imap_uids_to_fetch removes again.
+        typ, data = client.uid("search", None, f"UID {last_uid + 1}:*")
         if typ != "OK" or not data:
             return []
-        uids = [
-            int(item)
-            for item in data[0].split()
-            if item.isdigit() and int(item) > last_uid
-        ]
+        found = [int(item) for item in data[0].split() if item.isdigit()]
         result: list[IncomingMail] = []
-        for uid in uids[-250:]:
+        for uid in _imap_uids_to_fetch(found, last_uid):
             typ, raw = client.uid("fetch", str(uid), "(RFC822)")
             if typ != "OK" or not raw or not isinstance(raw[0], tuple):
                 continue
@@ -282,21 +430,16 @@ async def fetch_imap(config: dict[str, Any], last_uid: int) -> list[IncomingMail
 def _test_smtp_imap(config: dict[str, Any]) -> dict[str, str]:
     config = _effective_smtp_config(config)
     result: dict[str, str] = {}
-    smtp_host = str(config.get("smtp_host") or "").strip()
+    endpoint, password = _smtp_endpoint(config)
     from_address = str(config.get("from_address") or "").strip()
-    if not smtp_host or not from_address:
+    if not endpoint.host or not from_address:
         raise ValueError("SMTP host and sender address are required")
-    _ensure_public_mail_host(smtp_host)
-    smtp_ssl = bool(config.get("smtp_ssl", False))
-    smtp_port = int(config.get("smtp_port") or (465 if smtp_ssl else 587))
-    smtp_cls = smtplib.SMTP_SSL if smtp_ssl else smtplib.SMTP
-    with smtp_cls(smtp_host, smtp_port, timeout=20) as client:
-        if bool(config.get("smtp_starttls", not smtp_ssl)) and not smtp_ssl:
-            client.starttls()
-        username = str(config.get("smtp_username") or "").strip()
-        if username:
-            client.login(username, str(config.get("smtp_password") or ""))
+    _ensure_public_mail_host(endpoint.host)
+    client = _open_smtp(endpoint, password, timeout=20)
+    try:
         client.noop()
+    finally:
+        _close_smtp(client)
     result["smtp"] = "ok"
 
     imap_host = str(config.get("imap_host") or "").strip()
@@ -304,14 +447,13 @@ def _test_smtp_imap(config: dict[str, Any]) -> dict[str, str]:
         _ensure_public_mail_host(imap_host)
         imap_ssl = bool(config.get("imap_ssl", True))
         imap_port = int(config.get("imap_port") or (993 if imap_ssl else 143))
-        imap = (
-            imaplib.IMAP4_SSL(imap_host, imap_port)
-            if imap_ssl
-            else imaplib.IMAP4(imap_host, imap_port)
+        imap = _open_imap(
+            imap_host,
+            imap_port,
+            use_ssl=imap_ssl,
+            starttls=not imap_ssl and bool(config.get("imap_starttls", True)),
         )
         try:
-            if not imap_ssl and bool(config.get("imap_starttls", True)):
-                imap.starttls()
             username = str(
                 config.get("imap_username") or config.get("smtp_username") or ""
             ).strip()

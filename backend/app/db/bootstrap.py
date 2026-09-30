@@ -1,11 +1,47 @@
-import asyncio
+"""Bring the database schema to the current Alembic revision.
 
+``python -m app.db.bootstrap`` is what every environment runs: the compose
+``bootstrap`` service, predeploy.sh (twice, to prove idempotence) and the
+production deployment. In one transaction it
+
+1. adopts an installation that predates Alembic (brings it to the baseline shape
+   and stamps the baseline revision),
+2. applies all pending migrations,
+3. verifies that the resulting schema matches the ORM models exactly.
+
+Any failure rolls the whole transaction back, so a deployment either ends on a
+verified schema or leaves the database untouched.
+"""
+import asyncio
+from pathlib import Path
+
+from alembic import command
+from alembic.autogenerate import compare_metadata
+from alembic.config import Config
+from alembic.migration import MigrationContext
 from sqlalchemy import inspect
 from sqlalchemy.engine import Connection
 
 import app.models  # noqa: F401
 from app.db.session import engine
 from app.models.base import Base
+
+BASELINE_REVISION = "0001_baseline"
+MIGRATIONS_DIR = Path(__file__).with_name("migrations")
+# Serializes concurrent bootstrap runs (for example two deploys racing).
+_BOOTSTRAP_LOCK_KEY = 7_346_522_110
+
+
+def alembic_config(connection: Connection | None = None) -> Config:
+    config = Config()
+    config.set_main_option("script_location", str(MIGRATIONS_DIR))
+    if connection is not None:
+        config.attributes["connection"] = connection
+    return config
+
+
+# --- Adoption of installations that predate Alembic ----------------------------
+# Runs only once per installation, before the baseline revision is stamped.
 
 
 def _column_exists(connection: Connection, table_name: str, column_name: str) -> bool:
@@ -58,9 +94,6 @@ def _drop_legacy_communication_mode(connection: Connection) -> None:
 
 
 def _apply_compatible_schema_updates(connection: Connection) -> None:
-    # Keep bootstrap safe for existing installations without introducing a separate
-    # migration framework. Nullable columns can be added idempotently before the
-    # strict drift verification runs.
     connection.exec_driver_sql(
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50)"
     )
@@ -104,42 +137,40 @@ def _apply_compatible_schema_updates(connection: Connection) -> None:
         connection.exec_driver_sql("DROP TABLE billing_legal_entities")
 
 
-def _verify_schema(connection: Connection) -> None:
-    inspector = inspect(connection)
-    expected_tables = set(Base.metadata.tables)
-    actual_tables = set(inspector.get_table_names())
+# --- Migration and verification ---------------------------------------------------
 
-    missing_tables = sorted(expected_tables - actual_tables)
-    unexpected_tables = sorted(actual_tables - expected_tables)
-    problems: list[str] = []
-    if missing_tables:
-        problems.append(f"missing tables: {', '.join(missing_tables)}")
-    if unexpected_tables:
-        problems.append(f"unexpected tables: {', '.join(unexpected_tables)}")
 
-    for table_name in sorted(expected_tables & actual_tables):
-        expected_columns = set(Base.metadata.tables[table_name].columns.keys())
-        actual_columns = {column["name"] for column in inspector.get_columns(table_name)}
-        missing_columns = sorted(expected_columns - actual_columns)
-        unexpected_columns = sorted(actual_columns - expected_columns)
-        if missing_columns:
-            problems.append(
-                f"{table_name}: missing columns: {', '.join(missing_columns)}"
-            )
-        if unexpected_columns:
-            problems.append(
-                f"{table_name}: unexpected columns: {', '.join(unexpected_columns)}"
-            )
+def schema_drift(connection: Connection) -> list:
+    """Differences between the ORM models and the live schema (empty when in sync)."""
+    context = MigrationContext.configure(connection, opts={"compare_type": True})
+    return compare_metadata(context, Base.metadata)
 
-    if problems:
-        raise RuntimeError("Database schema drift detected: " + "; ".join(problems))
+
+def _migrate(connection: Connection) -> None:
+    # Migrations may run longer than the application's statement timeout; lock
+    # waits stay bounded so a forgotten session cannot hold the deployment hostage.
+    connection.exec_driver_sql("SET LOCAL statement_timeout = 0")
+    connection.exec_driver_sql("SET LOCAL lock_timeout = '30s'")
+    connection.exec_driver_sql(f"SELECT pg_advisory_xact_lock({_BOOTSTRAP_LOCK_KEY})")
+
+    config = alembic_config(connection)
+    tables = set(inspect(connection).get_table_names())
+    if "alembic_version" not in tables and tables & set(Base.metadata.tables):
+        _apply_compatible_schema_updates(connection)
+        command.stamp(config, BASELINE_REVISION)
+    command.upgrade(config, "head")
+
+    drift = schema_drift(connection)
+    if drift:
+        raise RuntimeError(
+            "Database schema does not match the models after migration: "
+            + "; ".join(repr(item) for item in drift)
+        )
 
 
 async def create_schema() -> None:
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
-        await connection.run_sync(_apply_compatible_schema_updates)
-        await connection.run_sync(_verify_schema)
+        await connection.run_sync(_migrate)
 
 
 async def main() -> None:

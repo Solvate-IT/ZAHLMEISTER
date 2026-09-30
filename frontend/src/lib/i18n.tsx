@@ -7,6 +7,7 @@ import {adminMessages} from "@/locales/admin";
 import {billingMessages} from "@/locales/billing";
 import {billingProfileMessages} from "@/locales/billingProfile";
 import {integrationMessages} from "@/locales/integrations";
+import {legalMessages} from "@/locales/legal";
 import {settingsMessages} from "@/locales/settings";
 import {storeBillingMessages} from "@/locales/storeBilling";
 import {uxMessages} from "@/locales/ux";
@@ -75,8 +76,11 @@ export function I18nProvider({children}: {children: React.ReactNode}) {
     const integrationsForLocale = integrationMessages[locale] ?? integrationMessages.en;
     const settingsForLocale = settingsMessages[locale] ?? settingsMessages.en;
     const uxForLocale = uxMessages[locale] ?? uxMessages.en;
+    const legalForLocale = legalMessages[locale] ?? legalMessages.en;
     const fallback = uxForLocale[key]
       ?? uxMessages.en[key]
+      ?? legalForLocale[key]
+      ?? legalMessages.en[key]
       ?? storeBillingForLocale[key]
       ?? storeBillingMessages.en[key]
       ?? billingProfileForLocale[key]
@@ -92,7 +96,7 @@ export function I18nProvider({children}: {children: React.ReactNode}) {
       ?? (de as Messages)[key]
       ?? (en as Messages)[key]
       ?? key;
-    let value = uxForLocale[key] ?? storeBillingForLocale[key] ?? billingProfileForLocale[key] ?? billingForLocale[key] ?? settingsForLocale[key] ?? messages[key] ?? fallback;
+    let value = uxForLocale[key] ?? legalForLocale[key] ?? storeBillingForLocale[key] ?? billingProfileForLocale[key] ?? billingForLocale[key] ?? settingsForLocale[key] ?? messages[key] ?? fallback;
     for (const [name, replacement] of Object.entries(params)) {
       value = value.replaceAll(`{${name}}`, String(replacement));
     }

@@ -27,6 +27,7 @@ from app.schemas.bank_imports import (
     BankTransactionRead,
 )
 from app.services.bank_imports import MatchTarget, decide_match, parse_statement
+from app.services.blocking import run_blocking
 from app.services.locks import transaction_lock
 
 router = APIRouter(prefix="/bank-imports", tags=["bank-imports"])
@@ -228,7 +229,8 @@ async def import_bank_statement(
         raise HTTPException(status_code=413, detail="Bank statement is too large")
 
     try:
-        statement_format, parsed = parse_statement(
+        statement_format, parsed = await run_blocking(
+            parse_statement,
             file.filename or "statement",
             content,
             organization.currency,

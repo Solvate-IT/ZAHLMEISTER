@@ -91,7 +91,7 @@ export function PublicPaymentPage() {
       {copied && <div className="toast" role="status">{t("copied")}</div>}
     </main>
     <div className="payment-promo"><Link href="/">{t("paymentPromo")} →</Link></div>
-    <footer className="footer premium-footer"><div className="container footer-row"><span>© {new Date().getFullYear()} {t("portalCompanyName")}</span><div className="footer-links"><Link className="button ghost" href="/">{t("appName")}</Link><Link className="button ghost" href="/imprint/">{t("portalNavImprint")}</Link><Link className="button ghost" href="/privacy/">{t("portalNavPrivacy")}</Link></div></div></footer>
+    <footer className="footer premium-footer"><div className="container footer-row"><span>© {new Date().getFullYear()} {t("portalCompanyName")}</span><div className="footer-links"><Link className="button ghost" href="/">{t("appName")}</Link><Link className="button ghost" href="/imprint/">{t("portalNavImprint")}</Link><Link className="button ghost" href="/privacy/">{t("portalNavPrivacy")}</Link><Link className="button ghost" href="/terms/">{t("portalNavTerms")}</Link></div></div></footer>
   </div>;
 }
 

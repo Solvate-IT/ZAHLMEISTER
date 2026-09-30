@@ -30,22 +30,30 @@ def test_delete_only_before_any_delivery_or_payment() -> None:
 
 @pytest.mark.asyncio
 async def test_collection_job_selection_never_touches_another_collection() -> None:
-    collection_id, other_id, message_id = uuid4(), uuid4(), uuid4()
-    current = SimpleNamespace(id=collection_id, organization_id=uuid4())
-    jobs = [
-        SimpleNamespace(job_type="send_collection", payload=f'{{"collection_id":"{collection_id}"}}'),
-        SimpleNamespace(job_type="send_reminders", payload=f'{{"collection_id":"{other_id}"}}'),
-        SimpleNamespace(job_type="send_message", payload=f'{{"message_id":"{message_id}"}}'),
-        SimpleNamespace(job_type="send_message", payload=f'{{"message_id":"{other_id}"}}'),
-        SimpleNamespace(job_type="send_message", payload="not json"),
-    ]
+    collection_id, organization_id = uuid4(), uuid4()
+    current = SimpleNamespace(id=collection_id, organization_id=organization_id)
+    job = SimpleNamespace(job_type="send_collection", collection_id=collection_id)
 
     class Session:
-        calls = 0
+        statement = None
 
-        async def execute(self, _statement):
-            self.calls += 1
-            values = [message_id] if self.calls == 1 else jobs
-            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: values))
+        async def execute(self, statement):
+            self.statement = statement
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [job]))
 
-    assert await _collection_jobs(Session(), current) == [jobs[0], jobs[2]]
+    session = Session()
+    assert await _collection_jobs(session, current) == [job]
+
+    compiled = session.statement.compile()
+    sql = str(compiled)
+    # Bound to this collection and organization through the typed, indexed column;
+    # no lookup by payload text that could match another collection's jobs.
+    assert "scheduled_jobs.collection_id =" in sql
+    assert "scheduled_jobs.organization_id =" in sql
+    assert "payload" not in sql.split("WHERE", 1)[1]
+    params = set(map(str, compiled.params.values()))
+    assert {str(collection_id), str(organization_id)} <= params
+    assert any(
+        isinstance(value, (list, tuple)) and set(value) == {"send_collection", "send_reminders", "send_message"}
+        for value in compiled.params.values()
+    )

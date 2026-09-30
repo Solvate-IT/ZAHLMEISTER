@@ -1,12 +1,13 @@
 import json
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_organization, get_session
+from app.api.pagination import Page, page_params, set_total_count, total_count
 from app.db.session import SessionLocal
 from app.models.billing import BillingProfile
 from app.models.entities import CollectionParticipant, Organization, Participant, ParticipantList
@@ -146,16 +147,25 @@ async def _owned_participant(
 
 @router.get("", response_model=list[ParticipantListRead])
 async def list_participant_lists(
+    response: Response,
+    page: Page = Depends(page_params),
     organization: Organization = Depends(get_organization),
     session: AsyncSession = Depends(get_session),
 ) -> list[ParticipantListRead]:
+    set_total_count(
+        response,
+        await total_count(
+            session,
+            select(ParticipantList.id).where(ParticipantList.organization_id == organization.id),
+        ),
+    )
     count_expr = func.count(Participant.id)
-    stmt = (
+    stmt = page.apply(
         select(ParticipantList, count_expr)
         .outerjoin(Participant, Participant.list_id == ParticipantList.id)
         .where(ParticipantList.organization_id == organization.id)
         .group_by(ParticipantList.id)
-        .order_by(ParticipantList.created_at.desc())
+        .order_by(ParticipantList.created_at.desc(), ParticipantList.id)
     )
     rows = (await session.execute(stmt)).all()
     return [

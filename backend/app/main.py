@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.pagination import TOTAL_COUNT_HEADER
 from app.api.public_router import public_api_router
 from app.api.router import api_router
 from app.core.config import settings
@@ -36,6 +37,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Admin-Request"],
+    # Paged list endpoints report the total here (app.api.pagination).
+    expose_headers=[TOTAL_COUNT_HEADER],
 )
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(public_api_router, prefix="/api/public/v1")

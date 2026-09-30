@@ -80,7 +80,8 @@ def _message_options(collection: Collection, organization: Organization) -> tupl
     return bool(include_link), bool(include_qr)
 
 
-async def _account_display_name(session: AsyncSession | None, organization: Organization) -> str:
+async def account_display_name(session: AsyncSession | None, organization: Organization) -> str:
+    """The sender name shown in messages: the organization's first active user."""
     if session is None:
         return organization.name
     display_name = await session.scalar(
@@ -100,8 +101,13 @@ async def render_collection_message(
     participant: Participant,
     organization: Organization,
     participant_locale: str | None | object = _LOCALE_UNSET,
+    sender_name: str | None = None,
 ) -> CanonicalMessage:
-    """Render one canonical message independent of channel and provider."""
+    """Render one canonical message independent of channel and provider.
+
+    Bulk callers pass ``sender_name`` (see account_display_name) so it is looked
+    up once per send rather than once per recipient.
+    """
 
     if participant_locale is _LOCALE_UNSET:
         participant_locale = (
@@ -146,7 +152,11 @@ async def render_collection_message(
         settings.public_app_url, collection_participant.public_token
     )
     values = message_values(
-        sender_name=await _account_display_name(session, organization),
+        sender_name=(
+            sender_name
+            if sender_name is not None
+            else await account_display_name(session, organization)
+        ),
         participant_name=participant.name,
         organization_name=organization.name,
         collection_name=collection.name,

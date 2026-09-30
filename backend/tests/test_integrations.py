@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import ssl
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -133,18 +134,15 @@ def test_bank_sync_provider_registry_is_replaceable() -> None:
 def test_smtp_imap_connection_test_supports_standard_tls(monkeypatch) -> None:
     calls: list[str] = []
 
+    contexts: dict[str, ssl.SSLContext] = {}
+
     class FakeSmtp:
         def __init__(self, host, port, timeout):
             calls.append(f"smtp:{host}:{port}")
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def starttls(self):
+        def starttls(self, context=None):
             calls.append("smtp:starttls")
+            contexts["smtp"] = context
 
         def login(self, username, password):
             calls.append(f"smtp:login:{username}")
@@ -152,9 +150,13 @@ def test_smtp_imap_connection_test_supports_standard_tls(monkeypatch) -> None:
         def noop(self):
             calls.append("smtp:noop")
 
+        def quit(self):
+            calls.append("smtp:quit")
+
     class FakeImap:
-        def __init__(self, host, port):
+        def __init__(self, host, port, ssl_context=None, timeout=None):
             calls.append(f"imap:{host}:{port}")
+            contexts["imap"] = ssl_context
 
         def login(self, username, password):
             calls.append(f"imap:login:{username}")
@@ -187,6 +189,11 @@ def test_smtp_imap_connection_test_supports_standard_tls(monkeypatch) -> None:
     assert result == {"smtp": "ok", "imap": "ok"}
     assert "smtp:starttls" in calls
     assert "imap:select:INBOX" in calls
+    # Without an explicit context smtplib/imaplib accept any certificate.
+    for name in ("smtp", "imap"):
+        assert contexts[name] is not None, name
+        assert contexts[name].verify_mode == ssl.CERT_REQUIRED, name
+        assert contexts[name].check_hostname, name
 
 
 def test_infobip_base_url_rejects_non_infobip_host() -> None:

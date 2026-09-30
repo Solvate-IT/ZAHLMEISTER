@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import json
+import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -14,7 +13,6 @@ from app.models.entities import (
     CommunicationMessage,
     Organization,
     Participant,
-    ScheduledJob,
 )
 from app.services.channel_strategy import (
     SUPPORTED_CHANNELS,
@@ -23,7 +21,8 @@ from app.services.channel_strategy import (
     load_participant_channel_settings,
     resolve_channel,
 )
-from app.services.message_renderer import render_collection_message
+from app.services.jobs import message_job
+from app.services.message_renderer import account_display_name, render_collection_message
 from app.services.participant_preferences import load_participant_locales
 
 
@@ -130,14 +129,16 @@ async def queue_collection_messages(
                 CommunicationMessage.collection_participant_id.in_(cp_ids),
                 CommunicationMessage.kind == kind,
                 CommunicationMessage.direction == "outgoing",
-                CommunicationMessage.status == "queued",
+                CommunicationMessage.status.in_(["queued", "sending"]),
             )
         )
     ).scalars().all()
     already_queued = set(queued_rows)
 
     outcome = DispatchOutcome()
-    now = datetime.now(UTC)
+    # Resolved once for the whole send instead of once per recipient.
+    sender_name = await account_display_name(session, organization)
+    messages: list[CommunicationMessage] = []
     for cp, participant in eligible_rows:
         if cp.id in already_queued:
             continue
@@ -169,6 +170,7 @@ async def queue_collection_messages(
             participant=participant,
             organization=organization,
             participant_locale=participant_locales.get(participant.id),
+            sender_name=sender_name,
         )
 
         # Business-initiated WhatsApp traffic must use a Meta-approved template. A
@@ -207,33 +209,42 @@ async def queue_collection_messages(
             and not str(route.config.get("from_address") or "").strip()
         ):
             provider = "zahlmeister_email"
-        message = CommunicationMessage(
-            organization_id=organization.id,
-            collection_id=collection.id,
-            collection_participant_id=cp.id,
-            kind=kind,
-            channel=route.channel,
-            delivery_mode="internal",
-            direction="outgoing",
-            recipient=route.recipient,
-            subject=content.subject,
-            body=content.text,
-            status="queued",
-            provider=provider,
-            metadata_json=content.metadata_json(),
-        )
-        session.add(message)
-        await session.flush()
-        session.add(
-            ScheduledJob(
+        messages.append(
+            CommunicationMessage(
+                # Assigned here so the delivery job can reference it without a
+                # database round trip per message.
+                id=uuid.uuid4(),
                 organization_id=organization.id,
-                job_type="send_message",
-                payload=json.dumps({"message_id": str(message.id)}),
-                scheduled_at=now,
+                collection_id=collection.id,
+                collection_participant_id=cp.id,
+                kind=kind,
+                channel=route.channel,
+                delivery_mode="internal",
+                direction="outgoing",
+                recipient=route.recipient,
+                subject=content.subject,
+                body=content.text,
+                status="queued",
+                provider=provider,
+                metadata_json=content.metadata_json(),
             )
         )
-        outcome.queued_internal += 1
 
+    if messages:
+        # Two batched INSERTs for the whole send; the messages first, because the
+        # delivery jobs reference them.
+        session.add_all(messages)
+        await session.flush()
+        session.add_all(
+            message_job(
+                organization_id=organization.id,
+                collection_id=collection.id,
+                message_id=message.id,
+            )
+            for message in messages
+        )
+        await session.flush()
+    outcome.queued_internal = len(messages)
     return outcome
 
 

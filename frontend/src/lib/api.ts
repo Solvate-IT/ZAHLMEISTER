@@ -4,6 +4,7 @@ import {clearToken, readToken, storeToken} from "@/lib/session";
 import {Capacitor} from "@capacitor/core";
 import {Directory,Filesystem} from "@capacitor/filesystem";
 import {Share} from "@capacitor/share";
+import {collectPages, withQuery} from "@/lib/paging";
 import type * as T from "@/lib/types";
 
 export class ApiError extends Error { constructor(message: string, public status: number) { super(message); } }
@@ -19,7 +20,7 @@ function apiBase(): string {
   return `${window.location.origin}/api/v1`;
 }
 
-async function request<T>(path: string, init: RequestInit = {}, auth = true): Promise<T> {
+async function send(path: string, init: RequestInit = {}, auth = true): Promise<Response> {
   const token = auth ? await readToken() : null;
   const headers = new Headers(init.headers);
   if (!(init.body instanceof FormData) && init.body !== undefined) headers.set("Content-Type", "application/json");
@@ -31,10 +32,20 @@ async function request<T>(path: string, init: RequestInit = {}, auth = true): Pr
     try { const body = await response.json(); message = String(body.detail ?? message); } catch {}
     throw new ApiError(message, response.status);
   }
+  return response;
+}
+
+async function request<T>(path: string, init: RequestInit = {}, auth = true): Promise<T> {
+  const response = await send(path, init, auth);
   if (response.status === 204) return undefined as T;
   const type = response.headers.get("content-type") ?? "";
   if (type.includes("application/json")) return response.json() as Promise<T>;
   return response as unknown as T;
+}
+
+/** Every row of a paged list endpoint (see lib/paging.ts). */
+function requestAll<T>(path: string): Promise<T[]> {
+  return collectPages<T>(query => send(withQuery(path, query)));
 }
 
 async function download(path: string): Promise<{blob: Blob; filename: string}> {
@@ -51,7 +62,7 @@ type EmailVerificationResult={status:"verified"|"sent"|"already_verified"};
 export const api = {
   async restore(): Promise<T.AccountUser|null> { try { return await request<T.AccountUser>("/auth/me",{cache:"no-store"}); } catch (e) { if (e instanceof ApiError && e.status === 401) return null; throw e; } },
   async login(email: string, password: string) { const data=await request<T.AuthResponse>("/auth/login",{method:"POST",body:JSON.stringify({email,password})},false); await storeToken(data.token); return data.user; },
-  async register(payload: {email:string;password:string;display_name:string;locale:string;currency:string}) { const data=await request<T.AuthResponse>("/auth/register",{method:"POST",body:JSON.stringify(payload)},false); await storeToken(data.token); return data.user; },
+  async register(payload: {email:string;password:string;display_name:string;locale:string;currency:string;accept_terms:boolean}) { const data=await request<T.AuthResponse>("/auth/register",{method:"POST",body:JSON.stringify(payload)},false); await storeToken(data.token); return data.user; },
   async logout(){ try { await request<void>("/auth/logout",{method:"POST"}); } finally { await clearToken(); } },
   forgotPassword:(email:string)=>request<void>("/auth/forgot-password",{method:"POST",body:JSON.stringify({email})},false),
   resetPassword:(token:string,new_password:string)=>request<void>("/auth/reset-password",{method:"POST",body:JSON.stringify({token,new_password})},false),
@@ -62,7 +73,7 @@ export const api = {
   changePassword:(current_password:string,new_password:string)=>request<void>("/account/change-password",{method:"POST",body:JSON.stringify({current_password,new_password})}),
   exportAccount:()=>download("/account/export"),
   deleteAccount:(password:string)=>request<void>("/account/delete",{method:"POST",body:JSON.stringify({password})}),
-  lists:()=>request<T.ParticipantListSummary[]>("/participant-lists"),
+  lists:()=>requestAll<T.ParticipantListSummary>("/participant-lists"),
   list:(id:string)=>request<T.ParticipantListDetail>(`/participant-lists/${id}`),
   createList:(name?:string)=>request<T.ParticipantListSummary>("/participant-lists",{method:"POST",body:JSON.stringify(name?.trim()?{name:name.trim()}:{})}),
   renameList:(id:string,name:string)=>request<T.ParticipantListSummary>(`/participant-lists/${id}`,{method:"PATCH",body:JSON.stringify({name})}),
@@ -72,8 +83,8 @@ export const api = {
   deleteParticipant:(listId:string,id:string)=>request<void>(`/participant-lists/${listId}/participants/${id}`,{method:"DELETE"}),
   async previewImport(file:File){ const form=new FormData(); form.append("file",file); return request<T.ImportPreview>("/participant-lists/import-preview",{method:"POST",body:form}); },
   commitImport:(listId:string,participants:T.ImportDraft[])=>request<T.ImportResult>(`/participant-lists/${listId}/import`,{method:"POST",body:JSON.stringify({participants})}),
-  collections:()=>request<T.CollectionSummary[]>("/collections"),
-  openBalances:()=>request<T.ParticipantOpenBalance[]>("/collections/open-balances"),
+  collections:()=>requestAll<T.CollectionSummary>("/collections"),
+  openBalances:()=>requestAll<T.ParticipantOpenBalance>("/collections/open-balances"),
   collection:(id:string)=>request<T.CollectionDetail>(`/collections/${id}`),
   createCollection:(payload:Record<string,unknown>)=>request<T.CollectionSummary>("/collections",{method:"POST",body:JSON.stringify(payload)}),
   updateCollection:(id:string,payload:Record<string,unknown>)=>request<T.CollectionSummary>(`/collections/${id}`,{method:"PATCH",body:JSON.stringify(payload)}),

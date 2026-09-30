@@ -1,4 +1,3 @@
-import json
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -14,7 +13,6 @@ from app.models.entities import (
     CommunicationMessage,
     Organization,
     Participant,
-    ScheduledJob,
     User,
 )
 from app.schemas.communications import (
@@ -35,6 +33,7 @@ from app.services.channel_strategy import (
     set_channel_knowledge,
 )
 from app.services.communications import external_launch_uri, normalize_phone, recipient_for_channel
+from app.services.jobs import PRIORITY_INTERACTIVE, message_job
 from app.services.message_renderer import render_collection_message
 
 router = APIRouter(tags=["communications"])
@@ -209,12 +208,13 @@ async def test_collection_message(
         )
         session.add(message)
         await session.flush()
+        # Somebody is waiting for this one: ahead of any bulk send in the queue.
         session.add(
-            ScheduledJob(
+            message_job(
                 organization_id=stored_org.id,
-                job_type="send_message",
-                payload=json.dumps({"message_id": str(message.id)}),
-                scheduled_at=datetime.now(UTC),
+                collection_id=collection.id,
+                message_id=message.id,
+                priority=PRIORITY_INTERACTIVE,
             )
         )
         return TestCollectionMessageResult(
@@ -505,12 +505,13 @@ async def queue_internal_message(
         )
         session.add(message)
         await session.flush()
+        # Somebody is waiting for this one: ahead of any bulk send in the queue.
         session.add(
-            ScheduledJob(
+            message_job(
                 organization_id=stored_org.id,
-                job_type="send_message",
-                payload=json.dumps({"message_id": str(message.id)}),
-                scheduled_at=datetime.now(UTC),
+                collection_id=collection.id,
+                message_id=message.id,
+                priority=PRIORITY_INTERACTIVE,
             )
         )
         return QueueMessageResult(message_id=message.id, status="queued")
