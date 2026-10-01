@@ -22,6 +22,8 @@ docker/secrets/**/google_play_service_account.json
 *.pfx
 *.crt
 *.cer
+*.jks
+*.keystore
 
 # Python / FastAPI
 __pycache__/
@@ -63,6 +65,16 @@ pnpm-debug.log*
 .vercel/
 *.tsbuildinfo
 next-env.d.ts
+
+# Android / Capacitor (mobile/): builds land in mobile/dist/, the upload key in
+# docker/secrets/android/; mobile/android/.gitignore covers the Gradle project.
+mobile/dist/
+*.apk
+*.aab
+*.apks
+key.properties
+.gradle/
+local.properties
 
 # Docker runtime data
 docker/backup/*
@@ -107,6 +119,7 @@ frontend/logs/
 *.ipr
 *.iws
 .vscode/
+.claude/
 
 # OS generated files
 .DS_Store

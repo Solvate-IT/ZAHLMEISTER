@@ -1,0 +1,43 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+buildscript {
+
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.13.0'
+        classpath 'com.google.gms:google-services:4.4.4'
+
+        // NOTE: Do not place your application dependencies here; they belong
+        // in the individual module build.gradle files
+    }
+}
+
+apply from: "variables.gradle"
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+// Capacitor and its plugins compile from node_modules with upstream deprecation
+// and unchecked warnings that cannot be fixed in this project. Keep compiler
+// warnings to our own :app module so the build output shows only what we own.
+subprojects {
+    if (path != ':app') {
+        tasks.withType(JavaCompile).configureEach {
+            options.compilerArgs += ['-nowarn', '-XDsuppressNotes']
+        }
+        tasks.matching { it.name.startsWith('compile') && it.name.endsWith('Kotlin') }.configureEach {
+            compilerOptions.suppressWarnings.set(true)
+        }
+    }
+}
+
+tasks.register('clean', Delete) {
+    delete rootProject.layout.buildDirectory
+}

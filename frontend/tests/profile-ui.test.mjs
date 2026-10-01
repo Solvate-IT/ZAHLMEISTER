@@ -28,3 +28,10 @@ test("resend verification handles already verified accounts", () => {
   assert.match(settings, /result\.status==="already_verified"/);
   assert.match(settings, /api\.restore\(\)/);
 });
+
+
+test("bank sync combines automatic synchronization and statement import under one settings item", () => {
+  assert.doesNotMatch(settings, /\["bankImports",t\("bankStatementImport"\)\]/);
+  assert.match(settings, /\["bankSync",t\("bankSyncSettings"\)\]/);
+  assert.match(settings, /\{section==="bankSync"&&<><BankSyncPanel\/><BankImportsPanel\/><\/>\}/);
+});

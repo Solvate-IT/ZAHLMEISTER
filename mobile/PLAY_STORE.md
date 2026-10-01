@@ -20,9 +20,11 @@ Do not rename the product ID after publishing. Backend, frontend and Play Consol
 identifier. The customer-facing price displayed in Android comes from Google Play ProductDetails,
 not from the web/Mollie tariff response.
 
-## 1. Generate and open Android project
+## 1. Prepare the Android project
 
-From the repository root, substitute the real production app host and API URL:
+`mobile/android/` is already generated and committed; APK and AAB builds run through
+`./docker/manage.sh` → 11 (see `README.md`). To add the billing bridge, re-sync the project on a
+machine with Node.js and Python and prepare Google Play Billing from the repository root:
 
 ```bash
 ./mobile/tool/bootstrap_mobile.sh <app-host> https://<app-host>/api/v1
@@ -165,6 +167,11 @@ Before uploading the production AAB, finish the normal Play Console release requ
 Signing/upload key, app version/versionCode, store listing and screenshots, privacy policy, Data
 Safety declaration, content rating, target audience, app access instructions where required, and the
 subscription disclosures/cancellation path.
+
+Create the upload key once with `./docker/manage.sh` → 11 → 6 and back it up. For every upload, raise
+`versionCode` in `mobile/android/app/build.gradle`, then build with `./docker/manage.sh` → 11 → 4
+(Release AAB) and check that the printed signer is `CN=Zahlmeister`, not `CN=Android Debug`. Upload
+`mobile/dist/release/Zahlmeister.aab`; 11 → 5 → 2 installs the same bundle on a USB phone first.
 
 Publish to an internal test track first. Promote the exact tested build to production only after the
 billing test matrix and backend production configuration are verified.

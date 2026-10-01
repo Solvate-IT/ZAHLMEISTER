@@ -86,12 +86,13 @@ The standard menu intentionally contains only frequent operations:
 2. Stop.
 3. Clean Build — removes containers/orphans, rebuilds without cache and starts again; persistent volumes are retained.
 4. Status.
-5. Logs.
-6. Pre-Deployment Checks.
-7. Backend Shell.
-8. Frontend Shell.
-9. Database Initialize / Migrate / Verify.
+5. Clean Orphan Containers — like option 5 in the other Solvate projects, removes what the project left behind and lists it, without touching the stack: containers of services no longer in `compose.yml`, stopped `compose run` containers, and containers/networks of interrupted pre-deployment checks. Anything still in use (a running build, adb or shell session, a running check) is kept and named.
+6. Logs.
+7. Pre-Deployment Checks.
+8. Backend Shell.
+9. Frontend Shell.
 10. Tests.
+11. Android App — debug/release APK and AAB builds (`mobile/dist/<debug|release>/Zahlmeister.<apk|aab>`), the upload keystore, and install, start, log and WebView DevTools on a USB phone, all in the `mobile`/`mobile-device` tools containers (development only; see `mobile/README.md`).
 
 Use `q` to quit. Backup, restore and other uncommon maintenance tasks remain separate scripts under `scripts/`.
 

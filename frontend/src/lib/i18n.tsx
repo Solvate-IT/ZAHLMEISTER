@@ -42,9 +42,17 @@ function normalizeLocale(value: string | null | undefined): string {
   return supported.includes(language as (typeof supported)[number]) ? language : "de";
 }
 
+function catalogValue(key:string,catalogs:Array<Messages|undefined>):string|undefined {
+  for(const catalog of catalogs){
+    const value=catalog?.[key];
+    if(value!==undefined)return value;
+  }
+  return undefined;
+}
+
 export function I18nProvider({children}: {children: React.ReactNode}) {
   const [locale, setLocaleState] = useState("de");
-  const [messages, setMessages] = useState<Messages>(de);
+  const [loaded, setLoaded] = useState<{locale:string;messages:Messages}>({locale:"de",messages:de});
 
   useEffect(() => {
     const stored = typeof window !== "undefined" ? window.localStorage.getItem("zahlmeister_locale") : null;
@@ -53,12 +61,12 @@ export function I18nProvider({children}: {children: React.ReactNode}) {
   }, []);
 
   useEffect(() => {
-    if (locale === "de") { setMessages(de); return; }
-    if (locale === "en") { setMessages(en); return; }
+    if (locale === "de") { setLoaded({locale,messages:de}); return; }
+    if (locale === "en") { setLoaded({locale,messages:en}); return; }
     const load = loaders[locale];
-    if (!load) { setMessages(de); return; }
+    if (!load) { setLoaded({locale,messages:{}}); return; }
     let active = true;
-    load().then(module => { if (active) setMessages(module.default); }).catch(() => { if (active) setMessages(de); });
+    load().then(module => { if (active) setLoaded({locale,messages:module.default}); }).catch(() => { if (active) setLoaded({locale,messages:{}}); });
     return () => { active = false; };
   }, [locale]);
 
@@ -69,39 +77,46 @@ export function I18nProvider({children}: {children: React.ReactNode}) {
   }, []);
 
   const t = useCallback((key: string, params: Params = {}) => {
-    const billingForLocale = billingMessages[locale] ?? billingMessages.en;
-    const billingProfileForLocale = billingProfileMessages[locale] ?? billingProfileMessages.en;
-    const storeBillingForLocale = storeBillingMessages[locale] ?? storeBillingMessages.en;
-    const adminForLocale = adminMessages[locale] ?? adminMessages.en;
-    const integrationsForLocale = integrationMessages[locale] ?? integrationMessages.en;
-    const settingsForLocale = settingsMessages[locale] ?? settingsMessages.en;
-    const uxForLocale = uxMessages[locale] ?? uxMessages.en;
-    const legalForLocale = legalMessages[locale] ?? legalMessages.en;
-    const fallback = uxForLocale[key]
-      ?? uxMessages.en[key]
-      ?? legalForLocale[key]
-      ?? legalMessages.en[key]
-      ?? storeBillingForLocale[key]
-      ?? storeBillingMessages.en[key]
-      ?? billingProfileForLocale[key]
-      ?? billingProfileMessages.en[key]
-      ?? billingForLocale[key]
-      ?? billingMessages.en[key]
-      ?? settingsForLocale[key]
-      ?? settingsMessages.en[key]
-      ?? integrationsForLocale[key]
-      ?? integrationMessages.en[key]
-      ?? adminForLocale[key]
-      ?? adminMessages.en[key]
-      ?? (de as Messages)[key]
-      ?? (en as Messages)[key]
-      ?? key;
-    let value = uxForLocale[key] ?? legalForLocale[key] ?? storeBillingForLocale[key] ?? billingProfileForLocale[key] ?? billingForLocale[key] ?? settingsForLocale[key] ?? messages[key] ?? fallback;
+    const localeMessages=loaded.locale===locale?loaded.messages:undefined;
+    // Exhaust translations for the selected language before falling back to
+    // English. This prevents an English module fallback from hiding a
+    // translation that already exists in another locale catalog.
+    const localizedCatalogs:Array<Messages|undefined>=[
+      uxMessages[locale],
+      legalMessages[locale],
+      storeBillingMessages[locale],
+      billingProfileMessages[locale],
+      billingMessages[locale],
+      settingsMessages[locale],
+      integrationMessages[locale],
+      adminMessages[locale],
+      localeMessages,
+    ];
+    const fallbackCatalogs:Array<Messages|undefined>=[
+      uxMessages.en,
+      legalMessages.en,
+      storeBillingMessages.en,
+      billingProfileMessages.en,
+      billingMessages.en,
+      settingsMessages.en,
+      integrationMessages.en,
+      adminMessages.en,
+      en as Messages,
+      de as Messages,
+    ];
+    let value=catalogValue(key,localizedCatalogs)??catalogValue(key,fallbackCatalogs)??key;
     for (const [name, replacement] of Object.entries(params)) {
       value = value.replaceAll(`{${name}}`, String(replacement));
     }
     return value;
-  }, [messages, locale]);
+  }, [loaded, locale]);
+
+  useEffect(()=>{
+    if(typeof document==="undefined")return;
+    document.documentElement.lang=locale;
+    document.title=`${t("appName")} – ${t("headline")}`;
+    document.querySelector('meta[name="description"]')?.setAttribute("content",t("subtitle"));
+  },[locale,t]);
 
   const value = useMemo(() => ({locale, setLocale, t}), [locale, setLocale, t]);
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;

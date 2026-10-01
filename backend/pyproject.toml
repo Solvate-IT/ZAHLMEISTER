@@ -22,6 +22,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  # starlette.testclient runs on httpx2 and deprecates the httpx fallback;
+  # the app itself keeps using httpx.
+  "httpx2>=2.13,<3",
   "pytest>=9.1,<10",
   "pytest-asyncio>=1.4,<2",
   "ruff>=0.16.8,<1",

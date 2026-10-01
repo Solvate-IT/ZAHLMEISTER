@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 
 const css = readFileSync(new URL("../src/app/mobile-workspace.css", import.meta.url), "utf8");
+const globals = readFileSync(new URL("../src/app/globals.css", import.meta.url), "utf8");
 const lists = readFileSync(new URL("../src/components/workspace/ListsPage.tsx", import.meta.url), "utf8");
 
 test("phone workspace uses a denser type and spacing scale without shrinking form controls", () => {
@@ -13,8 +14,9 @@ test("phone workspace uses a denser type and spacing scale without shrinking for
   assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.workspace-body \.input,\.workspace-body \.select,\.workspace-body \.textarea\{font-size:1rem/);
 });
 
-test("phone bottom navigation is slightly larger with a generous touch target", () => {
-  assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.mobile-nav button\{[^}]*min-height:52px[^}]*font-size:\.82rem/);
+test("mobile bottom navigation text is two pixels larger with a generous touch target", () => {
+  assert.match(globals, /@media\(max-width:900px\)\{[\s\S]*?\.mobile-nav button\{[^}]*font-size:calc\(\.76rem \+ 2px\)/);
+  assert.match(css, /@media\(max-width:620px\)\{[\s\S]*?\.mobile-nav button\{[^}]*min-height:52px[^}]*font-size:calc\(\.82rem \+ 2px\)/);
 });
 
 test("participant deletion uses an accessible inline svg control on phones", () => {

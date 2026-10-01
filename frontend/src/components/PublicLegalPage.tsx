@@ -23,9 +23,6 @@ const company = {
   email: "Support@Solvate.at",
   phone: "+43 699 17658283",
   web: "www.solvate.at",
-  chamber: "Wirtschaftskammer Steiermark · WKO 5235155",
-  profession: "Fachgruppe Unternehmensberatung und Informationstechnologie · IT-Dienstleister",
-  authority: "Magistrat der Stadt Graz · GISA 36952014",
 };
 
 export function PublicLegalPage({kind}: {kind: LegalKind}) {
@@ -56,12 +53,12 @@ function Imprint() {
     [t("email"), company.email],
     [t("phone"), company.phone],
   ];
-  return <section className="legal-content"><div className="card legal-card"><h2>{t("portalCompanyName")}</h2><dl className="legal-details">{rows.map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl><div className="legal-official"><p>{company.web}</p><p>{company.chamber}</p><p>{company.profession}</p><p>{company.authority}</p></div></div></section>;
+  return <section className="legal-content"><div className="card legal-card"><h2>{t("portalCompanyName")}</h2><dl className="legal-details">{rows.map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl><div className="legal-official"><p>{company.web}</p><p>{t("portalChamber")}</p><p>{t("portalProfession")}</p><p>{t("portalTradeAuthority")}</p></div></div></section>;
 }
 
 function Privacy() {
   const {t} = useI18n();
-  return <section className="legal-content legal-grid"><div className="card legal-card"><h2>{t("portalPrivacyControllerTitle")}</h2><p><strong>{t("portalCompanyName")}</strong><br/>{company.address}<br/><a href={`mailto:${company.email}`}>{company.email}</a></p></div><div className="card legal-card"><h2>{t("portalPrivacyDataTitle")}</h2><p>{t("portalPrivacyDataBody")}</p></div><div className="card legal-card"><h2>{t("portalPrivacyRightsTitle")}</h2><p>{t("portalPrivacyRightsBody")}</p><p>Österreichische Datenschutzbehörde · Barichgasse 40–42 · 1030 Wien · dsb.gv.at</p></div></section>;
+  return <section className="legal-content legal-grid"><div className="card legal-card"><h2>{t("portalPrivacyControllerTitle")}</h2><p><strong>{t("portalCompanyName")}</strong><br/>{company.address}<br/><a href={`mailto:${company.email}`}>{company.email}</a></p></div><div className="card legal-card"><h2>{t("portalPrivacyDataTitle")}</h2><p>{t("portalPrivacyDataBody")}</p></div><div className="card legal-card"><h2>{t("portalPrivacyRightsTitle")}</h2><p>{t("portalPrivacyRightsBody")}</p><p>{t("portalPrivacyAuthority")}</p></div></section>;
 }
 
 function Terms() {

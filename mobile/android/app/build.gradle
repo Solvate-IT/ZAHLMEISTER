@@ -1,0 +1,124 @@
+apply plugin: 'com.android.application'
+
+// --- Release signing ---------------------------------------------------------
+// The upload keystore and key.properties live outside this project, in the
+// gitignored docker/secrets/android/. The mobile build container mounts that
+// directory and names it in ZAHLMEISTER_SIGNING_DIR; Android Studio falls back
+// to the same path relative to the repository.
+//
+// Three outcomes, deliberately distinct:
+//
+//   file present and complete  -> sign with the upload key
+//   file absent                -> sign with the debug key, and SAY SO loudly
+//   file present but broken    -> fail the build
+//
+// A half-filled key.properties silently falling back to the debug signer would
+// produce an artifact that installs and runs but can never update the real app.
+def signingDir = file(System.getenv("ZAHLMEISTER_SIGNING_DIR") ?: "${rootDir}/../../docker/secrets/android")
+def keystorePropertiesFile = new File(signingDir, "key.properties")
+def keystoreProperties = new Properties()
+def releaseKeystore = null
+
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+
+    def missing = ["storeFile", "storePassword", "keyAlias", "keyPassword"].findAll {
+        !keystoreProperties.getProperty(it)?.trim()
+    }
+    if (!missing.isEmpty()) {
+        throw new GradleException(
+            "${keystorePropertiesFile} is missing: ${missing.join(', ')}. " +
+            "Complete it or delete it; an incomplete file must not fall back to " +
+            "the debug signer."
+        )
+    }
+
+    // Relative to the directory holding key.properties.
+    releaseKeystore = new File(signingDir, keystoreProperties.getProperty("storeFile").trim())
+    if (!releaseKeystore.exists()) {
+        throw new GradleException(
+            "${keystorePropertiesFile} names a keystore that is not there: " +
+            "${releaseKeystore}. Restore it from the backup; it is the only key " +
+            "that can sign an update of the published app."
+        )
+    }
+}
+
+def wantsRelease = gradle.startParameter.taskNames.any { it.toLowerCase().contains("release") }
+if (releaseKeystore == null && wantsRelease) {
+    logger.warn("")
+    logger.warn("  ****************************************************************")
+    logger.warn("  *  NO RELEASE KEYSTORE - SIGNING WITH THE DEBUG KEY            *")
+    logger.warn("  *                                                              *")
+    logger.warn("  *  docker/secrets/android/key.properties is absent, so this    *")
+    logger.warn("  *  release build is signed with the local Android debug key.   *")
+    logger.warn("  *                                                              *")
+    logger.warn("  *  It is fine to run. It MUST NOT be distributed: Google Play  *")
+    logger.warn("  *  rejects it and it cannot update an installed release.       *")
+    logger.warn("  ****************************************************************")
+    logger.warn("")
+}
+
+// versionName follows mobile/package.json, like the backend and frontend.
+// versionCode must grow for every Google Play upload; raise it here.
+def mobilePackage = new groovy.json.JsonSlurper().parse(file("${rootDir}/../package.json"))
+
+android {
+    namespace = "at.solvate.zahlmeister"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "at.solvate.zahlmeister"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName mobilePackage.version
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        if (releaseKeystore != null) {
+            release {
+                storeFile = releaseKeystore
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+    buildTypes {
+        release {
+            // The debug signer only when there is no keystore at all; the banner
+            // above says so. build_android.sh prints the artifact's real signer.
+            signingConfig = releaseKeystore != null ? signingConfigs.release : signingConfigs.debug
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}
