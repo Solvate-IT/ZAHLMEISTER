@@ -248,7 +248,7 @@
   "pontoCostsHint": "Ponto este un serviciu extern opțional. Costurile de utilizare sunt facturate direct de Ponto.",
   "connectPonto": "Conectează Ponto",
   "connectionOk": "Conexiune reușită.",
-  "connectionError": "Conexiunea a eșuat.",
+  "connectionError": "Conexiune eșuată.",
   "testConnection": "Testează conexiunea",
   "syncNow": "Sincronizează acum",
   "lastSync": "Ultima sincronizare",

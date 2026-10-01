@@ -339,7 +339,7 @@
   "statusDelivered": "Piegādāts",
   "statusError": "Kļūda",
   "statusFailed": "Neizdevās",
-  "statusNotTested": "Nav testēts",
+  "statusNotTested": "Nav pārbaudīts",
   "statusQueued": "Rindā",
   "statusRead": "Izlasīts",
   "statusSent": "Nosūtīts",

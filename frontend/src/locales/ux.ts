@@ -4,7 +4,6 @@ export const uxMessages:Record<string,Messages>={
   de:{
     invalidPhoneNumber:"Ungültige Telefonnummer. Bitte mit Ländervorwahl eingeben, z. B. +43 660 1234567.",
     paymentPromo:"Zahlungen einfach sammeln – mit Zahlmeister",
-    messagesQueued:"{count} Nachrichten wurden zum Versand übergeben.",
     copyPaymentLink:"Zahlungslink kopieren",
     paymentLinkCopied:"Zahlungslink kopiert.",
     copyFailed:"Kopieren fehlgeschlagen.",
@@ -26,7 +25,6 @@ export const uxMessages:Record<string,Messages>={
     variableAccountName:"Name (Konto)",
     variableContact:"Teilnehmer",
     variableOrganisation:"Name der Organisation",
-    variableCollectionName:"Sammelaktion",
     translateOtherLanguages:"Andere Sprachen übersetzen",
     saveTranslation:"Übersetzung speichern",
     collectionMessageTranslations:"Nachrichtentexte je Sprache",
@@ -59,7 +57,6 @@ export const uxMessages:Record<string,Messages>={
   en:{
     invalidPhoneNumber:"Invalid phone number. Please include the country code, e.g. +43 660 1234567.",
     paymentPromo:"Collect payments easily with Zahlmeister",
-    messagesQueued:"{count} messages were queued for delivery.",
     copyPaymentLink:"Copy payment link",
     paymentLinkCopied:"Payment link copied.",
     copyFailed:"Could not copy the link.",
@@ -81,7 +78,6 @@ export const uxMessages:Record<string,Messages>={
     variableAccountName:"Name (account)",
     variableContact:"Participant",
     variableOrganisation:"Organisation name",
-    variableCollectionName:"Collection",
     translateOtherLanguages:"Translate other languages",
     saveTranslation:"Save translation",
     collectionMessageTranslations:"Message texts by language",

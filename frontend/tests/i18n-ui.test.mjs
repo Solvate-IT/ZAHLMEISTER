@@ -5,7 +5,6 @@ import {fileURLToPath} from "node:url";
 import path from "node:path";
 
 const srcRoot=fileURLToPath(new URL("../src/",import.meta.url));
-const localeRoot=path.join(srcRoot,"locales");
 const moduleCatalogFiles=["admin.ts","billing.ts","integrations.ts","legal.ts","settings.ts","storeBilling.ts","ux.ts"];
 const importantLocaleKeys=[
   "headline","subtitle","login","register","participantLists","collections","settings",
@@ -89,37 +88,47 @@ function billingProfileValues(locale){
   return null;
 }
 
-function englishCatalog(){
+function billingProfileKeys(){
+  const shared=read("locales/billingProfileShared.ts");
+  const match=/billingProfileKeys\s*=\s*\[([\s\S]*?)\]\s*as const/.exec(shared);
+  assert.ok(match,"billingProfileKeys not found");
+  return [...match[1].matchAll(/"([A-Za-z_$][\w$]*)"/g)].map(item=>item[1]);
+}
+
+function completeCatalog(locale){
   const entries=new Map();
   const origins=new Map();
   const add=(key,value,origin)=>{
     assert.equal(typeof value,"string",`${origin}:${key} must be a string`);
     assert.notEqual(value.trim(),"",`${origin}:${key} must not be empty`);
-    if(entries.has(key))assert.equal(entries.get(key),value,`Conflicting English translation for ${key}: ${origins.get(key)} vs ${origin}`);
+    if(entries.has(key))assert.equal(entries.get(key),value,`Conflicting ${locale} translation for ${key}: ${origins.get(key)} vs ${origin}`);
     else{entries.set(key,value);origins.set(key,origin)}
   };
-  for(const [key,value] of Object.entries(json("locales/en.json")))add(key,value,"en.json");
+
+  for(const [key,value] of Object.entries(json(`locales/${locale}.json`)))add(key,value,`${locale}.json`);
   for(const file of moduleCatalogFiles){
-    const block=localeBlock(read(`locales/${file}`),"en");
-    assert.ok(block,`${file} has no English catalog`);
+    const block=localeBlock(read(`locales/${file}`),locale);
+    if(!block)continue;
     for(const [key,value] of stringEntries(block))add(key,value,file);
   }
-  const shared=read("locales/billingProfileShared.ts");
-  const keysMatch=/billingProfileKeys\s*=\s*\[([\s\S]*?)\]\s*as const/.exec(shared);
-  assert.ok(keysMatch,"billingProfileKeys not found");
-  const keys=[...keysMatch[1].matchAll(/"([A-Za-z_$][\w$]*)"/g)].map(match=>match[1]);
-  const values=billingProfileValues("en");
-  assert.ok(values,"English billing profile catalog not found");
-  assert.equal(values.length,keys.length,"English billing profile catalog length mismatch");
-  keys.forEach((key,index)=>add(key,values[index],"billingProfile"));
+
+  const profileKeys=billingProfileKeys();
+  const profileValues=billingProfileValues(locale);
+  if(profileValues){
+    assert.equal(profileValues.length,profileKeys.length,`Billing profile catalog length mismatch for ${locale}`);
+    profileKeys.forEach((key,index)=>add(key,profileValues[index],"billingProfile"));
+  }
 
   const billing=read("locales/billing.ts");
   for(const [record,key] of [["billingInvoicePdfLabels","billingInvoicePdf"],["billingInvoicePreparingLabels","billingInvoicePreparing"]]){
     const valuesByLocale=stringEntries(namedObject(billing,record));
-    assert.ok(valuesByLocale.has("en"),`${record} has no English value`);
-    add(key,valuesByLocale.get("en"),record);
+    if(valuesByLocale.has(locale))add(key,valuesByLocale.get(locale),record);
   }
   return entries;
+}
+
+function englishCatalog(){
+  return completeCatalog("en");
 }
 
 function visibleLiteralIssues(source,file){
@@ -163,6 +172,23 @@ test("every statically used translation key exists in the English catalog",()=>{
 
 test("English catalog entries are non-empty and non-conflicting",()=>{
   assert.ok(englishCatalog().size>0);
+});
+
+test("catalogs do not contain contradictory duplicate translations",()=>{
+  for(const locale of supportedLocales())assert.ok(completeCatalog(locale).size>0);
+});
+
+test("dynamic template translation keys require an explicit prefix allowlist",()=>{
+  const allowedPrefixes=[];
+  const issues=[];
+  for(const file of filesBelow(srcRoot,[".tsx"])){
+    const text=readFileSync(file,"utf8");
+    for(const match of text.matchAll(/\bt\(\s*`([^`]*)`/g)){
+      if(!match[1].includes("${"))continue;
+      if(!allowedPrefixes.some(prefix=>match[1].startsWith(prefix)))issues.push(`${path.relative(srcRoot,file)}: ${match[1]}`);
+    }
+  }
+  assert.deepEqual(issues,[]);
 });
 
 test("placeholders remain compatible across locale catalogs",()=>{

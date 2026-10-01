@@ -247,7 +247,7 @@
   "bankSyncHint": "Izbirna bančna povezava za samodejno povezovanje plačil.",
   "pontoCostsHint": "Ponto je izbirna zunanja storitev. Stroške uporabe neposredno zaračuna Ponto.",
   "connectPonto": "Poveži Ponto",
-  "connectionOk": "Povezava je uspela.",
+  "connectionOk": "Povezava je uspešna.",
   "connectionError": "Povezava ni uspela.",
   "testConnection": "Preizkusi povezavo",
   "syncNow": "Sinhroniziraj zdaj",
