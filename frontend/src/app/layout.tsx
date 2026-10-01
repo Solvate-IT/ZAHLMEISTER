@@ -1,4 +1,5 @@
 import type {Metadata, Viewport} from "next";
+import de from "@/locales/de.json";
 import "./globals.css";
 import "./portal.css";
 import "./ux.css";
@@ -8,8 +9,8 @@ import {NativeBridge} from "@/components/NativeBridge";
 import {ToastHost} from "@/components/ToastHost";
 
 export const metadata: Metadata = {
-  title: "Zahlmeister – Ihr Geldeintreiber",
-  description: "Zahlungen einfach einsammeln und nachverfolgen.",
+  title: de.appName,
+  description: de.subtitle,
   manifest: "/manifest.webmanifest?v=4",
   icons: {
     icon: [{url: "/favicon.svg", type: "image/svg+xml"}],
