@@ -178,17 +178,37 @@ test("catalogs do not contain contradictory duplicate translations",()=>{
   for(const locale of supportedLocales())assert.ok(completeCatalog(locale).size>0);
 });
 
-test("dynamic template translation keys require an explicit prefix allowlist",()=>{
-  const allowedPrefixes=[];
+test("dynamic template translation keys use only explicitly supported patterns",()=>{
+  const english=englishCatalog();
+  const supportedPatterns=new Set([
+    "terms_${section}_title",
+    "terms_${section}_body",
+    "${provider}OnboardingTitle",
+    "${provider}OnboardingHint",
+  ]);
   const issues=[];
   for(const file of filesBelow(srcRoot,[".tsx"])){
     const text=readFileSync(file,"utf8");
     for(const match of text.matchAll(/\bt\(\s*`([^`]*)`/g)){
       if(!match[1].includes("${"))continue;
-      if(!allowedPrefixes.some(prefix=>match[1].startsWith(prefix)))issues.push(`${path.relative(srcRoot,file)}: ${match[1]}`);
+      if(!supportedPatterns.has(match[1]))issues.push(`${path.relative(srcRoot,file)}: ${match[1]}`);
     }
   }
   assert.deepEqual(issues,[]);
+
+  const legal=read("locales/legal.ts");
+  const sectionsMatch=/TERMS_SECTIONS\s*=\s*\[([\s\S]*?)\]\s*as const/.exec(legal);
+  assert.ok(sectionsMatch,"TERMS_SECTIONS not found");
+  const sections=[...sectionsMatch[1].matchAll(/"([^"]+)"/g)].map(match=>match[1]);
+  for(const section of sections){
+    assert.ok(english.has(`terms_${section}_title`),`Missing English terms_${section}_title`);
+    assert.ok(english.has(`terms_${section}_body`),`Missing English terms_${section}_body`);
+  }
+
+  for(const provider of ["infobip","mollie","ponto"]){
+    assert.ok(english.has(`${provider}OnboardingTitle`),`Missing English ${provider}OnboardingTitle`);
+    assert.ok(english.has(`${provider}OnboardingHint`),`Missing English ${provider}OnboardingHint`);
+  }
 });
 
 test("placeholders remain compatible across locale catalogs",()=>{
