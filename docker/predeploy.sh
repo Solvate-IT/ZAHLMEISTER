@@ -52,6 +52,7 @@ required_files=(
   "frontend/tsconfig.json"
   "frontend/src/lib/i18n.tsx"
   "frontend/src/lib/native.ts"
+  "frontend/tests/i18n-ui.test.mjs"
   "frontend/public/manifest.webmanifest"
   "mobile/package.json"
   "mobile/package-lock.json"
@@ -97,7 +98,7 @@ echo "[2/11] Checking Git tracking and packaging inputs..."
 
   runtime_paths=(
     backend/app backend/locales backend/pyproject.toml
-    frontend/src frontend/public frontend/package.json frontend/package-lock.json frontend/next.config.ts frontend/tsconfig.json
+    frontend/src frontend/public frontend/tests frontend/package.json frontend/package-lock.json frontend/next.config.ts frontend/tsconfig.json
     mobile/assets mobile/mobile-links mobile/tool mobile/package.json mobile/package-lock.json mobile/capacitor.config.ts mobile/android
     docker/.env.development docker/.env.production docker/backend.Dockerfile docker/frontend.Dockerfile docker/mobile.Dockerfile docker/mobile.Dockerfile.dockerignore
     docker/compose.yml docker/compose.prod.yml docker/nginx.conf docker/manage.sh docker/predeploy.sh docker/scripts
