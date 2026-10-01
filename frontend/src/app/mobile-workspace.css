@@ -19,7 +19,7 @@
   .settings-nav{gap:2px;padding-bottom:2px}
   .settings-nav button{padding:8px 9px}
   .toolbar{margin-bottom:11px}
-  .mobile-nav{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .mobile-nav{grid-template-columns:repeat(2,minmax(0,1fr))}
   .mobile-nav button{min-width:0;width:100%;min-height:52px;padding:10px 0;display:flex;align-items:center;justify-content:center;text-align:center;font-size:calc(.82rem + 2px);line-height:1.15}
   .participant-table{min-width:560px}
   .participant-table th,.participant-table td{padding:9px 10px}
