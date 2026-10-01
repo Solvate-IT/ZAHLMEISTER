@@ -247,7 +247,7 @@
   "bankSyncHint": "Volitelné bankovní připojení pro automatické párování plateb.",
   "pontoCostsHint": "Ponto je volitelná externí služba. Náklady na používání účtuje přímo Ponto.",
   "connectPonto": "Připojit Ponto",
-  "connectionOk": "Připojení bylo úspěšné.",
+  "connectionOk": "Připojení je v pořádku.",
   "connectionError": "Připojení se nezdařilo.",
   "testConnection": "Otestovat připojení",
   "syncNow": "Synchronizovat nyní",
