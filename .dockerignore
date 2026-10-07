@@ -1,0 +1,25 @@
+# docker/Dockerfile builds with the repository root as context. Only the files a
+# stage copies are let in: no Git data, secrets, backups, host dependencies or
+# build output, so a local image is built from what a CI checkout contains.
+# The mobile stage copies only lockfiles, so its per-build `compose build
+# mobile` stays a cache hit until one of them changes.
+*
+!backend
+!frontend
+!mobile/package.json
+!mobile/package-lock.json
+!mobile/tool/harden_native_purchases.sh
+!docker/nginx.conf
+!docker/scripts/test.sh
+!docker/scripts/deploy-production.sh
+
+**/__pycache__
+**/*.pyc
+backend/.ruff_cache
+backend/.pytest_cache
+backend/*.egg-info
+backend/build
+frontend/node_modules
+frontend/.next
+frontend/out
+frontend/*.tsbuildinfo

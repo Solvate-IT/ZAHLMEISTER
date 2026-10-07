@@ -6,10 +6,6 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DOCKER_DIR="$SCRIPT_DIR"
 source "$SCRIPT_DIR/scripts/env.sh"
 
-compose() {
-  docker compose "${COMPOSE_ENV_ARGS[@]}" -f "$COMPOSE_FILE" "$@"
-}
-
 pause() { read -r -p "Press Enter to continue..." _; }
 
 start_stack() {
@@ -38,11 +34,14 @@ clean_build() {
   compose up -d
 }
 
-# predeploy.sh names its containers and network ...-<its PID>; while that run
-# is alive they belong to it, whoever started it.
+# scripts/test.sh ends the names of its containers, networks, volumes and
+# Compose project with -<its PID>; while that run is alive they belong to it,
+# whoever started it.
 predeploy_run_alive() {
-  local pid="${1##*-}"
-  [[ "$pid" =~ ^[0-9]+$ ]] && grep -qs predeploy.sh "/proc/$pid/cmdline"
+  local name="${1%_default}" pid
+  name="${name%_postgres18_data}"
+  pid="${name##*-}"
+  [[ "$pid" =~ ^[0-9]+$ ]] && grep -qs scripts/test.sh "/proc/$pid/cmdline"
 }
 
 # Option 5, as in the other Solvate projects (RCOD, LUHEOD, ...): removes what
@@ -51,11 +50,11 @@ predeploy_run_alive() {
 #     --remove-orphans removes, but without taking the stack down),
 #   - stopped `compose run` containers (a running one is a build, adb or shell
 #     session in another terminal and is kept),
-#   - containers and networks of interrupted pre-deployment checks (a check
-#     that is still running keeps its own).
+#   - containers, networks and volumes of interrupted pre-deployment checks
+#     (a check that is still running keeps its own).
 clean_orphans() {
-  local project services id name service oneoff state
-  local ids=() names=() networks=() kept=()
+  local project services id name service oneoff state owner
+  local ids=() names=() networks=() volumes=() kept=()
   echo "🧽 Cleaning up orphaned containers..."
   project="$(env_value COMPOSE_PROJECT_NAME zahlmeister)"
   # Without the service list every container would look orphaned.
@@ -74,18 +73,24 @@ clean_orphans() {
   done < <(docker ps -a --filter "label=com.docker.compose.project=${project}" \
     --format '{{.ID}}|{{.Names}}|{{.Label "com.docker.compose.service"}}|{{.Label "com.docker.compose.oneoff"}}|{{.State}}')
 
-  while IFS='|' read -r id name; do
-    if predeploy_run_alive "$name"; then
+  # The check's production stack is a Compose project; its containers are
+  # named after the service, so the project name carries the PID.
+  while IFS='|' read -r id name owner; do
+    if predeploy_run_alive "${owner:-$name}"; then
       kept+=("$name")
     else
       ids+=("$id")
       names+=("$name")
     fi
-  done < <(docker ps -a --filter "name=^zahlmeister-predeploy-" --format '{{.ID}}|{{.Names}}')
+  done < <(docker ps -a --filter "name=^zahlmeister-predeploy-" --format '{{.ID}}|{{.Names}}|{{.Label "com.docker.compose.project"}}')
 
   while IFS= read -r name; do
     predeploy_run_alive "$name" || networks+=("$name")
   done < <(docker network ls --filter "name=^zahlmeister-predeploy-" --format '{{.Name}}')
+
+  while IFS= read -r name; do
+    predeploy_run_alive "$name" || volumes+=("$name")
+  done < <(docker volume ls --filter "name=^zahlmeister-predeploy-" --format '{{.Name}}')
 
   if (( ${#ids[@]} )); then
     docker rm -f "${ids[@]}" >/dev/null || { echo "❌ Could not remove: ${names[*]}" >&2; return 1; }
@@ -97,7 +102,12 @@ clean_orphans() {
     echo "✅ Removed orphan networks:"
     printf '%s\n' "${networks[@]}"
   fi
-  (( ${#ids[@]} + ${#networks[@]} )) || echo "ℹ️ No orphan containers found."
+  if (( ${#volumes[@]} )); then
+    docker volume rm "${volumes[@]}" >/dev/null || { echo "❌ Could not remove: ${volumes[*]}" >&2; return 1; }
+    echo "✅ Removed orphan volumes:"
+    printf '%s\n' "${volumes[@]}"
+  fi
+  (( ${#ids[@]} + ${#networks[@]} + ${#volumes[@]} )) || echo "ℹ️ No orphan containers found."
   (( ${#kept[@]} == 0 )) || echo "ℹ️ Kept, still in use: ${kept[*]}"
 }
 
@@ -151,6 +161,13 @@ health_check() {
     failed=1
   fi
 
+  echo
+  echo "== Jobs and worker heartbeats =="
+  db_exec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -P pager=off -c "
+    SELECT status, count(*) FROM scheduled_jobs GROUP BY status ORDER BY status;
+    SELECT name, last_seen_at, now() - last_seen_at AS age FROM runtime_heartbeats ORDER BY name;
+  "' || echo "[WARN] Could not read the job queue." >&2
+
   return "$failed"
 }
 
@@ -166,7 +183,7 @@ run_tests() {
   (
     cd "$PROJECT_DIR"
     echo "== Building backend test image =="
-    docker build --target test -f "$SCRIPT_DIR/backend.Dockerfile" -t "$backend_test_image" .
+    docker build --target backend-test -f "$SCRIPT_DIR/Dockerfile" -t "$backend_test_image" .
     echo "== Running backend tests =="
     docker run --rm \
       -e ENVIRONMENT=test \
@@ -175,7 +192,7 @@ run_tests() {
       sh -c 'ruff check app tests && python -m pytest -q'
 
     echo "== Building frontend test image and running frontend tests =="
-    docker build --target test -f "$SCRIPT_DIR/frontend.Dockerfile" -t "$frontend_test_image" .
+    docker build --target frontend-test -f "$SCRIPT_DIR/Dockerfile" -t "$frontend_test_image" .
   )
 
   "$SCRIPT_DIR/scripts/platform-admin-access.test.sh"

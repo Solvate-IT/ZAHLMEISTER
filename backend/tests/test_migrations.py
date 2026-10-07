@@ -2,7 +2,7 @@
 
 Two branches that each add a revision would create two heads; ``upgrade head``
 then refuses to run and the deployment fails. The database-side check (models vs.
-migrated schema) runs in predeploy.sh, which bootstraps a real PostgreSQL.
+migrated schema) runs in docker/scripts/test.sh, which bootstraps a real PostgreSQL.
 """
 from alembic.script import ScriptDirectory
 

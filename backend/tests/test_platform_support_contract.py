@@ -80,18 +80,18 @@ def test_admin_ui_requires_reason_and_opens_separate_support_tab() -> None:
 
 def test_admin_route_has_visible_loading_fallback_and_production_artifact_check() -> None:
     page = frontend("src/app/admin/page.tsx")
-    predeploy = (ROOT.parent / "docker/predeploy.sh").read_text()
+    gate = (ROOT.parent / "docker/scripts/test.sh").read_text()
 
     assert 'fallback={<div className="auth-wrap"><Loading/></div>}' in page
-    assert "/usr/share/nginx/html/admin/index.html" in predeploy
+    assert "/usr/share/nginx/html/admin/index.html" in gate
 
 
 def test_predeploy_stops_after_single_success_marker() -> None:
-    predeploy = (ROOT.parent / "docker/predeploy.sh").read_text()
+    gate = (ROOT.parent / "docker/scripts/test.sh").read_text()
     marker = 'echo "Pre-deployment checks passed."'
 
-    assert predeploy.count(marker) == 1
-    assert predeploy.split(marker, maxsplit=1)[1].strip() == ""
+    assert gate.count(marker) == 1
+    assert gate.split(marker, maxsplit=1)[1].strip() == ""
 
 
 def test_platform_admin_bootstrap_is_serialized_and_deploy_stops_apps_before_database() -> None:

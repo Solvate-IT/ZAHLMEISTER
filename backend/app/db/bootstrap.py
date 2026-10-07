@@ -1,7 +1,7 @@
 """Bring the database schema to the current Alembic revision.
 
 ``python -m app.db.bootstrap`` is what every environment runs: the compose
-``bootstrap`` service, predeploy.sh (twice, to prove idempotence) and the
+``bootstrap`` service, docker/scripts/test.sh (twice, to prove idempotence) and the
 production deployment. In one transaction it
 
 1. adopts an installation that predates Alembic (brings it to the baseline shape

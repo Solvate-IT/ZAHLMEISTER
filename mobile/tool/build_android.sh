@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the Android app inside the mobile build image (docker/mobile.Dockerfile).
+# Builds the Android app inside the mobile build image (stage mobile of docker/Dockerfile).
 # Run it through ./docker/manage.sh -> 11) Android App, not by hand.
 #
 #   build_android.sh <apk|aab> <debug|release>
