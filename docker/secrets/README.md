@@ -3,9 +3,11 @@
 Only `.gitkeep` files belong in Git. Real credentials must never be committed or included in ZIP
 source deliveries.
 
-Production application secrets live in `production/` and are mounted read-only. Generate the core
-files with `../scripts/generate-secrets.sh`. Optional provider certificates remain in their own
-subdirectories such as `ponto/`.
+Production application secrets live in `production/` and are mounted read-only. The core files
+(PostgreSQL password, database URL, app secret, platform-admin bootstrap password, monitoring token)
+are created automatically by `../scripts/env.sh`, which `manage.sh` and every script load; existing
+values are never rotated. Optional provider certificates remain in their own subdirectories such as
+`ponto/`.
 
 External service passwords and credentials that cannot be generated locally must be provisioned
 manually as files with restrictive permissions. In particular:
