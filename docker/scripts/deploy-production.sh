@@ -22,48 +22,19 @@ REGISTRY="${REGISTRY%/}"
 export BACKEND_IMAGE="$REGISTRY/zahlmeister-backend:$TAG"
 export FRONTEND_IMAGE="$REGISTRY/zahlmeister-frontend:$TAG"
 
-COMPOSE=(docker compose "${COMPOSE_ENV_ARGS[@]}" -f "$DOCKER_DIR/compose.prod.yml")
-
-wait_service() {
-  local service="$1"
-  local timeout="${2:-180}"
-  local started now cid status
-  started="$(date +%s)"
-  while true; do
-    cid="$("${COMPOSE[@]}" ps -q "$service" 2>/dev/null || true)"
-    if [[ -n "$cid" ]]; then
-      status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid" 2>/dev/null || true)"
-      case "$status" in
-        healthy|running)
-          echo "[OK] $service: $status"
-          return 0
-          ;;
-        unhealthy|exited|dead)
-          fail "$service became $status"
-          ;;
-      esac
-    fi
-    now="$(date +%s)"
-    if (( now - started >= timeout )); then
-      fail "Timeout waiting for $service"
-    fi
-    sleep 2
-  done
-}
-
 on_error() {
   local rc=$?
   echo >&2
   echo "ERROR: Production deployment failed (exit $rc)." >&2
   echo "Database changes are not rolled back automatically." >&2
-  "${COMPOSE[@]}" ps >&2 || true
-  "${COMPOSE[@]}" logs --tail=100 backend worker frontend >&2 || true
+  compose ps >&2 || true
+  compose logs --tail=100 backend worker frontend >&2 || true
   exit "$rc"
 }
 trap on_error ERR
 
 check_env_parity
-"${COMPOSE[@]}" config -q
+compose config -q
 
 PROXY_NETWORK_VALUE="$(env_value PROXY_NETWORK solvate_proxy)"
 docker network inspect "$PROXY_NETWORK_VALUE" >/dev/null 2>&1 || fail "Docker network '$PROXY_NETWORK_VALUE' does not exist."
@@ -73,39 +44,37 @@ echo "Image tag: $TAG"
 echo "Registry : $REGISTRY"
 
 echo "Pulling immutable application images..."
-"${COMPOSE[@]}" pull backend frontend
+compose pull backend frontend
 
 echo "Stopping application services before database preparation..."
-"${COMPOSE[@]}" stop frontend backend worker || true
+compose stop frontend backend worker || true
 
 echo "Starting PostgreSQL..."
-"${COMPOSE[@]}" up -d db
+compose up -d db
 wait_service db
 
 echo "Creating verified pre-deployment backup..."
-ZM_COMPOSE_FILE="$DOCKER_DIR/compose.prod.yml" \
-ZM_BACKUP_PREFIX="pre_deploy_${TAG:0:12}" \
-  "$DOCKER_DIR/scripts/backup.sh" >/dev/null
+ZM_BACKUP_PREFIX="pre_deploy_${TAG:0:12}" "$DOCKER_DIR/scripts/db.sh" backup >/dev/null
 echo "[OK] Backup completed."
 
 echo "Applying database bootstrap/migrations with the new backend image..."
-"${COMPOSE[@]}" run --rm --no-deps bootstrap
+compose run --rm --no-deps bootstrap
 
 echo "Starting worker and backend from immutable images..."
-"${COMPOSE[@]}" up -d --no-build --no-deps worker backend
+compose up -d --no-build --no-deps worker backend
 wait_service worker
 wait_service backend
 
 echo "Starting frontend from immutable image..."
-"${COMPOSE[@]}" up -d --no-build --no-deps frontend
+compose up -d --no-build --no-deps frontend
 wait_service frontend
 
 for service in backend worker; do
-  cid="$("${COMPOSE[@]}" ps -q "$service")"
+  cid="$(compose ps -q "$service")"
   running_image="$(docker inspect --format '{{.Config.Image}}' "$cid")"
   [[ "$running_image" == "$BACKEND_IMAGE" ]] || fail "$service runs '$running_image', expected '$BACKEND_IMAGE'."
 done
-frontend_cid="$("${COMPOSE[@]}" ps -q frontend)"
+frontend_cid="$(compose ps -q frontend)"
 frontend_image="$(docker inspect --format '{{.Config.Image}}' "$frontend_cid")"
 [[ "$frontend_image" == "$FRONTEND_IMAGE" ]] || fail "frontend runs '$frontend_image', expected '$FRONTEND_IMAGE'."
 

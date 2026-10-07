@@ -18,6 +18,9 @@ ENVIRONMENT="${TEST_ENVIRONMENT:-development}"
 BASE_ENV_FILE="$PWD/.env.${ENVIRONMENT}"
 COMPOSE_FILE="$PWD/compose.yml"
 COMPOSE_ENV_ARGS=(--env-file "$BASE_ENV_FILE")
+compose() {
+  docker compose "${COMPOSE_ENV_ARGS[@]}" -f "$COMPOSE_FILE" "$@"
+}
 env_value() {
   case "$1" in
     PLATFORM_ADMIN_EMAILS) printf '%s' "${TEST_CONFIGURED_ADMINS}" ;;
