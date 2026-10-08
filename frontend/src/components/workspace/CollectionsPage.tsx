@@ -1,5 +1,7 @@
 "use client";
 import {useEffect,useMemo,useState} from "react";
+import {Capacitor} from "@capacitor/core";
+import {App} from "@capacitor/app";
 import {ApiError,api,saveDownload,savePublicFile} from "@/lib/api";
 import {externalChannelCapabilities,openExternalUri} from "@/lib/native";
 import type {ChannelSetting,CollectionDetail,CollectionParticipant,CollectionSummary,DispatchExternalItem,ExternalDraft,MessageTemplate,ParticipantListSummary} from "@/lib/types";
@@ -51,6 +53,53 @@ export function CollectionsPage({autoCreate=false,onCreateConsumed,initialId}:{a
   useEffect(()=>{void load()},[]);
   useEffect(()=>{if(initialId)void open(initialId)},[initialId]);
   useEffect(()=>{if(autoCreate){setSelected(null);setNewOpen(true);onCreateConsumed?.()}},[autoCreate,onCreateConsumed]);
+  const selectedId=selected?.id;
+  const hasUnpaidParticipants=Boolean(selected&&selected.status!=="cancelled"&&selected.participants.some(participant=>participant.status!=="paid"));
+  useEffect(()=>{
+    if(!selectedId||!hasUnpaidParticipants)return;
+    let active=true;
+    let refreshing=false;
+    let reportedFailure=false;
+    let removeAppListener:(()=>Promise<void>)|null=null;
+    const refresh=async()=>{
+      if(!active||refreshing||document.visibilityState==="hidden")return;
+      refreshing=true;
+      try{
+        const fresh=await api.collection(selectedId);
+        if(!active)return;
+        reportedFailure=false;
+        setSelected(current=>current?.id===selectedId?fresh:current);
+        setItems(current=>current.map(item=>item.id===selectedId?{...item,paid_count:fresh.paid_count,paid_amount:fresh.paid_amount,status:fresh.status}:item));
+      }catch(error){
+        if(active&&!reportedFailure){
+          reportedFailure=true;
+          console.error("Collection payment status refresh failed",error);
+        }
+      }finally{
+        refreshing=false;
+      }
+    };
+    const onFocus=()=>{void refresh()};
+    const onVisibility=()=>{if(document.visibilityState==="visible")void refresh()};
+    window.addEventListener("focus",onFocus);
+    document.addEventListener("visibilitychange",onVisibility);
+    const interval=window.setInterval(()=>void refresh(),10000);
+    if(Capacitor.isNativePlatform()){
+      void App.addListener("appStateChange",({isActive})=>{if(isActive)void refresh()})
+        .then(handle=>{
+          if(active)removeAppListener=()=>handle.remove();
+          else void handle.remove();
+        })
+        .catch(error=>{if(active)console.error("Native payment status refresh listener failed",error)});
+    }
+    return ()=>{
+      active=false;
+      window.clearInterval(interval);
+      window.removeEventListener("focus",onFocus);
+      document.removeEventListener("visibilitychange",onVisibility);
+      if(removeAppListener)void removeAppListener();
+    };
+  },[selectedId,hasUnpaidParticipants]);
   const filtered=useMemo(()=>items.filter(i=>i.name.toLowerCase().includes(search.toLowerCase())),[items,search]);
   if(loading&&!items.length)return <Loading/>;
   if(error&&!items.length)return <ErrorState onRetry={load}/>;

@@ -117,7 +117,12 @@ function PaymentBody({payment, qrUrl, onCopy, onOnline, onlineBusy, locale}: {
       <div className="muted">{payment.participant_name}</div>
     </div>
     <div className="payment-amount">{money}</div>
-    {paid ? <div className="notice success">{t("paymentReceived")}</div> : <>
+    {paid ? <div className="notice success">
+      {payment.paid_at ? <>
+        <strong>{t("paidAt")}</strong>{" "}
+        <time dateTime={payment.paid_at}>{new Intl.DateTimeFormat(locale, {dateStyle:"long", timeStyle:"short"}).format(new Date(payment.paid_at))}</time>
+      </> : t("paid")}
+    </div> : <>
       {payment.online_payment_available && <div className="stack">
         <button className="button" disabled={onlineBusy} onClick={() => void onOnline()}>{onlineBusy ? t("loading") : t("payOnline")}</button>
         <small className="muted" style={{textAlign: "center"}}>{t("onlineCheckoutHint")}</small>
