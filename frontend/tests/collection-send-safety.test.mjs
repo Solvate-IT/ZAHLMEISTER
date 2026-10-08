@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 
 const collections=readFileSync(new URL("../src/components/workspace/CollectionsPage.tsx",import.meta.url),"utf8");
+const publicPayment=readFileSync(new URL("../src/components/PublicPayment.tsx",import.meta.url),"utf8");
 const lists=readFileSync(new URL("../src/components/workspace/ListsPage.tsx",import.meta.url),"utf8");
 const workspace=readFileSync(new URL("../src/components/Workspace.tsx",import.meta.url),"utf8");
 const settings=readFileSync(new URL("../src/components/workspace/SettingsPage.tsx",import.meta.url),"utf8");
@@ -75,4 +76,26 @@ test("send safety copy is translated through the central i18n layer",()=>{
   assert.match(ux,/confirmRealSend:"Versand bestätigen"/);
   assert.match(ux,/reallySendNow:"Jetzt wirklich versenden"/);
   assert.match(ux,/sendTestMessage:"Send test"/);
+});
+
+test("paid public payment links show localized payment date with an available fallback",()=>{
+  assert.match(publicPayment,/payment\.paid_at/);
+  assert.match(publicPayment,/t\("paidAt"\)/);
+  assert.match(publicPayment,/Intl\.DateTimeFormat\(locale,/);
+  assert.match(publicPayment,/dateStyle:"long", timeStyle:"short"/);
+  assert.match(publicPayment,/dateTime=\{payment\.paid_at\}/);
+  assert.match(publicPayment,/: t\("paid"\)/);
+  assert.match(api,/publicPayment:.*cache:"no-store"/);
+});
+
+test("open collections refresh payment status on app return and while visible",()=>{
+  assert.match(collections,/api\.collection\(selectedId\)/);
+  assert.match(collections,/addEventListener\("focus",onFocus\)/);
+  assert.match(collections,/addEventListener\("visibilitychange",onVisibility\)/);
+  assert.match(collections,/App\.addListener\("appStateChange"/);
+  assert.match(collections,/setInterval\(\(\)=>void refresh\(\),10000\)/);
+  assert.match(collections,/setSelected\(current=>current\?\.id===selectedId\?fresh:current\)/);
+  assert.match(collections,/paid_count:fresh\.paid_count/);
+  assert.match(collections,/window\.clearInterval\(interval\)/);
+  assert.match(api,/collection:.*cache:"no-store"/);
 });
